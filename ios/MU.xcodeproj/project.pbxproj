@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1939A91624576283895B0550 /* VoiceInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7CF13DD69F5604599A7E965 /* VoiceInput.swift */; };
 		1F55B995D8EE0CCE729CB545 /* MUWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F1F6F276BCB5A2CA6FE3E7 /* MUWidget.swift */; };
 		24083EB4097C91201E826035 /* SafariView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C2819769FCF2C0AA6B54978 /* SafariView.swift */; };
 		33B36932D912704B43630E47 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = B82CA420028E679CC07FEA55 /* Localizable.strings */; };
@@ -66,6 +67,7 @@
 		95E7652A5B51B2C1CD3E6D39 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		98732D3C633998735A148781 /* MakeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MakeView.swift; sourceTree = "<group>"; };
 		A63CABCD1C5C82345D918B01 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
+		A7CF13DD69F5604599A7E965 /* VoiceInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInput.swift; sourceTree = "<group>"; };
 		AFC239613BD23A83EA3EEE15 /* MUApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MUApp.swift; sourceTree = "<group>"; };
 		BF19E422B1EEAC28966BC2E7 /* MU.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MU.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		CCE85C0CF59389201167E728 /* ProductDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductDetailView.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 				95E7652A5B51B2C1CD3E6D39 /* Models.swift */,
 				1D2F7D33C233A7979CE2339B /* Push.swift */,
 				A63CABCD1C5C82345D918B01 /* Session.swift */,
+				A7CF13DD69F5604599A7E965 /* VoiceInput.swift */,
 			);
 			path = Core;
 			sourceTree = "<group>";
@@ -315,6 +318,7 @@
 				714DE96383F152E399DC9BB3 /* ScanView.swift in Sources */,
 				64F738F6F2E4860BD7910617 /* Session.swift in Sources */,
 				72C1F86E0777B2ED87AB917E /* ShopView.swift in Sources */,
+				1939A91624576283895B0550 /* VoiceInput.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -434,6 +438,8 @@
 				INFOPLIST_KEY_CFBundleDisplayName = MU;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "商品タグやムーンマーカーのQRコードを読み取り、真贋・音・つくる画面を開くために使います。";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "「声で作る」で、話した言葉からデザインを生成するために使います。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "話した言葉を文字に変換して、作りたいものを入力するために使います。";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
@@ -533,6 +539,8 @@
 				INFOPLIST_KEY_CFBundleDisplayName = MU;
 				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_NSCameraUsageDescription = "商品タグやムーンマーカーのQRコードを読み取り、真贋・音・つくる画面を開くために使います。";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "「声で作る」で、話した言葉からデザインを生成するために使います。";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "話した言葉を文字に変換して、作りたいものを入力するために使います。";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UIRequiresFullScreen = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;

@@ -137,6 +137,14 @@ struct AccountView: View {
             }
             if let t = sales?.total {
                 Section(String(localized: "account.sales")) {
+                    // 「あなたの作品が世界で N回 着られている」— 印税を誇りに変える
+                    if let n = t.orderCount, n > 0 {
+                        HStack {
+                            Image(systemName: "globe.asia.australia.fill").foregroundStyle(.tint)
+                            Text(String(format: String(localized: "account.worn"), n))
+                                .font(.subheadline.weight(.medium))
+                        }
+                    }
                     LabeledContent(String(localized: "account.orders"), value: "\(t.orderCount ?? 0)")
                     LabeledContent(String(localized: "account.revenue"), value: "¥\((t.revenueJpy ?? 0).formatted())")
                 }

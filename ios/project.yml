@@ -30,6 +30,8 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_NSCameraUsageDescription: "商品タグやムーンマーカーのQRコードを読み取り、真贋・音・つくる画面を開くために使います。"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "「声で作る」で、話した言葉からデザインを生成するために使います。"
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "話した言葉を文字に変換して、作りたいものを入力するために使います。"
   MUWidget:
     type: app-extension
     platform: iOS

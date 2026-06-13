@@ -2249,9 +2249,19 @@ pub async fn design_remix_create(
     } else {
         "織れました！もう棚に並んでいます。".to_string()
     };
+    // アプリで結果カードを出すため make 相当のフィールドも返す(リミックス印税5%付き)。
+    let buy_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/shop/{}", sku)) };
+    let checkout_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/api/shop/checkout?sku={}", sku)) };
     axum::Json(serde_json::json!({
-        "ok": true, "sku": sku, "status": status_s,
-        "pdp_url": format!("/shop/{}?made=1", urlencoding::encode(&sku)),
+        "ok": true, "sku": sku, "kind": kind, "status": status_s,
+        "display": display, "hook": hook, "retail_jpy": retail_jpy,
+        "auto_approved": !flagged,
+        "design_url": url,
+        "pdp_url": format!("https://wearmu.com/shop/{}", sku),
+        "buy_url": buy_url,
+        "checkout_url": checkout_url,
+        "edit_token": edit_token,
+        "remix_of": base_sku,
         "note": note,
     })).into_response()
 }

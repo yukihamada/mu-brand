@@ -91,6 +91,28 @@ struct MUAPI {
         return try JSONDecoder().decode(PolishResult.self, from: data)
     }
 
+    // リミックス — 既存デザインに一言足して別バージョンを織る。POST /api/design-remix
+    // (form)。元の作者にはリミックス印税5%が流れる。応答は make 互換。
+    static func remix(sku: String, words: String, apiKey: String?) async throws -> MakeResult {
+        var req = URLRequest(url: base.appendingPathComponent("api/design-remix"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 120
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        if let key = apiKey, !key.isEmpty {
+            req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        }
+        var comps = URLComponents()
+        comps.queryItems = [URLQueryItem(name: "sku", value: sku), URLQueryItem(name: "words", value: words)]
+        req.httpBody = comps.percentEncodedQuery?.data(using: .utf8)
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw APIError.badStatus(-1) }
+        guard (200...299).contains(http.statusCode) else {
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
+        }
+        return try JSONDecoder().decode(MakeResult.self, from: data)
+    }
+
     // 着画(オンボディmockup)が出来たか確認。GET /api/make/peek?sku=
     static func peek(sku: String) async throws -> PeekResult {
         var comps = URLComponents(url: base.appendingPathComponent("api/make/peek"), resolvingAgainstBaseURL: false)!

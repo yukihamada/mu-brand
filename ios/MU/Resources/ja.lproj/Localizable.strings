@@ -33,6 +33,15 @@
 "make.step3" = "色とバランスを整えています…";
 "make.step4" = "プリント用に仕上げています…";
 "make.step5" = "棚に並べています…";
+"make.listening" = "聞いています… 話してください";
+"make.voiceDenied" = "声で作るにはマイクと音声認識の許可が必要です(設定から)";
+"make.remix" = "続きを作る（リミックス）";
+"make.remix.placeholder" = "足したい一言（例: 金色に / もっと大胆に）";
+"make.remix.go" = "織る";
+"make.remix.royalty" = "このデザインから織ると、元の作り手にも売上の5%が流れます。";
+"make.bjj.title" = "道場グッズを作る";
+"make.bjj.sub" = "道場名・帯・大会を言うだけでチーム公式グッズに";
+"make.bjj.template" = "うちの道場「◯◯柔術アカデミー」の公式ラッシュガード。黒地に帯カラーのライン、背中に道場名";
 "make.again" = "もう一つ作る";
 "make.reviewPending" = "内容を確認中です。OKならすぐ公開・購入できます。";
 "onb.skip" = "スキップ";
@@ -97,3 +106,4 @@
 "push.on" = "通知はオンです";
 "push.openSettings" = "設定で通知を許可する";
 "push.why" = "新作ドロップや、あなたの作品が売れたときにお知らせします。";
+"account.worn" = "あなたの作品が、世界で %d回 着られています 🌍";

@@ -33,6 +33,15 @@
 "make.step3" = "Balancing colors…";
 "make.step4" = "Prepping for print…";
 "make.step5" = "Placing it on the shelf…";
+"make.listening" = "Listening… go ahead";
+"make.voiceDenied" = "Voice needs mic & speech permission (enable in Settings)";
+"make.remix" = "Make a remix";
+"make.remix.placeholder" = "Add a word (e.g. in gold / bolder)";
+"make.remix.go" = "Weave";
+"make.remix.royalty" = "Remix from this design and 5% of every sale flows to the original maker.";
+"make.bjj.title" = "Make dojo gear";
+"make.bjj.sub" = "Just say your dojo, belt or tournament — get team gear";
+"make.bjj.template" = "Official rashguard for our \"___ Jiu-Jitsu Academy\": black with belt-color lines, dojo name on the back";
 "make.again" = "Make another";
 "make.reviewPending" = "We're reviewing it. Once approved it's live and buyable.";
 "onb.skip" = "Skip";
@@ -97,3 +106,4 @@
 "push.on" = "Notifications are on";
 "push.openSettings" = "Allow notifications in Settings";
 "push.why" = "We'll let you know about new drops and when your design sells.";
+"account.worn" = "Your designs have been worn %d times worldwide 🌍";

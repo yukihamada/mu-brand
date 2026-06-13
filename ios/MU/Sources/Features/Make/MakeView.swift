@@ -7,6 +7,7 @@ struct MakeView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var app: AppState
 
+    @StateObject private var voice = VoiceInput()
     @State private var prompt = ""
     @State private var kind: MakeKind = .auto
     @State private var royalty = 10          // 印税 10〜50%(価格は自動調整)
@@ -22,6 +23,11 @@ struct MakeView: View {
 
     // 着画(オンボディ mockup)。ポーリングで出来たら差し替え。
     @State private var mockupURL: URL?
+
+    // リミックス(続きを作る)の状態
+    @State private var showRemix = false
+    @State private var remixWords = ""
+    @State private var isRemixing = false
 
     // 「磨く」(5軸自己改善) の状態
     @State private var isPolishing = false
@@ -43,13 +49,35 @@ struct MakeView: View {
 
                     // 入力
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField(String(localized: "make.placeholder"), text: $prompt, axis: .vertical)
-                            .lineLimit(2...5)
-                            .textFieldStyle(.plain)
-                            .padding(12)
-                            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
-                            .focused($promptFocused)
+                        HStack(alignment: .bottom, spacing: 8) {
+                            TextField(String(localized: "make.placeholder"), text: $prompt, axis: .vertical)
+                                .lineLimit(2...5)
+                                .textFieldStyle(.plain)
+                                .padding(12)
+                                .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                                .focused($promptFocused)
+                                .disabled(isMaking)
+                            // 声で作る
+                            Button {
+                                Task {
+                                    Analytics.track("voice_toggle")
+                                    await voice.toggle()
+                                }
+                            } label: {
+                                Image(systemName: voice.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
+                                    .font(.system(size: 38))
+                                    .foregroundStyle(voice.isRecording ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
+                                    .symbolEffect(.pulse, isActive: voice.isRecording)
+                            }
                             .disabled(isMaking)
+                        }
+                        if voice.isRecording {
+                            Label(String(localized: "make.listening"), systemImage: "waveform")
+                                .font(.caption).foregroundStyle(.red)
+                        } else if voice.denied {
+                            Text(String(localized: "make.voiceDenied"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
 
                         // 種類チップ (おまかせ既定)
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -96,6 +124,10 @@ struct MakeView: View {
             }
             .navigationTitle(String(localized: "tab.make"))
             .task { Analytics.track("view_make") }
+            // 声で作る: 認識テキストをそのまま入力に流す
+            .onChange(of: voice.transcript) { _, t in
+                if !t.isEmpty { prompt = t }
+            }
             // オンボーディングからの「最初の一着」を受け取り、その場で自動生成。
             .onChange(of: app.pendingPrompt) { _, new in
                 guard let p = new else { return }
@@ -348,6 +380,11 @@ struct MakeView: View {
                     .foregroundStyle(.secondary)
             }
 
+            // 続きを、誰かと作る(リミックス)。元の作者には印税5%が流れる。
+            if r.editToken != nil && r.autoApproved {
+                remixSection(r)
+            }
+
             Link(destination: URL(string: r.pdpUrl)!) {
                 Label(String(localized: "pdp.openWeb"), systemImage: "safari")
                     .font(.subheadline)
@@ -376,9 +413,32 @@ struct MakeView: View {
 
     private var hints: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // 🥋 道場グッズ プリセット(戦略: BJJ垂直の実需。言うだけでチーム公式グッズ)
+            Button {
+                prompt = String(localized: "make.bjj.template")
+                kind = .rashguard
+                promptFocused = true
+                Analytics.track("make_preset", ["preset": "bjj_dojo"])
+            } label: {
+                HStack {
+                    Text("🥋").font(.title3)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(localized: "make.bjj.title")).font(.subheadline.weight(.semibold))
+                        Text(String(localized: "make.bjj.sub")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+
             Text(String(localized: "make.examplesTitle"))
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(.secondary)
+                .padding(.top, 4)
             ForEach(exampleKeys, id: \.self) { key in
                 Button {
                     prompt = String(localized: String.LocalizationValue(key))
@@ -437,6 +497,73 @@ struct MakeView: View {
         }
         .padding(10)
         .background(.quaternary.opacity(0.2), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // 「続きを作る」— 一言足して別バージョンを織る。完成したらそれが新しい result に。
+    @ViewBuilder
+    private func remixSection(_ r: MakeResult) -> some View {
+        VStack(spacing: 8) {
+            if showRemix {
+                HStack(spacing: 8) {
+                    TextField(String(localized: "make.remix.placeholder"), text: $remixWords)
+                        .textFieldStyle(.plain)
+                        .padding(10)
+                        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+                        .disabled(isRemixing)
+                    Button {
+                        remix(r)
+                    } label: {
+                        if isRemixing { ProgressView() }
+                        else { Text(String(localized: "make.remix.go")).font(.subheadline.bold()) }
+                    }
+                    .disabled(isRemixing || remixWords.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Text(String(localized: "make.remix.royalty"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Button {
+                    withAnimation { showRemix = true }
+                } label: {
+                    Label(String(localized: "make.remix"), systemImage: "arrow.triangle.branch")
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private func remix(_ r: MakeResult) {
+        let words = remixWords.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty, !isRemixing else { return }
+        isRemixing = true
+        Task {
+            do {
+                let nr = try await MUAPI.remix(sku: r.sku, words: words, apiKey: session.apiKey)
+                Analytics.track("make_remix", ["from": r.sku, "to": nr.sku])
+                await MainActor.run {
+                    isRemixing = false
+                    showRemix = false
+                    remixWords = ""
+                    polishedURL = nil
+                    mockupURL = nil
+                    score = nil
+                    polishNote = nil
+                    revealed = false
+                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) { result = nr }
+                    UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
+                }
+                await pollOnbody(sku: nr.sku)
+            } catch {
+                await MainActor.run {
+                    errorMessage = error.localizedDescription
+                    isRemixing = false
+                }
+            }
+        }
     }
 
     private func polish(_ r: MakeResult) {
