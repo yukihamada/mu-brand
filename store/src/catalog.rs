@@ -178,6 +178,9 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN courier TEXT", []);
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN tracking_number TEXT", []);
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN shipped_at TEXT", []);
+    // 送り状に必須の宛先電話。Stripe customer_details.phone を決済時に保存
+    // (shipping_address_json は住所オブジェクトのみで電話を含まないため)。
+    let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN customer_phone TEXT", []);
     // Affiliate attribution: which referral code drove this sale + the
     // commission credited to the referrer (also written to mu_credit_ledger,
     // the payout source of truth). NULL/0 for unattributed orders.
@@ -14740,6 +14743,16 @@ fn record_order_full(
             existing_gift,
         ],
     );
+    // 送り状用の宛先電話を保存 (shipping_address_json は住所のみ)。
+    // Stripe customer_details.phone を優先、無ければ shipping.phone。
+    let phone = cust["phone"].as_str()
+        .or_else(|| shipping["phone"].as_str())
+        .unwrap_or("");
+    if !phone.is_empty() {
+        let _ = conn.execute(
+            "UPDATE catalog_orders SET customer_phone=? WHERE stripe_session_id=?",
+            rusqlite::params![phone, session_id]);
+    }
     // 糸 (ITO): 購入採掘 +2糸 (景表法20%キャップ併算・session冪等) と
     // 服シリアル発行 (digital 以外)。ito.rs 参照。
     crate::ito::grant_for_order(&conn, session_id, sku, amount, email, status);
