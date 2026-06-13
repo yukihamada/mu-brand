@@ -1576,6 +1576,18 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <a href="/blog/">すべての記事 →</a>
   </div>
 </footer>
+<!-- MU Drop newsletter signup (homepage inline) — no coupon, value-prop only -->
+<section class="mu-drop" style="max-width:560px;margin:8px auto 36px;padding:30px 26px;border:1px solid rgba(245,245,240,0.14);border-radius:18px;text-align:center;font-family:'Helvetica Neue',Arial,sans-serif">
+  <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>
+  <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:6px;color:#F5F5F0">毎日1着、世界に生まれる新作を最速で。</div>
+  <div style="font-size:12px;opacity:0.55;line-height:1.7;margin-bottom:18px;color:#F5F5F0">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
+  <form class="mu-drop-form" data-source="homepage" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;max-width:420px;margin:0 auto;flex-wrap:wrap;justify-content:center">
+    <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.04);color:#F5F5F0;font-size:14px">
+    <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
+    <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px;color:#F5F5F0" aria-live="polite"></div>
+  </form>
+</section>
+
 <div style="padding:18px 48px 36px;text-align:center;font-size:10px;letter-spacing:0.15em;opacity:0.45;font-family:'Helvetica Neue',Arial,sans-serif;line-height:2">
   Press / collab / data API → <a href="mailto:info@enablerdao.com" style="color:inherit;text-decoration:underline">info@enablerdao.com</a><br>
   株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents · <a href="/transparency" style="color:inherit;text-decoration:underline">numbers, public</a>
@@ -2910,5 +2922,107 @@ if ('serviceWorker' in navigator) {
     }catch(e){}
   })();
   </script>
+
+<!-- ─── MU Drop: shared subscribe JS + exit-intent modal ─────────────────── -->
+<style>
+  #mu-drop-modal{position:fixed;inset:0;z-index:400;display:none;align-items:center;justify-content:center;
+    background:rgba(0,0,0,0.78);padding:20px;opacity:0;transition:opacity .22s ease}
+  #mu-drop-modal.on{display:flex;opacity:1}
+  #mu-drop-modal .mdm-card{position:relative;max-width:440px;width:100%;background:#121212;
+    border:1px solid rgba(245,245,240,0.14);border-radius:20px;padding:34px 28px 30px;text-align:center;
+    transform:translateY(8px);transition:transform .22s ease}
+  #mu-drop-modal.on .mdm-card{transform:translateY(0)}
+  #mu-drop-modal .mdm-x{position:absolute;top:12px;right:16px;background:none;border:none;color:#F5F5F0;
+    opacity:0.6;font-size:22px;line-height:1;cursor:pointer}
+  @media (prefers-reduced-motion: reduce){
+    #mu-drop-modal,#mu-drop-modal .mdm-card{transition:none}
+  }
+</style>
+<div id="mu-drop-modal" role="dialog" aria-modal="true" aria-label="MU Drop 登録">
+  <div class="mdm-card">
+    <button class="mdm-x" type="button" aria-label="閉じる" onclick="muDropCloseModal()">×</button>
+    <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>
+    <div style="font-size:19px;font-weight:300;line-height:1.5;margin-bottom:6px;color:#F5F5F0">毎日1着、世界に生まれる新作を最速で。</div>
+    <div style="font-size:12px;opacity:0.6;line-height:1.7;margin-bottom:20px;color:#F5F5F0">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
+    <form class="mu-drop-form" data-source="modal" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+      <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.05);color:#F5F5F0;font-size:14px">
+      <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
+      <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px;color:#F5F5F0" aria-live="polite"></div>
+    </form>
+  </div>
+</div>
+<script>
+// 共有: フォーム送信 → /api/subscribe/drop POST → 成功でフォームを差し替え。
+window.muDropSubscribe=window.muDropSubscribe||function(e){
+  e.preventDefault();
+  var form=e.target, inp=form.querySelector('input[name=email]'),
+      btn=form.querySelector('button'), msg=form.querySelector('.mu-drop-msg'),
+      source=form.getAttribute('data-source')||'unknown',
+      email=(inp&&inp.value||'').trim();
+  if(!email){return false;}
+  // モーダル経由の送信は「見せない」フラグを立てる（再表示しない）。
+  if(source==='modal'){try{localStorage.setItem('mu_drop_modal_seen','1');}catch(_){}}
+  if(btn){btn.disabled=true;}
+  if(msg){msg.style.color='';msg.textContent='送信中…';}
+  fetch('/api/subscribe/drop',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:email,source:source})})
+    .then(function(r){return r.json().catch(function(){return {ok:r.ok};});})
+    .then(function(j){
+      if(j&&j.ok){
+        var sec=form.closest('.mu-drop')||form.closest('.mdm-card')||form.parentNode;
+        sec.innerHTML='<div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>'+
+          '<div style="font-size:17px;font-weight:300;line-height:1.6;color:#F5F5F0">ありがとう。最初のドロップをお送りします。</div>'+
+          '<div style="font-size:12px;opacity:0.55;margin-top:6px;color:#F5F5F0">Thanks — you’re on the list.</div>';
+        if(source==='modal'){setTimeout(muDropCloseModal,1800);}
+      } else {
+        if(btn){btn.disabled=false;}
+        if(msg){msg.style.color='#e07b7b';msg.textContent=(j&&j.error)||'登録に失敗しました。もう一度お試しください。';}
+      }
+    })
+    .catch(function(){
+      if(btn){btn.disabled=false;}
+      if(msg){msg.style.color='#e07b7b';msg.textContent='通信に失敗しました。もう一度お試しください。';}
+    });
+  return false;
+};
+// 退出意図モーダル: 1セッション1回（localStorage で恒久ガード）。デスクトップは
+// 画面上端への mouseleave、加えて 25 秒経過のフォールバック。モバイルは mouseleave が
+// 不安定なので >60% スクロールでのみ起動。送信/×で二度と出さない。レイアウトはずらさない。
+(function(){
+  function modalSeen(){try{return localStorage.getItem('mu_drop_modal_seen')==='1';}catch(_){return false;}}
+  function markSeen(){try{localStorage.setItem('mu_drop_modal_seen','1');}catch(_){}}
+  var shown=false;
+  var modal=document.getElementById('mu-drop-modal');
+  if(!modal||modalSeen())return;
+  window.muDropCloseModal=function(){if(!modal)return;modal.classList.remove('on');markSeen();};
+  function show(){
+    if(shown||modalSeen()||!modal)return;
+    shown=true;
+    modal.classList.add('on');
+    // cta_view インプレッション計測（許可済み kind を再利用）。
+    try{if(window.MU_FUNNEL&&window.MU_FUNNEL.send){window.MU_FUNNEL.send('cta_view',{cta:'drop_modal'});}}catch(_){}
+  }
+  // 背景クリックで閉じる（カード内は無視）。
+  modal.addEventListener('click',function(e){if(e.target===modal)muDropCloseModal();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&modal.classList.contains('on'))muDropCloseModal();});
+  var isTouch = ('ontouchstart' in window)||navigator.maxTouchPoints>0;
+  if(isTouch){
+    // モバイル: スクロール深度 >60% で1回だけ。
+    var onScroll=function(){
+      var sc=window.scrollY||document.documentElement.scrollTop,
+          h=document.documentElement.scrollHeight-window.innerHeight;
+      if(h>0 && sc/h>0.6){show();window.removeEventListener('scroll',onScroll);}
+    };
+    window.addEventListener('scroll',onScroll,{passive:true});
+  } else {
+    // デスクトップ: 画面上端へ抜ける mouseleave。
+    document.addEventListener('mouseout',function(e){
+      if(!e.relatedTarget && !e.toElement && e.clientY<=4){show();}
+    });
+    // フォールバック: 25 秒後にまだ出していなければ出す。
+    setTimeout(show,25000);
+  }
+})();
+</script>
 </body>
 </html>

@@ -216,6 +216,27 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
          );
          CREATE INDEX IF NOT EXISTS idx_app_events_event ON app_events(event);",
     );
+
+    // MU Drop newsletter signup list. NOT a product/brand/order/image table,
+    // so it does not violate the catalog contract — but it keeps the
+    // `catalog_` prefix for namespacing. One row per email (UNIQUE), idempotent
+    // upsert keeps updated_at/source fresh without re-sending the welcome mail.
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS catalog_subscribers (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            email             TEXT NOT NULL UNIQUE,
+            source            TEXT,
+            unsubscribe_token TEXT,
+            confirmed_at      TEXT,
+            unsubscribed_at   TEXT,
+            created_at        TEXT NOT NULL,
+            updated_at        TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_catalog_subscribers_email ON catalog_subscribers(email);",
+    );
+    // Idempotent ALTER so an already-created table (without the column) picks up
+    // the unsubscribe flag on re-deploy. Duplicate-column error is swallowed.
+    let _ = conn.execute("ALTER TABLE catalog_subscribers ADD COLUMN unsubscribed_at TEXT", []);
 }
 
 /// How many founder cards are still available (0..100).
@@ -5417,6 +5438,199 @@ pub async fn send_make_link_email(to: String, sku: String, label: String, price_
         .json(&payload)
         .send()
         .await;
+}
+
+// ─── MU Drop newsletter signup ────────────────────────────────────────────
+// 訪問者のメール獲得（割引クーポンなし・価値提案のみ: 毎日1着の新作をいちばん
+// 早く届ける）。catalog_subscribers に1行/メール（UNIQUE）。冪等: 既存なら
+// updated_at/source を更新して ok を返す（ウェルカムメールは初回のみ）。
+// メール検証は make_email_ok と同一ルール。
+
+/// MU Drop インライン登録フォーム（割引なし・価値提案のみ）。`source` は
+/// homepage|shop|pdp のいずれか。shop_index / shop_pdp で再利用する。フォーム本体
+/// + 共有JS（muDropSubscribe）を1ページ1回だけ出すため、JSは drop_subscribe_js()
+/// に分離（同一ページに複数フォームを置いても定義は1回でよい）。
+pub fn drop_inline_form_html(source: &str) -> String {
+    format!(
+        r##"<section class="mu-drop" style="max-width:560px;margin:40px auto 8px;padding:30px 26px;border:1px solid rgba(127,127,127,0.22);border-radius:18px;text-align:center;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif">
+  <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>
+  <div style="font-size:18px;font-weight:500;line-height:1.5;margin-bottom:6px">毎日1着、世界に生まれる新作を最速で。</div>
+  <div style="font-size:12px;opacity:0.55;line-height:1.7;margin-bottom:18px">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
+  <form class="mu-drop-form" data-source="{source}" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;max-width:420px;margin:0 auto;flex-wrap:wrap;justify-content:center">
+    <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(127,127,127,0.4);background:rgba(255,255,255,0.04);color:inherit;font-size:14px">
+    <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
+    <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px" aria-live="polite"></div>
+  </form>
+</section>"##,
+        source = source,
+    )
+}
+
+/// muDropSubscribe(event) — フォーム送信を横取りして /api/subscribe/drop に POST。
+/// 成功時はフォームを差し替えて「ありがとう」状態に。1ページ1回だけ出力する。
+pub const DROP_SUBSCRIBE_JS: &str = r##"<script>
+window.muDropSubscribe=window.muDropSubscribe||function(e){
+  e.preventDefault();
+  var form=e.target, inp=form.querySelector('input[name=email]'),
+      btn=form.querySelector('button'), msg=form.querySelector('.mu-drop-msg'),
+      source=form.getAttribute('data-source')||'unknown',
+      email=(inp&&inp.value||'').trim();
+  if(!email){return false;}
+  if(btn){btn.disabled=true;}
+  if(msg){msg.style.color='';msg.textContent='送信中…';}
+  fetch('/api/subscribe/drop',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:email,source:source})})
+    .then(function(r){return r.json().catch(function(){return {ok:r.ok};});})
+    .then(function(j){
+      if(j&&j.ok){
+        var sec=form.closest('.mu-drop')||form.parentNode;
+        sec.innerHTML='<div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>'+
+          '<div style="font-size:17px;font-weight:500;line-height:1.6">ありがとう。最初のドロップをお送りします。</div>'+
+          '<div style="font-size:12px;opacity:0.55;margin-top:6px">Thanks — you’re on the list.</div>';
+      } else {
+        if(btn){btn.disabled=false;}
+        if(msg){msg.style.color='#e07b7b';msg.textContent=(j&&j.error)||'登録に失敗しました。もう一度お試しください。';}
+      }
+    })
+    .catch(function(){
+      if(btn){btn.disabled=false;}
+      if(msg){msg.style.color='#e07b7b';msg.textContent='通信に失敗しました。もう一度お試しください。';}
+    });
+  return false;
+};
+</script>"##;
+
+#[derive(serde::Deserialize)]
+pub struct DropSubscribeBody {
+    pub email: String,
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// POST /api/subscribe/drop {email, source} — MU Drop 登録。
+pub async fn subscribe_drop(State(db): State<Db>, axum::Json(q): axum::Json<DropSubscribeBody>) -> Response {
+    let email = q.email.trim().to_lowercase();
+    if !make_email_ok(&email) {
+        return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"メールアドレスを確認してください"}))).into_response();
+    }
+    // source ホワイトリスト（任意文字列をテーブルに入れない）。
+    let source = match q.source.as_deref() {
+        Some(s @ ("homepage" | "shop" | "pdp" | "modal")) => s,
+        _ => "unknown",
+    };
+    let now = crate::chrono_now();
+    let token = format!("{:016x}{:016x}", rand::random::<u64>(), rand::random::<u64>());
+
+    // INSERT ... ON CONFLICT で冪等に。changes()==1 かつ既存行が無かったときだけ
+    // 初回挿入とみなしてウェルカムを送る。挿入か更新かは「挿入前の存在確認」で判定。
+    let first_insert = {
+        let conn = db.lock().unwrap();
+        let existed: bool = conn
+            .query_row(
+                "SELECT 1 FROM catalog_subscribers WHERE email=?",
+                rusqlite::params![&email],
+                |_| Ok(()),
+            )
+            .is_ok();
+        let _ = conn.execute(
+            "INSERT INTO catalog_subscribers (email, source, unsubscribe_token, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(email) DO UPDATE SET
+                 source     = excluded.source,
+                 updated_at = excluded.updated_at",
+            rusqlite::params![&email, source, &token, &now],
+        );
+        !existed
+    };
+
+    crate::funnel_track_server(&db, "subscribe_drop", "/api/subscribe/drop", None, serde_json::json!({"source": source})).await;
+
+    if first_insert {
+        tokio::spawn(send_drop_welcome_email(email, token));
+    }
+    axum::Json(serde_json::json!({"ok":true})).into_response()
+}
+
+/// MU Drop ウェルカムメール（Resend・オプトイン受領通知）。初回登録時のみ送信。
+pub async fn send_drop_welcome_email(to: String, unsubscribe_token: String) {
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[subscribe/drop] RESEND_API_KEY unset — welcome mail to {} not sent", to);
+        return;
+    }
+    let unsub = format!("https://wearmu.com/api/subscribe/unsubscribe?token={}", unsubscribe_token);
+    let subject = "MU Drop へようこそ — 毎日1着、世界に生まれる新作をいちばん早く";
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:10px">MU DROP</div>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:0 0 14px">MU Drop へようこそ。</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.8;margin:0 0 18px">
+毎日1着、世界に生まれる MU の新作を、いちばん早くお届けします。<br>
+受注生産・1枚から。同じデザインは二度と生成されません。
+</p>
+<div style="text-align:center;margin:24px 0">
+<a href="https://wearmu.com/shop" style="display:inline-block;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px">いま並んでいる一着を見る →</a></div>
+<p style="font-size:11px;line-height:1.85;opacity:0.5;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">
+配信が不要になったら <a href="{unsub}" style="color:#ffd700">こちらから登録解除</a>。<br>
+お問い合わせ: <a href="mailto:info@wearmu.com" style="color:#ffd700">info@wearmu.com</a>
+</p>
+</div></div>"#,
+        unsub = unsub,
+    );
+    let payload = serde_json::json!({
+        "from": "━◯━ MU <noreply@wearmu.com>",
+        "reply_to": "info@wearmu.com",
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    });
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
+}
+
+#[derive(serde::Deserialize)]
+pub struct UnsubscribeQuery {
+    pub token: String,
+}
+
+/// GET /api/subscribe/unsubscribe?token=… — MU Drop 配信解除。
+pub async fn subscribe_unsubscribe(State(db): State<Db>, Query(q): Query<UnsubscribeQuery>) -> Response {
+    let token = q.token.trim();
+    let done = if token.is_empty() {
+        false
+    } else {
+        let conn = db.lock().unwrap();
+        let now = crate::chrono_now();
+        let n = conn
+            .execute(
+                "UPDATE catalog_subscribers SET unsubscribed_at=?, updated_at=? WHERE unsubscribe_token=?",
+                rusqlite::params![&now, &now, token],
+            )
+            .unwrap_or(0);
+        n > 0
+    };
+    let msg = if done {
+        "登録を解除しました。"
+    } else {
+        "リンクが無効です。すでに解除済みの可能性があります。"
+    };
+    let page = format!(
+        r#"<!doctype html><html lang=ja><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>MU Drop</title>
+<body style="margin:0;background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh">
+<div style="text-align:center;padding:40px 28px;max-width:420px">
+<div style="font-size:18px;font-weight:700;letter-spacing:0.4em;margin-bottom:20px">━◯━ MU</div>
+<p style="font-size:14px;line-height:1.9;opacity:0.85">{msg}</p>
+<a href="https://wearmu.com/shop" style="display:inline-block;margin-top:18px;color:#ffd700;text-decoration:none;font-size:13px">MU を見る →</a>
+</div></body></html>"#,
+        msg = msg,
+    );
+    Html(page).into_response()
 }
 
 // ─── /make メール認証ゲート ──────────────────────────────────────────────
@@ -10733,6 +10947,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 {pagination}
 {make_fab}
 {readmore}
+{drop_form}
 <footer>
   <span>© 2026 MU / Enabler Inc.</span>
   <a href="/shipping">配送</a>
@@ -10770,11 +10985,14 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 </script>
 <script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
+{drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         title = html_text(&title),
         meta_desc = html_attr(&meta_desc),
         canonical = html_attr(&canonical),
+        drop_form = drop_inline_form_html("shop"),
+        drop_js = DROP_SUBSCRIBE_JS,
         html_lang_attr = lang,
         hreflang_links = hreflang_links,
         robots_meta = robots_meta,
@@ -12457,6 +12675,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     {listen}
     {buy}
     {share}
+    {drop_form}
     {muon_banner}
     {suzuri}
     {trust}
@@ -12512,11 +12731,14 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
   document.addEventListener('keydown',function(e){{if(e.key==='Escape')close();}});
 }})();
 </script>
+{drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
         maker_line = maker_line,
         share = share_block,
+        drop_form = drop_inline_form_html("pdp"),
+        drop_js = DROP_SUBSCRIBE_JS,
         // OG: title=作品名(+作者) / description=行動喚起 — TL上で同文反復を避ける。
         // og:title は作品名+作者を先頭60字に収める(プラットフォーム再カット対策)。
         og_title = html_attr(&match &maker_info {
