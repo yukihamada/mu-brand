@@ -15,14 +15,16 @@ struct MakeView: View {
     @State private var result: MakeResult?
     @State private var errorMessage: String?
     @State private var showCheckout = false
+    @State private var showGift = false
     @FocusState private var promptFocused: Bool
 
     // 作っている間の演出
     @State private var makingStep = 0
     @State private var revealed = false      // 完成リビールのアニメ
 
-    // 着画(オンボディ mockup)。ポーリングで出来たら差し替え。
+    // 着画(モデル着用 or 平置き mockup)。ポーリングで出来たら差し替え。
     @State private var mockupURL: URL?
+    @State private var mockupIsModel = false
 
     // リミックス(続きを作る)の状態
     @State private var showRemix = false
@@ -144,6 +146,11 @@ struct MakeView: View {
             }
             .sheet(isPresented: $showCheckout) {
                 if let s = result?.checkoutUrl, let url = URL(string: s) {
+                    SafariView(url: url).ignoresSafeArea()
+                }
+            }
+            .sheet(isPresented: $showGift) {
+                if let s = result?.checkoutUrl, let url = URL(string: s + "&gift=1") {
                     SafariView(url: url).ignoresSafeArea()
                 }
             }
@@ -299,7 +306,7 @@ struct MakeView: View {
                 if mockupURL != nil && polishedURL == nil {
                     VStack { HStack {
                         Spacer()
-                        Text(String(localized: "make.onbody"))
+                        Text(String(localized: mockupIsModel ? "make.onbody.model" : "make.onbody"))
                             .font(.caption2.weight(.bold))
                             .padding(.horizontal, 8).padding(.vertical, 4)
                             .background(.black.opacity(0.6), in: Capsule())
@@ -360,19 +367,32 @@ struct MakeView: View {
                 .disabled(isPolishing)
             }
 
-            // 自動承認なら即購入。要審査(flagged)は checkout_url が null。
+            // 自動承認なら即購入 + プレゼント。要審査(flagged)は checkout_url が null。
             if r.checkoutUrl != nil {
                 Button {
                     Analytics.track("make_buy", ["sku": r.sku])
                     showCheckout = true
                 } label: {
-                    Text(String(localized: "pdp.buy"))
+                    Label(String(localized: "pdp.buy"), systemImage: "bolt.fill")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
                 .foregroundStyle(.black)
+                .disabled(isPolishing)
+
+                // 🎁 プレゼントする(相手の住所+メッセージはStripe側・金額なし納品書)
+                Button {
+                    Analytics.track("make_gift", ["sku": r.sku])
+                    showGift = true
+                } label: {
+                    Label(String(localized: "buy.gift"), systemImage: "gift.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
                 .disabled(isPolishing)
             } else {
                 Label(String(localized: "make.reviewPending"), systemImage: "clock")
@@ -395,7 +415,7 @@ struct MakeView: View {
                 withAnimation {
                     result = nil
                     polishedURL = nil
-                    mockupURL = nil
+                    mockupURL = nil; mockupIsModel = false
                     score = nil
                     polishNote = nil
                     revealed = false
@@ -548,7 +568,7 @@ struct MakeView: View {
                     showRemix = false
                     remixWords = ""
                     polishedURL = nil
-                    mockupURL = nil
+                    mockupURL = nil; mockupIsModel = false
                     score = nil
                     polishNote = nil
                     revealed = false
@@ -616,7 +636,7 @@ struct MakeView: View {
         // 新しい作品 → 全状態リセット
         result = nil
         polishedURL = nil
-        mockupURL = nil
+        mockupURL = nil; mockupIsModel = false
         score = nil
         polishNote = nil
         revealed = false
@@ -660,10 +680,12 @@ struct MakeView: View {
                     guard result?.sku == sku else { return }
                     withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
                         mockupURL = url
+                        mockupIsModel = peek.isModel ?? false
                     }
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 }
-                return
+                // モデル着用写真が出たら確定。まだ平置きなら、モデル写真を待って続行。
+                if peek.isModel == true { return }
             }
         }
     }

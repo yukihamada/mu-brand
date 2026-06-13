@@ -5240,28 +5240,41 @@ pub struct MakePeekQuery {
 /// 公開情報のみ・minna(=/make産)限定。mockup が design と別URLになった時だけ
 /// 「着用イメージ完成」として返す（心理的所有感: 着た姿を見せると評価が上がる）。
 pub async fn make_peek(State(db): State<Db>, Query(q): Query<MakePeekQuery>) -> Response {
-    let row: Option<(String, Option<String>, String)> = {
+    // 着画は「モデルが着ている写真(lifestyle)」を最優先 → 無ければ平置きmockup。
+    let row: Option<(String, Option<String>, Option<String>, String)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
             &format!(
-                "SELECT COALESCE(design_file,''), {ext}, status
-                 FROM catalog_products WHERE sku=? AND brand='minna'",
+                "SELECT COALESCE(p.design_file,''),
+                        (SELECT image_url FROM catalog_product_extras e
+                         WHERE e.sku=p.sku AND lower(e.label) LIKE 'lifestyle%'
+                           AND e.image_url IS NOT NULL AND e.image_url != ''
+                         ORDER BY e.id DESC LIMIT 1) AS lifestyle,
+                        {ext} AS flat,
+                        p.status
+                 FROM catalog_products p WHERE p.sku=? AND p.brand='minna'",
                 ext = MOCKUP_EXT_LIVE
             ),
             rusqlite::params![&q.sku],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .ok()
     };
-    let Some((design, mock, status)) = row else {
+    let Some((design, lifestyle, flat, status)) = row else {
         return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok": false}))).into_response();
     };
-    let mockup = mock.filter(|m| !m.is_empty() && *m != design);
+    // モデル着用写真(model)があればそれを着画に。無ければ平置きmockup(designと別物のとき)。
+    let model = lifestyle.filter(|m| !m.is_empty() && *m != design);
+    let mockup = model.clone().or_else(|| flat.filter(|m| !m.is_empty() && *m != design));
     // max-age=5: 全作成者が6秒間隔でポーリングする → CDN/ブラウザに逃がして
     // グローバルMutexのSQLiteをポーリング地獄から守る（鮮度は5秒で十分）。
     let mut headers = axum::http::HeaderMap::new();
     headers.insert("Cache-Control", axum::http::HeaderValue::from_static("public, max-age=5"));
-    (headers, axum::Json(serde_json::json!({"ok": true, "status": status, "mockup": mockup}))).into_response()
+    (headers, axum::Json(serde_json::json!({
+        "ok": true, "status": status, "mockup": mockup,
+        // is_model=true は「人が着ている写真」(平置きでなく)を意味する。
+        "is_model": model.is_some(),
+    }))).into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -8333,11 +8346,21 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
             }
         }
     }
-    // Cost-minimal: only the Printful on-body mockup (no extra Gemini images).
+    // Printful の平置きモックアップ(白背景にガーメント)。
     // song などデジタル種別(printful_product_id=0)は物理モックアップが無いのでスキップ。
     if spec.printful_product_id > 0 {
         let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
         tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
+        // 着画(モデルが着ている写真)。デザインを参照に Gemini が人物着用の
+        // エディトリアル写真を生成し、catalog_product_extras(label 'lifestyle')に保存。
+        // make_peek がこれを優先して返す → アプリは"人が着てる着画"を見せる。+¥6/枚。
+        if !flagged && !is_full_bleed && kind != "song" {
+            let (db_l, sku_l, kind_l, brief_l, slug_l) =
+                (db.clone(), sku.clone(), kind.to_string(), theme_brief.clone(), brand_slug.clone());
+            tokio::spawn(async move {
+                let _ = generate_lifestyle_photo(db_l, sku_l, slug_l, brief_l, kind_l, 0).await;
+            });
+        }
     }
     // MUスコア: 公開即採点 (デザイン画像で判定 — mockupはまだ無い)。
     // 失敗してもPDP/ソートはCOALESCE 40で動くのでログだけ残して続行。

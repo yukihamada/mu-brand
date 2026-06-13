@@ -117,11 +117,13 @@ struct MakeResult: Codable {
     var priceLabel: String { "¥\(retailJpy.formatted())" }
 }
 
-// /api/make/peek?sku= — 着画(オンボディmockup)が出来たかをポーリング。
+// /api/make/peek?sku= — 着画(モデル着用 or 平置きmockup)が出来たかをポーリング。
 struct PeekResult: Codable {
     let ok: Bool
     let status: String?
     let mockup: String?
+    let isModel: Bool?     // true = 人が着ている写真
+    enum CodingKeys: String, CodingKey { case ok, status, mockup, isModel = "is_model" }
     var mockupURL: URL? { mockup.flatMap(URL.init(string:)) }
 }
 

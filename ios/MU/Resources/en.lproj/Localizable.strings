@@ -107,3 +107,5 @@
 "push.openSettings" = "Allow notifications in Settings";
 "push.why" = "We'll let you know about new drops and when your design sells.";
 "account.worn" = "Your designs have been worn %d times worldwide 🌍";
+"buy.gift" = "Send as a gift 🎁";
+"make.onbody.model" = "On a model";

@@ -107,3 +107,5 @@
 "push.openSettings" = "設定で通知を許可する";
 "push.why" = "新作ドロップや、あなたの作品が売れたときにお知らせします。";
 "account.worn" = "あなたの作品が、世界で %d回 着られています 🌍";
+"buy.gift" = "プレゼントする 🎁";
+"make.onbody.model" = "モデル着用";

@@ -6,6 +6,7 @@ import SwiftUI
 struct ProductDetailView: View {
     let product: FeedProduct
     @State private var showCheckout = false
+    @State private var showGift = false
 
     var body: some View {
         ScrollView {
@@ -50,6 +51,18 @@ struct ProductDetailView: View {
                 .buttonStyle(.borderedProminent)
                 .foregroundStyle(.black)
 
+                // 🎁 プレゼントする
+                Button {
+                    Analytics.track("pdp_gift", ["sku": product.sku])
+                    showGift = true
+                } label: {
+                    Label(String(localized: "buy.gift"), systemImage: "gift.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
+                }
+                .buttonStyle(.bordered)
+
                 Link(destination: URL(string: product.pdpUrl)!) {
                     Label(String(localized: "pdp.openWeb"), systemImage: "safari")
                         .font(.subheadline)
@@ -64,6 +77,11 @@ struct ProductDetailView: View {
         .task { Analytics.track("pdp_view", ["sku": product.sku]) }
         .sheet(isPresented: $showCheckout) {
             if let url = URL(string: product.checkoutUrl) {
+                SafariView(url: url).ignoresSafeArea()
+            }
+        }
+        .sheet(isPresented: $showGift) {
+            if let url = URL(string: product.checkoutUrl + "&gift=1") {
                 SafariView(url: url).ignoresSafeArea()
             }
         }
