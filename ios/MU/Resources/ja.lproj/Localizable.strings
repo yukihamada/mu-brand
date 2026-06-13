@@ -23,7 +23,12 @@
 "make.making" = "作っています…";
 "make.royalty" = "あなたの印税";
 "make.priceLine" = "価格 %@";
-"make.earnLine" = "売れたら %@/着";
+"make.earnLine" = "売れたら %1$@ / %2$@";
+"unit.apparel" = "着";
+"unit.sticker" = "枚";
+"unit.mug" = "個";
+"unit.bag" = "個";
+"unit.generic" = "点";
 "make.estimate" = "(目安)";
 "make.done" = "できた！棚に並びました 🎉";
 "make.onbody" = "着画";

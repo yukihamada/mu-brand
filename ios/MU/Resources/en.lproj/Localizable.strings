@@ -23,7 +23,12 @@
 "make.making" = "Making…";
 "make.royalty" = "Your royalty";
 "make.priceLine" = "Price %@";
-"make.earnLine" = "%@ per sale";
+"make.earnLine" = "%1$@ / %2$@ sold";
+"unit.apparel" = "tee";
+"unit.sticker" = "sticker";
+"unit.mug" = "mug";
+"unit.bag" = "bag";
+"unit.generic" = "item";
 "make.estimate" = "(est.)";
 "make.done" = "Done! It's on the shelf 🎉";
 "make.onbody" = "On body";

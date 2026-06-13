@@ -226,7 +226,8 @@ struct MakeView: View {
             HStack(spacing: 4) {
                 Text(String(format: String(localized: "make.priceLine"), "¥\(price.formatted())"))
                 Text("·").foregroundStyle(.tertiary)
-                Text(String(format: String(localized: "make.earnLine"), "¥\(earn.formatted())"))
+                // 単位は商品によって変える(服=着・シール=枚・マグ=個…)
+                Text(String(format: String(localized: "make.earnLine"), "¥\(earn.formatted())", unitFor(kind)))
                     .foregroundStyle(.tint)
                 if kind == .auto {
                     Text(String(localized: "make.estimate")).foregroundStyle(.tertiary)
@@ -237,6 +238,17 @@ struct MakeView: View {
         }
         .padding(10)
         .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    // 商品ごとの助数詞(着/枚/個…)。日本語は items.counter で出し分け。
+    private func unitFor(_ k: MakeKind) -> String {
+        switch k {
+        case .tee, .hoodie, .rashguard: return String(localized: "unit.apparel")  // 着
+        case .sticker: return String(localized: "unit.sticker")                    // 枚
+        case .mug: return String(localized: "unit.mug")                            // 個
+        case .tote: return String(localized: "unit.bag")                           // 個
+        case .auto: return String(localized: "unit.generic")                       // 点
+        }
     }
 
     // 種類別の基準価格(印税プレビュー用。サーバの spec.retail_jpy と一致)。
@@ -766,8 +778,10 @@ struct MakeView: View {
                     maybePromptPush()
                     startPolling(sku: r.sku)
                 }
-                // いろいろスワイプで見比べられるよう、もう2案を裏で生成して追加。
-                await autoVariations(prompt: text, count: 2)
+                // いろいろスワイプで見比べられるよう、もう1案を裏で生成して追加。
+                // (案を増やしすぎると時間あたりの生成上限に当たるので控えめに。
+                //  さらに欲しい人は「もう1案つくる」で追加できる。)
+                await autoVariations(prompt: text, count: 1)
             } catch {
                 await MainActor.run { errorMessage = error.localizedDescription; isMaking = false }
             }
