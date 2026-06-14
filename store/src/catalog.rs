@@ -11385,6 +11385,18 @@ pub struct PdpQuery {
     pub made: Option<String>,
 }
 
+/// BJJ 垂直のブランド判定 — 「なぜ柔術家がこれを選ぶか」購入理由ブロックを
+/// 出す対象を決める。`brand="bjj"` のギャラリー商品だけでなく、JiuFlow /
+/// 山野 / TATAMI など MU×BJJ コラボ各ブランドも勝ち馬 BJJ 垂直なので含める。
+/// これらが対象外だった間、約 84 SKU(jiuflow 60 / yamano 19 / tatami 5)で
+/// 転換コピーが欠落していた(brand="bjj" の 60 SKU だけ表示されていた)。
+fn is_bjj_brand(brand: &str) -> bool {
+    matches!(
+        brand.to_ascii_lowercase().as_str(),
+        "bjj" | "jiuflow" | "jiujitsu-yamano" | "tatami"
+    )
+}
+
 pub async fn shop_pdp(
     State(db): State<Db>,
     Path(sku): Path<String>,
@@ -11950,6 +11962,40 @@ pub async fn shop_pdp(
     <small>注文を受けてから 1 枚ずつ縫製。 完売・在庫廃棄 ゼロ。</small>
   </div>
 </div>"##, sold_row = sold_row)
+    };
+
+    // ── BJJ reason-to-buy (brand=bjj only) ───────────────────────────────────
+    // The /bjj gallery hero carries the conversion framing ("柔術が分かる人に刺さる
+    // ×自分の道場・帯で作れる"), but organic/social traffic lands DIRECTLY on a
+    // BJJ PDP and never sees it — the #1 documented funnel gap (0 conversions).
+    // Mirror that framing here, right where the buy decision happens, plus the
+    // "doesn't quite fit you? make your own" escape hatch (captures the visitor
+    // whose specific dojo/belt/move isn't in the 36-card gallery). Apparel only.
+    let bjj_reason_block = if is_bjj_brand(&brand)
+        && !is_digital && !is_house && !is_device
+    {
+        let make_href = if lang == "en" { "/make?lang=en" } else { "/make" };
+        if lang == "en" {
+            format!(r##"<div class="bjj-why">
+  <div class="bjj-why-h">🥋 Why grapplers pick this</div>
+  <ul>
+    <li>An inside joke only people who <b>actually train</b> will get — wear it, get the nod on the mats.</li>
+    <li>Made to order, <b>from 1 piece</b> · 30-day free exchange for size or damage.</li>
+    <li>Not quite your vibe? <a href="{href}" data-funnel="cta_click" data-funnel-cta="pdp_bjj_make">Make your own with your dojo, belt or signature move — 30s →</a></li>
+  </ul>
+</div>"##, href = make_href)
+        } else {
+            format!(r##"<div class="bjj-why">
+  <div class="bjj-why-h">🥋 なぜ柔術家がこれを選ぶか</div>
+  <ul>
+    <li>道場で「それな」と伝わる、<b>柔術が分かる人にだけ刺さる</b>ネタ。</li>
+    <li>受注生産で<b>1 着から</b>・サイズ違い / 破損は 30 日 無料交換。</li>
+    <li>このネタがピンと来なければ <a href="{href}" data-funnel="cta_click" data-funnel-cta="pdp_bjj_make">あなたの道場・帯・得意技で、世界に 1 枚を 30 秒で →</a></li>
+  </ul>
+</div>"##, href = make_href)
+        }
+    } else {
+        String::new()
     };
 
     // 試聴ブロック: description_ja か meta_json.audio_url に
@@ -12611,6 +12657,12 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .body h1{{font-size:26px;line-height:1.3;margin-bottom:8px;font-weight:900;letter-spacing:.01em}}
 .body .tagline{{font-size:13.5px;line-height:1.75;color:rgba(245,245,240,0.7);margin:0 0 16px;font-weight:400}}
 .muon-b{{margin:10px 0 4px;padding:11px 14px;border:1px solid rgba(255,215,0,0.35);background:linear-gradient(180deg,rgba(255,215,0,0.06),rgba(255,215,0,0.02));border-radius:8px;font-size:12px;line-height:1.7;color:rgba(245,245,240,0.85)}}
+.bjj-why{{margin:14px 0 4px;padding:12px 15px;border:1px solid rgba(201,169,110,0.38);background:linear-gradient(180deg,rgba(201,169,110,0.07),rgba(201,169,110,0.02));border-radius:10px;font-size:12.5px;line-height:1.7;color:rgba(245,245,240,0.84)}}
+.bjj-why-h{{font-weight:700;color:#c9a96e;letter-spacing:0.04em;margin-bottom:6px;font-size:13px}}
+.bjj-why ul{{margin:0;padding-left:18px}}
+.bjj-why li{{margin:3px 0}}
+.bjj-why a{{color:#c9a96e;text-decoration:none;border-bottom:1px dotted rgba(201,169,110,0.5)}}
+.bjj-why a:hover{{border-bottom-style:solid}}
 .body .brand{{font-size:10px;letter-spacing:0.3em;color:#ffd700;text-transform:uppercase;margin-bottom:8px}}
 .body .price{{font-size:22px;font-family:monospace;font-weight:700;color:#fff;margin-bottom:18px}}
 .body .desc{{color:rgba(245,245,240,0.78);font-size:13px;line-height:1.85;margin-bottom:22px}}
@@ -12669,6 +12721,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     <div class="brand">{brand}</div>
     <h1>{headline}</h1>
     {tagline_html}
+    {bjj_reason}
     {maker_line}
     <div class="price">¥{price} <small class="fx">≈ ${usd} / €{eur}</small></div>
     {sealed}
@@ -12758,6 +12811,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         tagline_html = tagline_html,
         muon_banner = muon_banner,
         made_banner = made_banner,
+        bjj_reason = bjj_reason_block,
         short_title = html_text(&short_title),
         desc_short = html_attr(&meta_desc_short),
         sealed = sealed_block,
