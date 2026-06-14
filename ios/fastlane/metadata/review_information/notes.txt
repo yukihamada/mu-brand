@@ -1,0 +1,5 @@
+No login is required to use this app. Tap the center "作る (Make)" tab, type any words (e.g. "a tee like the sea at dawn") or use the microphone, and a design is generated within ~20 seconds. The Live and Shop tabs show real generated designs from the production feed.
+
+Purchases open a Stripe-hosted checkout in Safari (no in-app purchase / no digital goods are sold in-app). Push notifications and the QR scanner are optional and request permission on first use.
+
+All content shown is the brand's own AI-generated apparel. Sales and production numbers are public at https://wearmu.com/transparency .
