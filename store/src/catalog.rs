@@ -10734,26 +10734,38 @@ pub async fn shop_index(
         .unwrap_or_else(|| "https://wearmu.com/static/og-default.png".to_string());
     // CollectionPage + ItemList (top 24 of this page) — category-level
     // structured data; per-product Product JSON-LD lives on each PDP.
-    let ld_items = items
+    // Built via serde_json so every string (incl. `title`, which embeds the
+    // user-controlled ?q= search term and the UGC brand name) is JSON-escaped,
+    // then `<` / `>` / `&` are unicode-escaped so a crafted query can't break
+    // out of this inline <script> (reflected XSS). Plain text inside a
+    // <script> is NOT HTML-entity-decoded, so < is both safe and valid.
+    let ld_items: Vec<serde_json::Value> = items
         .iter()
         .take(24)
         .enumerate()
         .map(|(i, p)| {
-            format!(
-                r#"{{"@type":"ListItem","position":{pos},"url":"https://wearmu.com/shop/{sku}"}}"#,
-                pos = i + 1,
-                sku = urlencoding::encode(&p.sku),
-            )
+            serde_json::json!({
+                "@type": "ListItem",
+                "position": i + 1,
+                "url": format!("https://wearmu.com/shop/{}", urlencoding::encode(&p.sku)),
+            })
         })
-        .collect::<Vec<_>>()
-        .join(",");
-    let ld_json = format!(
-        r#"{{"@context":"https://schema.org","@type":"CollectionPage","name":"{name}","url":"{url}","mainEntity":{{"@type":"ItemList","numberOfItems":{n},"itemListElement":[{items}]}}}}"#,
-        name = title.replace('"', ""),
-        url = canonical,
-        n = total_active,
-        items = ld_items,
-    );
+        .collect();
+    let ld_json = serde_json::json!({
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": title,
+        "url": canonical,
+        "mainEntity": {
+            "@type": "ItemList",
+            "numberOfItems": total_active,
+            "itemListElement": ld_items,
+        },
+    })
+    .to_string()
+    .replace('<', "\\u003c")
+    .replace('>', "\\u003e")
+    .replace('&', "\\u0026");
 
     // Pagination: prev / page-of-pages / next. brand+sort+kind+q persist.
     let mut bq = String::new();
