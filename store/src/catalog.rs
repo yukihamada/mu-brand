@@ -5457,7 +5457,7 @@ pub fn drop_inline_form_html(source: &str) -> String {
   <div style="font-size:18px;font-weight:500;line-height:1.5;margin-bottom:6px">毎日1着、世界に生まれる新作を最速で。</div>
   <div style="font-size:12px;opacity:0.55;line-height:1.7;margin-bottom:18px">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
   <form class="mu-drop-form" data-source="{source}" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;max-width:420px;margin:0 auto;flex-wrap:wrap;justify-content:center">
-    <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(127,127,127,0.4);background:rgba(255,255,255,0.04);color:inherit;font-size:14px">
+    <input type="email" name="email" required aria-label="メールアドレス" placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(127,127,127,0.4);background:rgba(255,255,255,0.04);color:inherit;font-size:14px">
     <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
     <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px" aria-live="polite"></div>
   </form>

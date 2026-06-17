@@ -32,7 +32,7 @@ bs58 = "0.5"
 # cryptographically wallet-proven ("wallet_sig"). Pure-Rust ed25519, no openssl.
 ed25519-dalek = "2"
 rand = "0.8"
-rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
+rust-s3 = { version = "0.37", default-features = false, features = ["tokio-rustls-tls"] }
 urlencoding = "2.1"
 encoding_rs = "0.8"   # 送り状CSVの Shift_JIS(CP932) 出力 (ヤマトB2クラウド/佐川e飛伝)
 # Safe Markdown → HTML for auto-blog. Strips script tags + javascript: URLs.
