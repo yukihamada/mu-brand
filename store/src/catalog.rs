@@ -3332,6 +3332,213 @@ fn compose_card_mockup(design_png: &[u8], kind: &str) -> Result<Vec<u8>, String>
     Ok(buf.into_inner())
 }
 
+/// Crew-sock silhouette (alpha = sock body), 1200×1200. Used by
+/// `compose_sock_mockup` so socks get a sock-shaped mockup with no Printful
+/// dependency. NOTE: `include_bytes!` is NOT re-evaluated by `cargo clean -p`;
+/// run a full `cargo clean` if this PNG changes.
+const SOCK_MASK_PNG: &[u8] = include_bytes!("../static/mockup/sock_mask.png");
+
+/// MU-native sock mockup — composite the design onto a clean crew-sock
+/// silhouette, fully local (no Printful mockup-generator). The design is
+/// width-fit onto the leg/shin (never cropped horizontally), the rest of the
+/// sock is filled with the design's own background colour, the whole thing is
+/// clipped to the sock alpha mask, shaded with a soft cylinder gradient for
+/// depth and dropped onto a cream studio card with a contact shadow.
+/// Deterministic + offline, so a `socks` product ALWAYS gets a sock-shaped
+/// mockup instead of Printful's flat print panel / the generic cream card.
+fn compose_sock_mockup(design_png: &[u8]) -> Result<Vec<u8>, String> {
+    use image::{imageops, Rgba, RgbaImage};
+    let (cw, ch) = (1200u32, 1200u32);
+
+    let mask = image::load_from_memory(SOCK_MASK_PNG)
+        .map_err(|e| format!("load sock mask: {}", e))?
+        .to_rgba8();
+    if mask.dimensions() != (cw, ch) {
+        return Err("sock mask must be 1200x1200".into());
+    }
+    // Sock bounding box (from the mask alpha).
+    let (mut x0, mut y0, mut x1, mut y1) = (cw, ch, 0u32, 0u32);
+    for y in 0..ch {
+        for x in 0..cw {
+            if mask.get_pixel(x, y)[3] > 16 {
+                if x < x0 { x0 = x; }
+                if y < y0 { y0 = y; }
+                if x > x1 { x1 = x; }
+                if y > y1 { y1 = y; }
+            }
+        }
+    }
+    if x1 <= x0 || y1 <= y0 {
+        return Err("empty sock mask".into());
+    }
+    let (bw, bh) = (x1 - x0 + 1, y1 - y0 + 1);
+
+    let design = image::load_from_memory(design_png)
+        .map_err(|e| format!("load design: {}", e))?
+        .to_rgba8();
+    let (dw, dh) = design.dimensions();
+    if dw == 0 || dh == 0 {
+        return Err("empty design".into());
+    }
+    // Design background colour (corner average) fills the foot + side margins
+    // so there's no hard letterbox seam inside the sock.
+    let edge = {
+        let corners = [
+            design.get_pixel(0, 0),
+            design.get_pixel(dw - 1, 0),
+            design.get_pixel(0, dh - 1),
+            design.get_pixel(dw - 1, dh - 1),
+        ];
+        let mut s = [0u32; 3];
+        for p in &corners {
+            for i in 0..3 { s[i] += p[i] as u32; }
+        }
+        Rgba([(s[0] / 4) as u8, (s[1] / 4) as u8, (s[2] / 4) as u8, 255])
+    };
+    let mut fabric = RgbaImage::from_pixel(cw, ch, edge);
+
+    // Measure the LEG (the vertical tube) from the upper region of the sock —
+    // that's the display surface, not the L-shaped bbox (whose centre falls
+    // over the foot). Width-fit the design to the leg and centre it on the
+    // shin so a motif reads cleanly; the foot stays plain fabric.
+    let (ly0, ly1) = (
+        y0 + (bh as f32 * 0.05) as u32,
+        y0 + (bh as f32 * 0.42) as u32,
+    );
+    let (mut lx0, mut lx1) = (cw, 0u32);
+    for y in ly0..=ly1 {
+        for x in x0..=x1 {
+            if mask.get_pixel(x, y)[3] > 16 {
+                if x < lx0 { lx0 = x; }
+                if x > lx1 { lx1 = x; }
+            }
+        }
+    }
+    let legw = if lx1 > lx0 { lx1 - lx0 + 1 } else { bw };
+    let nw = (legw as f32 * 0.86).round().max(1.0) as u32;
+    let scale = nw as f32 / dw as f32;
+    let nh = ((dh as f32) * scale).round().max(1.0) as u32;
+    let layer = imageops::resize(&design, nw, nh, imageops::FilterType::Lanczos3);
+    let px = lx0 as i64 + ((legw.saturating_sub(nw)) / 2) as i64;
+    let py = y0 as i64 + (bh as f32 * 0.10) as i64;
+    imageops::overlay(&mut fabric, &layer, px, py);
+
+    // Clip to the sock + soft cylinder shading (bright centre → darker edges).
+    let cx = (x0 + x1) as f32 / 2.0;
+    let half = (bw as f32 / 2.0).max(1.0);
+    let mut sock = RgbaImage::from_pixel(cw, ch, Rgba([0, 0, 0, 0]));
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let a = mask.get_pixel(x, y)[3];
+            if a == 0 { continue; }
+            let t = ((x as f32 - cx) / half).clamp(-1.0, 1.0);
+            let shade = 1.06 - 0.26 * (t * t);
+            let fp = fabric.get_pixel(x, y);
+            let r = (fp[0] as f32 * shade).clamp(0.0, 255.0) as u8;
+            let g = (fp[1] as f32 * shade).clamp(0.0, 255.0) as u8;
+            let b = (fp[2] as f32 * shade).clamp(0.0, 255.0) as u8;
+            sock.put_pixel(x, y, Rgba([r, g, b, a]));
+        }
+    }
+
+    // Cream studio card + soft contact shadow under the sock.
+    let mut base = RgbaImage::from_pixel(cw, ch, Rgba([244, 241, 234, 255]));
+    let mut shadow = RgbaImage::from_pixel(cw, ch, Rgba([0, 0, 0, 0]));
+    for y in y0..=y1 {
+        for x in x0..=x1 {
+            let a = mask.get_pixel(x, y)[3];
+            if a > 16 {
+                shadow.put_pixel(x, y, Rgba([20, 22, 28, (a as f32 * 0.30) as u8]));
+            }
+        }
+    }
+    let shadow = imageops::blur(&shadow, 14.0);
+    imageops::overlay(&mut base, &shadow, 18, 24);
+    imageops::overlay(&mut base, &sock, 0, 0);
+
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    image::DynamicImage::ImageRgba8(base)
+        .into_rgb8()
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .map_err(|e| format!("encode: {}", e))?;
+    Ok(buf.into_inner())
+}
+
+/// Primary mockup path for `socks`: download the design, compose the MU-native
+/// sock mockup (sock-shaped, no Printful), mirror to R2 and swap
+/// `mockup_url_external`. Then kick off a best-effort photoreal "worn sock"
+/// Gemini render as a gallery sub-image (`catalog_product_extras`). The primary
+/// composite is deterministic and offline, so socks ALWAYS get a sock-shaped
+/// hero image even if Gemini / Printful are unavailable.
+async fn mu_sock_mockup(db: Db, sku: String, design_url: String) -> Result<(), String> {
+    if !design_url.starts_with("http") {
+        return Err("no design url for sock mockup".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let bytes = client.get(&design_url).send().await
+        .map_err(|e| format!("download design: {}", e))?
+        .bytes().await
+        .map_err(|e| format!("read design: {}", e))?
+        .to_vec();
+    let mockup = compose_sock_mockup(&bytes)?;
+    let r2_key = format!("catalog/mockups/{}.png", sku);
+    let r2_url = crate::store_r2_bytes(&r2_key, &mockup, "image/png")
+        .await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
+            rusqlite::params![&r2_url, &sku],
+        );
+    }
+    tracing::info!("[catalog/mockup] MU sock sku={} → {}", sku, r2_url);
+    // Best-effort photoreal worn-sock sub-image (gallery). Detached so the
+    // hero image is live immediately; the Gemini render fills in when ready.
+    tokio::spawn(async move {
+        if let Err(e) = sock_worn_subimage(db, sku.clone(), design_url).await {
+            tracing::warn!("[catalog/mockup] sock worn sub-image skipped sku={} ({})", sku, e);
+        }
+    });
+    Ok(())
+}
+
+/// Best-effort: render a photoreal "worn sock" featuring the exact design via
+/// Gemini (design PNG passed as a reference image) and attach it to the product
+/// as a gallery extra. Failure is non-fatal — the deterministic composite from
+/// `mu_sock_mockup` is always the hero image.
+async fn sock_worn_subimage(db: Db, sku: String, design_url: String) -> Result<(), String> {
+    let prompt = "Photoreal e-commerce product photo of a single premium crew sock \
+        standing upright on a clean light-grey studio surface, soft daylight, subtle \
+        contact shadow. The sock is printed with EXACTLY the artwork in the reference \
+        image on the leg/shin — keep the same colours and composition, do NOT add or \
+        alter any text or logo. Athletic sublimation sock, slight knit texture, centred \
+        in frame, no people, no extra props, no watermark, no border.";
+    let img = crate::gemini::call_gemini_with_image(prompt, &[design_url.as_str()]).await?;
+    let r2_key = format!("catalog/mockups/{}-worn.png", sku);
+    let r2_url = crate::store_r2_bytes(&r2_key, &img.bytes, &img.mime)
+        .await
+        .ok_or_else(|| "R2 upload failed".to_string())?;
+    {
+        let conn = db.lock().unwrap();
+        // Idempotent: replace any prior worn sub-image for this sku.
+        let _ = conn.execute(
+            "DELETE FROM catalog_product_extras WHERE sku=? AND label='worn'",
+            rusqlite::params![&sku],
+        );
+        let _ = conn.execute(
+            "INSERT INTO catalog_product_extras (sku, label, image_url, sort_order)
+             VALUES (?, 'worn', ?, 50)",
+            rusqlite::params![&sku, &r2_url],
+        );
+    }
+    tracing::info!("[catalog/mockup] sock worn sub-image sku={} → {}", sku, r2_url);
+    Ok(())
+}
+
 /// Download the design, compose a local card mockup, mirror to R2 and swap
 /// `mockup_url_external`. The MU-side fallback path for `generate_onbody_mockup`.
 async fn local_card_to_r2(db: Db, sku: String, design_url: String) -> Result<(), String> {
@@ -3363,11 +3570,14 @@ async fn local_card_to_r2(db: Db, sku: String, design_url: String) -> Result<(),
     Ok(())
 }
 
-/// On-body mockup entry point. Tries Printful's mockup-generator first (real
-/// garment render); if Printful can't do this product — no `position` geometry
-/// for the kind, AOP, timeout, or a digital/manual kind with `printful_product
-/// <= 0` — falls back to a MU-side local card so the shop never shows a bare
-/// design. Call sites are unchanged.
+/// On-body mockup entry point. For `socks` we render an MU-native sock-shaped
+/// mockup first (deterministic, offline) — Printful's mockup-generator only
+/// returns a flat all-over print panel for socks, which doesn't read as a sock.
+/// Otherwise tries Printful's mockup-generator (real garment render); if
+/// Printful can't do this product — no `position` geometry for the kind, AOP,
+/// timeout, or a digital/manual kind with `printful_product <= 0` — falls back
+/// to a MU-side local card so the shop never shows a bare design. Call sites
+/// are unchanged.
 pub async fn generate_onbody_mockup(
     db: Db,
     sku: String,
@@ -3375,6 +3585,14 @@ pub async fn generate_onbody_mockup(
     printful_variant: i64,
     design_url: String,
 ) -> Result<(), String> {
+    if kind_from_sku(&sku) == "socks" {
+        match mu_sock_mockup(db.clone(), sku.clone(), design_url.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(e) => tracing::warn!(
+                "[catalog/mockup] MU sock render failed sku={} ({}) → printful/card fallback", sku, e
+            ),
+        }
+    }
     if printful_product > 0 {
         match printful_onbody_mockup(
             db.clone(), sku.clone(), printful_product, printful_variant, design_url.clone(),
@@ -17908,3 +18126,31 @@ mod printful_item_files_tests {
     }
 }
 
+
+#[cfg(test)]
+mod sock_mockup_tests {
+    use super::*;
+
+    /// A tiny valid PNG so we exercise the real decode → composite → encode path.
+    fn tiny_png() -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(64, 64, image::Rgba([250, 250, 250, 255]));
+        let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        buf.into_inner()
+    }
+
+    #[test]
+    fn sock_mockup_renders_1200_square_png() {
+        let out = compose_sock_mockup(&tiny_png()).expect("compose ok");
+        let img = image::load_from_memory(&out).expect("valid png");
+        assert_eq!(img.width(), 1200);
+        assert_eq!(img.height(), 1200);
+    }
+
+    #[test]
+    fn sock_mockup_rejects_garbage_design() {
+        assert!(compose_sock_mockup(b"not a png").is_err());
+    }
+}
