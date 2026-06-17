@@ -1414,6 +1414,34 @@ pub async fn agent_affiliate(
     .into_response()
 }
 
+// ─── GET /api/agent/quote — 製造ルーター(見積) ──────────────────────────
+//
+// 「これ作れる? いくら? 何日? どこで?」に答える read-only 見積。注文も DB も
+// 触らないので認証不要（誰でも・登録前でも叩ける）。実体は catalog::route_request。
+// 例: GET /api/agent/quote?kind=tee&qty=1&region=jp&budget=6000
+//     GET /api/agent/quote?description=弟子屈の道場用の道着&qty=20
+pub async fn agent_quote(
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let kind = q.get("kind").map(|s| s.as_str());
+    let description = q
+        .get("description")
+        .or_else(|| q.get("q"))
+        .or_else(|| q.get("text"))
+        .map(|s| s.as_str());
+    let qty = q.get("qty").and_then(|v| v.parse::<i64>().ok()).unwrap_or(1);
+    let region = q.get("region").map(|s| s.as_str());
+    let budget = q.get("budget").or_else(|| q.get("budget_jpy")).and_then(|v| v.parse::<i64>().ok());
+
+    if kind.is_none() && description.is_none() {
+        return json_err(
+            StatusCode::BAD_REQUEST,
+            "pass `kind` (e.g. tee/gi/seamless_knit) or `description` (free text). optional: qty, region, budget",
+        );
+    }
+    Json(crate::catalog::route_request(kind, description, qty, region, budget)).into_response()
+}
+
 // ─── MA approval (is_ma_council_email-gated) ────────────────────────────
 
 /// Resolve caller email + assert MA-council membership, or return the error
