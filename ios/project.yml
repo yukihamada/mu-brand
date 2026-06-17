@@ -33,6 +33,9 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: "商品タグやムーンマーカーのQRコードを読み取り、真贋・音・つくる画面を開くために使います。"
         INFOPLIST_KEY_NSMicrophoneUsageDescription: "「声で作る」で、話した言葉からデザインを生成するために使います。"
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "話した言葉を文字に変換して、作りたいものを入力するために使います。"
+        # APNs: Push Notifications capability。自動署名+APIキー(-allowProvisioningUpdates)が
+        # アプリIDにPush capabilityを付与しプロファイルを再生成する。
+        CODE_SIGN_ENTITLEMENTS: MU/MU.entitlements
   MUWidget:
     type: app-extension
     platform: iOS
@@ -44,3 +47,29 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: MUWidget/Info.plist
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+  # データ層(JSON契約 + kind whitelist)のネットワーク不要ユニットテスト。
+  # @testable import MU のためホストアプリ(MU)に依存させる。
+  MUTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - MUTests
+    dependencies:
+      - target: MU
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu.tests
+
+# scheme に test ターゲットを束ねて `xcodebuild -scheme MU test` を通す。
+schemes:
+  MU:
+    build:
+      targets:
+        MU: all
+    test:
+      targets:
+        - MUTests
+      gatherCoverageData: true
+    run:
+      config: Debug
