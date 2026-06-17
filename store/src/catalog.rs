@@ -7892,16 +7892,25 @@ pub async fn agent_chat(
          世界に一つの服やグッズをAIが作って即販売できる。あなたはユーザーの言葉から意図を判定し、\
          アプリのアクションを起こすために **JSONのみ** を返す(前後に文章・コードフェンス禁止)。\n\
          スキーマ: {{\"reply\":\"<画面に出す短い日本語の一言>\",\
-         \"action\":\"make|sales|list_mine|none\",\
-         \"args\":{{\"prompt\":\"<makeのときだけ: 具体的なデザインの依頼文(日英可)>\",\
-         \"kind\":\"tee|hoodie|sticker|rashguard|tote|mug|\",\"royalty\":<10〜50 または null>}}}}\n\
-         判定ルール:\n\
-         - 作りたい/つくって/デザインして 等 → action=\"make\"。args.prompt に魅力的で具体的な\
-           デザインブリーフを入れる(種類が明示されていれば kind も)。\n\
-         - 売上/いくら売れた/収益 → action=\"sales\"。\n\
-         - 自分の作品/何を作った/一覧 → action=\"list_mine\"。\n\
+         \"action\":\"make|polish|remix|sales|list_mine|status|affiliate|ship|none\",\
+         \"args\":{{\"prompt\":\"<makeのとき: 具体的なデザインの依頼文(日英可)>\",\
+         \"kind\":\"tee|hoodie|sticker|rashguard|tote|mug|\",\"royalty\":<10〜50 または null>,\
+         \"sku\":\"<polish/remixのとき: 対象のSKU(例 MAKE-...)>\",\
+         \"words\":\"<remixのとき: アレンジの指示(日英可)>\"}}}}\n\
+         判定ルール(自信のあるものだけ。曖昧なら none):\n\
+         - 作りたい/つくって/デザイン/create/design → action=\"make\"。args.prompt に\
+           魅力的で具体的なデザインブリーフ(種類が明示されていれば kind、印税希望があれば royalty)。\n\
+         - 磨く/みがく/改善/improve/better → action=\"polish\"。args.sku に対象SKU。\n\
+         - リミックス/アレンジ/別バージョン/remix/variation → action=\"remix\"。args.sku に対象SKU、\
+           args.words にアレンジ指示。\n\
+         - 売上/収益/いくら売れた/revenue/earnings → action=\"sales\"(args不要)。\n\
+         - 自分の作品/一覧/何作った/my products → action=\"list_mine\"(args不要)。\n\
+         - 状態/ステータス/アカウント/残高/credit/account → action=\"status\"(args不要)。\n\
+         - 紹介/アフィリ/referral/affiliate/commission → action=\"affiliate\"(args不要)。\n\
+         - 発送/配送/注文/shipping/orders/tracking → action=\"ship\"(args不要)。\n\
          - それ以外(雑談・質問) → action=\"none\" で reply に親切に答える。\n\
-         - reply は常に短い日本語の一文(アクション時も「柔術の黒Tをつくるね！」のように)。\n\
+         - reply は **どのアクションでも** 常に短い日本語の一文を入れる\
+           (make=「柔術の黒Tをつくるね！」/ sales=「売上を確認しますね」のように)。\n\
          {hist_block}\
          User: {msg}",
         hist_block = if hist.is_empty() { String::new() } else { format!("これまでの会話:\n{}\n", hist) },
@@ -7918,13 +7927,15 @@ pub async fn agent_chat(
         serde_json::json!({"reply": raw.chars().take(200).collect::<String>(), "action": "none"})
     });
     let action = match parsed["action"].as_str() {
-        Some(a @ ("make" | "sales" | "list_mine")) => a,
+        Some(a @ ("make" | "polish" | "remix" | "sales" | "list_mine" | "status" | "affiliate" | "ship")) => a,
         _ => "none",
     };
     let reply = parsed["reply"].as_str().filter(|s| !s.is_empty()).unwrap_or("はい！").to_string();
     let kind_in = parsed["args"]["kind"].as_str().unwrap_or("");
     let kind = if ["tee","hoodie","sticker","rashguard","tote","mug"].contains(&kind_in) { kind_in } else { "" };
     let royalty = parsed["args"]["royalty"].as_i64().map(|r| r.clamp(10, 50));
+    let sku = parsed["args"]["sku"].as_str().unwrap_or("").trim().to_string();
+    let words: String = parsed["args"]["words"].as_str().unwrap_or("").trim().chars().take(120).collect();
     axum::Json(serde_json::json!({
         "ok": true,
         "reply": reply,
@@ -7933,6 +7944,8 @@ pub async fn agent_chat(
             "prompt": parsed["args"]["prompt"].as_str().unwrap_or("").chars().take(300).collect::<String>(),
             "kind": kind,
             "royalty": royalty,
+            "sku": sku,
+            "words": words,
         }
     })).into_response()
 }
