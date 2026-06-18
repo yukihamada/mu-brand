@@ -1705,6 +1705,7 @@ const DESIGN_VARIANT_KINDS: &[(&str, &str, &str)] = &[
     ("sticker", "ステッカー", "Sticker"),
     ("tote", "トート", "Tote"),
     ("poster", "ポスター", "Poster"),
+    ("socks", "ソックス", "Socks"),
 ];
 
 /// kind → 印刷面の地色が暗いか。実Printful variantの色で確認済(2026-06-12):
@@ -1817,7 +1818,11 @@ fn design_variant_base_row(
             },
         )
         .ok()?;
-    if !design.starts_with("http") || route != "printful_dtg" {
+    // printful_dtg (透過・中央配置アート) はそのまま横展開可。socks は AOP だが
+    // MU-native sock mockup が中央配置アートを脛に載せられるので土台に含める。
+    if !design.starts_with("http")
+        || (route != "printful_dtg" && kind_from_sku(sku) != "socks")
+    {
         return None;
     }
     let meta = serde_json::from_str::<serde_json::Value>(&meta_raw)
