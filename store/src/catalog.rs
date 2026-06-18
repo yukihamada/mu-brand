@@ -58,6 +58,17 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
             revenue_share_pct INTEGER NOT NULL DEFAULT 0,
             config_json       TEXT
          );
+         CREATE TABLE IF NOT EXISTS mu_design_requests (
+            token            TEXT PRIMARY KEY,
+            requester_email  TEXT NOT NULL,
+            brief            TEXT NOT NULL,
+            kind             TEXT,
+            royalty_offer    INTEGER NOT NULL DEFAULT 10,
+            result_sku       TEXT,
+            claimed          INTEGER NOT NULL DEFAULT 0,
+            created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at       TEXT
+         );
          CREATE TABLE IF NOT EXISTS catalog_products (
             sku                       TEXT PRIMARY KEY,
             brand                     TEXT NOT NULL,
@@ -5368,6 +5379,10 @@ pub async fn admin_nl_add(
 pub struct MakeQuery {
     pub prompt: String,
     pub kind: Option<String>,
+    /// デザイン依頼トークン(?req)。依頼リンク経由のとき、完成品を依頼に紐付け、
+    /// 印税率は依頼主の提示値に固定する(URL の royalty 改ざんを無効化)。
+    #[serde(default)]
+    pub req: Option<String>,
     /// A/B/C バリアント（a|b|c）。/make の割当をそのまま投稿に刻む。
     #[serde(default)]
     pub v: Option<String>,
@@ -5423,6 +5438,9 @@ pub struct MakePageQuery {
     /// ?lang=en|ja — 表示言語。省略時は Accept-Language で判定（ja以外→en）。
     #[serde(default)]
     pub lang: Option<String>,
+    /// ?req=<token> — デザイン依頼リンク。お題をプリフィルし「○○さんのために作成」バナーを出す。
+    #[serde(default)]
+    pub req: Option<String>,
 }
 
 /// /make A/B/C: 勝者UU到達のしきい値（ユニーク訪問者の作成数）。
@@ -6651,7 +6669,38 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
     // ホルダの「Tシャツ」固定をそのkindに差し替えるためラベルをJSへ渡す。
     let sel_label = MAKE_KINDS_ALL.iter()
         .find(|(v, _)| *v == sel).map(|(_, l)| *l).unwrap_or("");
+    // デザイン依頼リンク(?req): お題をプリフィルし「依頼が届いています」バナーを出す。
+    // window.MU_REQ を立て、/api/make の POST に ?req=token を載せて完成品を依頼に紐付ける。
+    let req_inject: String = {
+        let tok = q.req.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 32);
+        match tok {
+            Some(t) => {
+                let brief: Option<String> = {
+                    let conn = db.lock().unwrap();
+                    conn.query_row(
+                        "SELECT brief FROM mu_design_requests WHERE token=? AND result_sku IS NULL \
+                         AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1",
+                        rusqlite::params![t], |r| r.get::<_, String>(0),
+                    ).ok()
+                };
+                match brief {
+                    Some(b) => {
+                        let bj = serde_json::to_string(&b).unwrap_or_else(|_| "\"\"".into());
+                        let tj = serde_json::to_string(t).unwrap_or_else(|_| "\"\"".into());
+                        format!(
+                            r#"<div style="max-width:680px;margin:14px auto 0;padding:12px 16px;background:#11240f;border:1px solid #2f5a26;border-radius:8px;color:#cfe9c4;font-size:13.5px;line-height:1.7">🎁 <b>あなたに、デザインの依頼が届いています。</b><br>お題：「{bh}」<br><span style="opacity:.75">作って公開すると、売れるたびにあなたに印税が入ります。</span></div>
+<script>window.MU_REQ={tj};window.MU_REQ_BRIEF={bj};addEventListener('DOMContentLoaded',function(){{var p=document.getElementById('p');if(p&&!p.value){{p.value=window.MU_REQ_BRIEF;}}}});</script>"#,
+                            bh = html_text(&b), tj = tj, bj = bj,
+                        )
+                    }
+                    None => String::new(),
+                }
+            }
+            None => String::new(),
+        }
+    };
     let html = MAKE_HTML
+        .replace("__REQ_INJECT__", &req_inject)
         .replace("__LOCAL_GEN__", if local_gen_enabled() { "1" } else { "0" })
         .replace("__KIND_OPTIONS__", &kind_options)
         .replace("__PRICE_HINT__", price_hint)
@@ -7028,6 +7077,7 @@ button:disabled{opacity:.5;cursor:default}
       <button class="q" data-x="満月と山並み ミニマル">満月</button>
     </div>
   </div>
+  __REQ_INJECT__
   <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
   <div class="row" style="margin-top:8px">
     <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
@@ -7231,7 +7281,7 @@ async function runMake(){
     if(ATT&&ATT.media==='image'){var gn2=document.querySelector('.gnote');if(gn2)gn2.textContent='あなたの画像を、そのまま製品にのせています — だいたい10秒。';}
     const r=await fetch('/api/make?prompt='+encodeURIComponent(p)+(k?'&kind='+encodeURIComponent(k):'')
       +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):'')
-      +(eng==='local'?'&engine=local':'')+att,{method:'POST'});
+      +(eng==='local'?'&engine=local':'')+(window.MU_REQ?'&req='+encodeURIComponent(window.MU_REQ):'')+att,{method:'POST'});
     const j=await r.json();
     if(myRun!==RUNSEQ) return; // より新しい生成が走っている → この結果は捨てる
     genDone();
@@ -8957,7 +9007,20 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // retail (e.g. 9800) for a premium pick, which would sell below genka.
     let base_retail = parsed["retail_jpy"].as_i64().unwrap_or(spec.retail_jpy).max(spec.retail_jpy);
     // 印税率(10〜50%)。価格はこの率に応じて自動で上がる(高印税ほど高価格)。
-    let maker_pct = q.royalty.unwrap_or(10).clamp(10, 50);
+    // デザイン依頼(?req): 依頼レコードが生きていれば、印税率は依頼主の提示値に固定
+    // (URL の ?royalty 改ざんを無効化)。完成品を依頼主に紐付ける。
+    let req_token: Option<String> = q.req.as_deref().map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 32).map(|s| s.to_string());
+    let (request_to, request_royalty): (Option<String>, Option<i64>) = if let Some(t) = &req_token {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT requester_email, royalty_offer FROM mu_design_requests \
+             WHERE token=? AND result_sku IS NULL AND (expires_at IS NULL OR expires_at > datetime('now')) LIMIT 1",
+            rusqlite::params![t],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+        ).ok().map(|(e, roy)| (Some(e), Some(roy))).unwrap_or((None, None))
+    } else { (None, None) };
+    let maker_pct = request_royalty.unwrap_or_else(|| q.royalty.unwrap_or(10)).clamp(10, 50);
     let retail_jpy = royalty_adjusted_price(base_retail, maker_pct);
     let seed = format!("mk{:08x}", rand::random::<u32>());
     let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
@@ -9176,6 +9239,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         // 持ち込みデザイン印: 監査・ペルソナ批評・後追い調査用のマーカー。
         if user_design_url.is_some() { m.insert("user_design".into(), serde_json::Value::from(true)); }
         m.insert("edit_token".into(), serde_json::Value::from(edit_token.clone()));
+        // デザイン依頼の紐付け: 依頼トークンと依頼主メール(受け取り導線用)。
+        if let Some(t) = &req_token { m.insert("request_token".into(), serde_json::Value::from(t.clone())); }
+        if let Some(re) = &request_to { m.insert("request_to".into(), serde_json::Value::from(re.clone())); }
         if m.is_empty() { None } else { Some(serde_json::Value::Object(m).to_string()) }
     };
     let brand_slug: String = admin_brand.clone().unwrap_or_else(|| "minna".to_string());
@@ -9221,6 +9287,13 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 "public_make", meta_json,
             ],
         );
+        // デザイン依頼の完成: 依頼に result_sku を刻み claimed=1(依頼主の受け取りページが拾う)。
+        if let Some(t) = &req_token {
+            let _ = conn.execute(
+                "UPDATE mu_design_requests SET result_sku=?, claimed=1 WHERE token=? AND result_sku IS NULL",
+                rusqlite::params![&sku, t],
+            );
+        }
         // 勝者未確定なら、各バリアントの「作成したユニーク訪問者数」を集計し、
         // 最初に閾値到達した案を cv_config['make_winner'] に焼く（以後全員その案）。
         if ab_variant.is_some() && cv_get(&conn, "make_winner").is_none() {
@@ -16386,6 +16459,147 @@ pub async fn gift_claim_one_click(
 
     // 住所はレスポンスに含めない(送り主に漏れない不変条件)。
     axum::Json(serde_json::json!({"ok": true})).into_response()
+}
+
+// ─── デザイン依頼(誰かに作ってもらう) ───────────────────────────────────
+// 依頼リンク発行 → 相手が /make?req=token で作る → 完成品を依頼に紐付け、
+// 依頼主は /design-request/:token で受け取る(購入=本人発送)。作り手は maker として印税。
+
+fn mu_base_url() -> String {
+    std::env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into())
+        .trim_end_matches('/').to_string()
+}
+
+#[derive(serde::Deserialize)]
+pub struct MakeRequestBody {
+    pub email: String,
+    pub brief: String,
+    #[serde(default)] pub kind: Option<String>,
+    #[serde(default)] pub royalty: Option<i64>,
+}
+
+/// POST /api/make/request — デザイン依頼リンクを発行。
+pub async fn make_request_create(State(db): State<Db>, axum::Json(b): axum::Json<MakeRequestBody>) -> Response {
+    let email = b.email.trim().to_lowercase();
+    if !looks_like_email(&email) {
+        return axum::Json(serde_json::json!({"ok": false, "error": "メールアドレスを入力してください"})).into_response();
+    }
+    let brief = b.brief.trim().to_string();
+    if brief.is_empty() || brief.chars().count() > 300 {
+        return axum::Json(serde_json::json!({"ok": false, "error": "お題を入力してください（300文字以内）"})).into_response();
+    }
+    let kind = b.kind.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let royalty = b.royalty.unwrap_or(10).clamp(10, 50);
+    let token = format!("{:08x}{:08x}", rand::random::<u32>(), rand::random::<u32>());
+    {
+        let conn = db.lock().unwrap();
+        if let Err(e) = conn.execute(
+            "INSERT INTO mu_design_requests (token, requester_email, brief, kind, royalty_offer, expires_at) \
+             VALUES (?,?,?,?,?, datetime('now','+30 days'))",
+            rusqlite::params![token, email, brief, kind, royalty],
+        ) {
+            return axum::Json(serde_json::json!({"ok": false, "error": format!("発行に失敗しました: {e}")})).into_response();
+        }
+    }
+    let base = mu_base_url();
+    axum::Json(serde_json::json!({
+        "ok": true, "token": token,
+        "designer_link": format!("{}/make?req={}", base, token),
+        "status_url": format!("{}/design-request/{}", base, token),
+    })).into_response()
+}
+
+/// GET /api/make/request/:token — 依頼の状態(JSON)。
+pub async fn make_request_status(State(db): State<Db>, Path(token): Path<String>) -> Response {
+    let token = token.trim().to_string();
+    let row: Option<(Option<String>, i64)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT result_sku, claimed FROM mu_design_requests WHERE token=? LIMIT 1",
+            rusqlite::params![token], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)),
+        ).ok()
+    };
+    let Some((result_sku, claimed)) = row else {
+        return axum::Json(serde_json::json!({"ok": false, "error": "リンクが見つかりません"})).into_response();
+    };
+    let base = mu_base_url();
+    match result_sku.filter(|s| !s.is_empty()) {
+        Some(sku) => axum::Json(serde_json::json!({
+            "ok": true, "status": "ready", "sku": sku,
+            "pdp_url": format!("{}/shop/{}", base, sku),
+            "checkout_url": format!("{}/api/shop/checkout?sku={}", base, sku),
+        })).into_response(),
+        None => axum::Json(serde_json::json!({"ok": true, "status": if claimed == 1 { "in_progress" } else { "waiting" }})).into_response(),
+    }
+}
+
+/// GET /design/ask — 依頼リンクを発行するフォーム(誰かに頼む入口)。
+pub async fn design_ask_page() -> Response {
+    let page = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>誰かにデザインを頼む — MU</title>
+<style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:460px;margin:0 auto;padding:46px 22px 80px}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:24px;font-weight:300;margin:10px 0 6px}p.m{color:#999;font-size:13px;line-height:1.8;margin:0 0 22px}label{font-size:11px;letter-spacing:.08em;color:#999}input,textarea{width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:12px;font-size:15px;border-radius:4px;font-family:inherit;margin-top:5px}textarea{min-height:84px}button{background:var(--gold);color:#000;border:0;padding:15px;font-size:14px;font-weight:600;border-radius:4px;cursor:pointer;width:100%;margin-top:16px}.f{margin-top:14px}.lk{display:block;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-top:8px;font-size:12.5px;word-break:break-all;color:#cfe9c4}.err{color:#e07b7b;font-size:13px;margin-top:10px}</style></head>
+<body><div class="wrap"><div class="kick">🎁 DESIGN REQUEST</div><h1>誰かにデザインを頼む</h1>
+<p class="m">お題とあなたのメールを入れるとリンクができます。送ると相手が MU でデザインし、できたら<b>あなたが受け取れます</b>。作ってくれた人には売れるたび印税が入ります。</p>
+<div class="f"><label>あなたのメール（完成のお知らせ・受け取り用）</label><input id="email" type="email" placeholder="you@example.com"></div>
+<div class="f"><label>お題（何を作ってほしい？）</label><textarea id="brief" maxlength="300" placeholder="例：富士山をミニマルな一本線で。落ち着いた黒Tシャツに。"></textarea></div>
+<div class="f"><label>種類（任意）</label><input id="kind" placeholder="tee / hoodie / tote など（空欄でもOK）"></div>
+<button id="b" onclick="go()">リンクを作る</button>
+<div id="out" style="margin-top:18px"></div>
+<script>
+async function go(){var b=document.getElementById('b'),out=document.getElementById('out');
+ var email=document.getElementById('email').value.trim(),brief=document.getElementById('brief').value.trim(),kind=document.getElementById('kind').value.trim();
+ if(!email||!brief){out.innerHTML='<div class="err">メールとお題を入れてください</div>';return;}
+ b.disabled=true;out.innerHTML='作成中…';
+ var r=await fetch('/api/make/request',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:email,brief:brief,kind:kind})});
+ var j=await r.json().catch(function(){return {};});
+ if(!j.ok){out.innerHTML='<div class="err">'+(j.error||'作成できませんでした')+'</div>';b.disabled=false;return;}
+ out.innerHTML='<div style="color:#9bd97a;font-size:13px">リンクができました 🎁</div>'
+  +'<label style="margin-top:12px;display:block">① 頼みたい人に送るリンク</label><a class="lk" href="'+j.designer_link+'">'+j.designer_link+'</a>'
+  +'<button onclick="navigator.clipboard&&navigator.clipboard.writeText(\''+j.designer_link+'\')">このリンクをコピー</button>'
+  +'<label style="margin-top:16px;display:block">② あなたの受け取りページ（できたらここで受け取り）</label><a class="lk" href="'+j.status_url+'">'+j.status_url+'</a>';
+ b.disabled=false;b.textContent='もう一つ作る';
+}
+</script></div></body></html>"##;
+    Html(page).into_response()
+}
+
+/// GET /design-request/:token — 依頼主の受け取りページ。完成したら購入で受け取り。
+pub async fn design_request_page(State(db): State<Db>, Path(token): Path<String>) -> Response {
+    let token = token.trim().to_string();
+    let row: Option<(Option<String>, i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT result_sku, claimed, brief FROM mu_design_requests WHERE token=? LIMIT 1",
+            rusqlite::params![token],
+            |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?)),
+        ).ok()
+    };
+    let Some((result_sku, claimed, brief)) = row else {
+        return (StatusCode::NOT_FOUND, Html(gift_simple_page("リンクが無効です", "この依頼リンクは見つかりませんでした。"))).into_response();
+    };
+    let head = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>デザイン依頼 — MU</title><style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:460px;margin:0 auto;padding:46px 22px 80px;text-align:center}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:23px;font-weight:300;margin:10px 0 8px}p.m{color:#999;font-size:13px;line-height:1.8}img{max-width:100%;border-radius:10px;margin:14px 0}a.cta{display:inline-block;background:var(--gold);color:#000;text-decoration:none;font-weight:700;padding:15px 26px;border-radius:99px;margin-top:8px}</style></head><body><div class="wrap"><div class="kick">🎁 DESIGN REQUEST</div>"##;
+    let body = if let Some(sku) = result_sku.filter(|s| !s.is_empty()) {
+        let (label, img): (String, String) = {
+            let conn = db.lock().unwrap();
+            conn.query_row(
+                "SELECT description_ja, COALESCE(NULLIF(mockup_main_file,''), design_file, '') FROM catalog_products WHERE sku=?",
+                rusqlite::params![sku], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+            ).unwrap_or_else(|_| ("MU".into(), String::new()))
+        };
+        let item = label.split(" · ").next().unwrap_or(&label).to_string();
+        format!(
+            r#"<h1>デザインができました 🎁</h1><p class="m">お題：「{brief}」</p><img src="{img}" alt=""><div style="color:var(--gold);font-size:15px">{item}</div><a class="cta" href="/api/shop/checkout?sku={sku}">この一着を受け取る →</a><p class="m" style="margin-top:14px">作ってくれた人には、売れた分の印税が入ります。</p>"#,
+            brief = html_text(&brief), img = html_attr(&img), item = html_text(&item), sku = html_attr(&sku),
+        )
+    } else {
+        let st = if claimed == 1 { "デザイナーが制作中です…" } else { "リンクを送った相手がまだ作っていません。届くのを待ちましょう。" };
+        format!(
+            r#"<meta http-equiv="refresh" content="20"><h1>デザインを依頼中</h1><p class="m">お題：「{brief}」</p><p class="m">{st}</p><p class="m" style="opacity:.5;font-size:12px">このページは自動で更新されます。</p>"#,
+            brief = html_text(&brief), st = st,
+        )
+    };
+    Html(format!("{}{}</div></body></html>", head, body)).into_response()
 }
 
 // ─── Digital event tickets ────────────────────────────────────────────
