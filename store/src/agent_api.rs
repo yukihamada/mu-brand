@@ -1866,6 +1866,193 @@ pub async fn agent_retire_product(
     Json(serde_json::json!({ "ok": true, "sku": sku, "status": "retired" })).into_response()
 }
 
+// ─── 商品の引き渡し(所有権移譲) ─────────────────────────────────────────
+// 「作った商品を他のエージェント/店に渡す」。所有権 = その brand(store) の
+// config_json.owner_email なので、移譲 = 商品の brand を相手の store に付け替える。
+// 同意ゲート: 現オーナーが offer → 相手が自分の鍵で accept して初めて動く
+// (乗っ取り防止)。ADMIN_TOKEN は同意なしで強制可。
+//   POST /api/agent/products/:sku/transfer          {target_email}  — 申し出
+//   POST /api/agent/products/:sku/transfer/accept                   — 受領者が承認
+//   POST /api/agent/products/:sku/transfer/cancel                   — 申し出を取消
+// 収益: 過去注文の支払いは確定済みで不変。accept 後の将来売上は新オーナーへ
+// (meta_json.maker_email を新オーナーに更新)。edit_token は無効化(再発行)。
+
+/// 商品 sku の meta_json を Map で読む(無ければ空)。
+fn read_meta(conn: &rusqlite::Connection, sku: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let raw: String = conn.query_row(
+        "SELECT COALESCE(meta_json,'{}') FROM catalog_products WHERE sku=?",
+        rusqlite::params![sku], |r| r.get(0),
+    ).ok()?;
+    Some(serde_json::from_str::<serde_json::Value>(&raw).ok()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default())
+}
+
+/// 受領者(email)の出荷先ストアを解決。owner_email==email のストアがあれば最新を、
+/// 無ければ `u<hash>` スラッグで最小ストアを自動作成して返す。
+fn ensure_store_for_email(conn: &rusqlite::Connection, email: &str) -> Result<String, String> {
+    let e = email.trim().to_lowercase();
+    if let Ok(slug) = conn.query_row(
+        "SELECT slug FROM catalog_brands
+         WHERE LOWER(COALESCE(json_extract(config_json,'$.owner_email'),''))=?
+         ORDER BY rowid DESC LIMIT 1",
+        rusqlite::params![e], |r| r.get::<_, String>(0),
+    ) { return Ok(slug); }
+    // 自動作成。slug = "u"+16hex(email) は ^[a-z0-9_-]{3,40}$ を満たす。
+    let slug = format!("u{}", short_hash(&e));
+    let now = crate::chrono_now();
+    let config = serde_json::json!({
+        "owner_email": e, "approval_required": true,
+        "created_via": "transfer_auto", "created_at": now,
+    }).to_string();
+    conn.execute(
+        "INSERT INTO catalog_brands
+            (slug, name, emoji, color_primary, tagline, is_active, revenue_share_pct, config_json)
+         VALUES (?,?,?,?,?,1,0,?)
+         ON CONFLICT(slug) DO NOTHING",
+        rusqlite::params![slug, "My MU store", "🛍️", "#888", "", config],
+    ).map_err(|e| format!("store create failed: {e}"))?;
+    // 衝突ガード: 万一 slug が他者所有なら中止(ハッシュ衝突=ほぼ皆無だが安全側)。
+    let owner: String = conn.query_row(
+        "SELECT LOWER(COALESCE(json_extract(config_json,'$.owner_email'),'')) FROM catalog_brands WHERE slug=?",
+        rusqlite::params![slug], |r| r.get(0),
+    ).unwrap_or_default();
+    if owner != e {
+        return Err("destination store slug collision — retry".into());
+    }
+    Ok(slug)
+}
+
+#[derive(Deserialize)]
+pub struct TransferBody { pub target_email: String }
+
+/// POST /api/agent/products/:sku/transfer — 現オーナーが譲渡を申し出る(pending)。
+pub async fn agent_transfer_offer(
+    State(db): State<Db>,
+    Path(sku): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+    Json(body): Json<TransferBody>,
+) -> Response {
+    let is_admin = admin_token_present(&headers, Some(&q));
+    let caller = if is_admin {
+        "admin".to_string()
+    } else {
+        match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r }
+    };
+    let target = body.target_email.trim().to_lowercase();
+    if !target.contains('@') || target.len() > 200 {
+        return json_err(StatusCode::BAD_REQUEST, "target_email must be a valid email address");
+    }
+    if target == caller.to_lowercase() {
+        return json_err(StatusCode::BAD_REQUEST, "target is already the owner");
+    }
+    let conn = db.lock().unwrap();
+    if is_admin {
+        let exists: bool = conn.query_row(
+            "SELECT 1 FROM catalog_products WHERE sku=?", rusqlite::params![sku], |_| Ok(true),
+        ).unwrap_or(false);
+        if !exists { return json_err(StatusCode::NOT_FOUND, "unknown sku"); }
+    } else if let Err(r) = owned_product(&conn, &caller, &sku) {
+        return r;
+    }
+    let Some(mut meta) = read_meta(&conn, &sku) else {
+        return json_err(StatusCode::NOT_FOUND, "unknown sku");
+    };
+    let token = format!("{:016x}", rand::random::<u64>());
+    meta.insert("transfer".into(), serde_json::json!({
+        "to": target, "token": token, "by": caller, "at": crate::chrono_now(),
+    }));
+    if let Err(e) = conn.execute(
+        "UPDATE catalog_products SET meta_json=? WHERE sku=?",
+        rusqlite::params![serde_json::Value::Object(meta).to_string(), sku],
+    ) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("offer failed: {e}"));
+    }
+    Json(serde_json::json!({
+        "ok": true, "sku": sku, "target_email": target, "status": "pending_accept",
+        "accept": format!("the recipient calls POST /api/agent/products/{}/transfer/accept with THEIR Authorization key", sku),
+        "note": "所有権はまだ動いていません。相手が自分の鍵で accept すると移ります。取消は /transfer/cancel。",
+    })).into_response()
+}
+
+/// POST /api/agent/products/:sku/transfer/accept — 受領者が自分の鍵で承認 → 移譲確定。
+pub async fn agent_transfer_accept(
+    State(db): State<Db>,
+    Path(sku): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let is_admin = admin_token_present(&headers, Some(&q));
+    let caller = match require_email(&db, &headers, Some(&q)) {
+        Ok(e) => e,
+        Err(r) => if is_admin { "admin".to_string() } else { return r },
+    };
+    let conn = db.lock().unwrap();
+    let Some(mut meta) = read_meta(&conn, &sku) else {
+        return json_err(StatusCode::NOT_FOUND, "unknown sku");
+    };
+    let Some(tr) = meta.get("transfer").cloned() else {
+        return json_err(StatusCode::CONFLICT, "no pending transfer for this product");
+    };
+    let to = tr.get("to").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    if !is_admin && to != caller.to_lowercase() {
+        return json_err(StatusCode::FORBIDDEN, "this transfer is addressed to a different account");
+    }
+    let recipient = if is_admin && to.contains('@') { to } else { caller.to_lowercase() };
+    let store = match ensure_store_for_email(&conn, &recipient) {
+        Ok(s) => s,
+        Err(e) => return json_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    };
+    // 移譲: brand 付け替え + 将来売上を新オーナーへ(maker_email) + edit_token 無効化。
+    meta.remove("transfer");
+    meta.insert("maker_email".into(), serde_json::json!(recipient));
+    meta.insert("edit_token".into(), serde_json::json!(format!("{:016x}", rand::random::<u64>())));
+    if let Err(e) = conn.execute(
+        "UPDATE catalog_products SET brand=?, meta_json=? WHERE sku=?",
+        rusqlite::params![store, serde_json::Value::Object(meta).to_string(), sku],
+    ) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("transfer failed: {e}"));
+    }
+    Json(serde_json::json!({
+        "ok": true, "sku": sku, "new_brand": store, "new_owner": recipient,
+        "store_url": format!("https://wearmu.com/shop?brand={}", store),
+        "note": "所有権が移りました。以降の編集権・売上は新オーナーに帰属します(過去の支払いは不変・旧編集リンクは無効化)。",
+    })).into_response()
+}
+
+/// POST /api/agent/products/:sku/transfer/cancel — オーナー(またはadmin)が申し出を取消。
+pub async fn agent_transfer_cancel(
+    State(db): State<Db>,
+    Path(sku): Path<String>,
+    headers: HeaderMap,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let is_admin = admin_token_present(&headers, Some(&q));
+    let caller = if is_admin {
+        "admin".to_string()
+    } else {
+        match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r }
+    };
+    let conn = db.lock().unwrap();
+    if !is_admin {
+        if let Err(r) = owned_product(&conn, &caller, &sku) { return r; }
+    }
+    let Some(mut meta) = read_meta(&conn, &sku) else {
+        return json_err(StatusCode::NOT_FOUND, "unknown sku");
+    };
+    if meta.remove("transfer").is_none() {
+        return json_err(StatusCode::CONFLICT, "no pending transfer to cancel");
+    }
+    if let Err(e) = conn.execute(
+        "UPDATE catalog_products SET meta_json=? WHERE sku=?",
+        rusqlite::params![serde_json::Value::Object(meta).to_string(), sku],
+    ) {
+        return json_err(StatusCode::INTERNAL_SERVER_ERROR, &format!("cancel failed: {e}"));
+    }
+    Json(serde_json::json!({ "ok": true, "sku": sku, "status": "transfer_cancelled" })).into_response()
+}
+
 pub async fn ma_review_queue(
     State(db): State<Db>,
     headers: HeaderMap,
