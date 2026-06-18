@@ -5904,6 +5904,41 @@ pub async fn send_make_link_email(to: String, sku: String, label: String, price_
         .await;
 }
 
+/// デザイン依頼が完成したら、依頼主に「できました→受け取る」を通知(fire-and-forget)。
+pub async fn send_design_request_ready_email(to: String, token: String) {
+    let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if resend_key.is_empty() {
+        tracing::warn!("[design-request/notify] RESEND_API_KEY unset — mail to {} not sent (token {})", to, token);
+        return;
+    }
+    let url = format!("https://wearmu.com/design-request/{}", token);
+    let html = format!(
+        r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:560px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:24px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">DESIGN REQUEST</div>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:0 0 14px">頼んでいたデザインができました 🎁</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 22px">あなたが頼んだ一着を、作ってくれた人が仕上げました。下のボタンから受け取れます（お届け先はそのとき入力）。作ってくれた人には、売れた分の印税が入ります。</p>
+<div style="text-align:center;margin:24px 0">
+<a href="{url}" style="display:inline-block;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:15px;padding:14px 28px;border-radius:99px">デザインを見て受け取る →</a></div>
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a></p>
+</div></div>"#,
+        url = url,
+    );
+    let payload = serde_json::json!({
+        "from": "MU MAKE <noreply@wearmu.com>",
+        "to": [to],
+        "subject": "🎁 頼んでいたデザインができました — MU",
+        "html": html,
+    });
+    let _ = reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&resend_key)
+        .json(&payload)
+        .send()
+        .await;
+}
+
 // ─── MU Drop newsletter signup ────────────────────────────────────────────
 // 訪問者のメール獲得（割引クーポンなし・価値提案のみ: 毎日1着の新作をいちばん
 // 早く届ける）。catalog_subscribers に1行/メール（UNIQUE）。冪等: 既存なら
@@ -7093,6 +7128,7 @@ button:disabled{opacity:.5;cursor:default}
 __KIND_OPTIONS__
     </select>
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
+    <div style="text-align:center;margin-top:10px"><a href="/design/ask" data-funnel="cta_click" data-funnel-cta="make_ask_someone" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🎁 自分で作らず、誰かに頼む →</a></div>
   </div>
   <div class="price-hint">__PRICE_HINT__</div>
   <div id="engRow" style="display:none;margin:6px 0 0;font-size:12.5px;color:rgba(245,245,240,.75)">
@@ -7333,7 +7369,7 @@ function renderResult(j,p,ok){
   // さっきの案: 作り直しても前の案は棚に残る。サムネで戻れるようにする。
   if(!MK_HIST.length||MK_HIST[MK_HIST.length-1].sku!==j.sku)MK_HIST.push({sku:j.sku,img:j.design_url,pdp:j.pdp_url||''});
   var hist = MK_HIST.length>1 ? '<div class=hist><div class=histlead>さっきの案（どれも棚に残っています）</div><div class=histrow>'+MK_HIST.slice(0,-1).map(function(h){return h.pdp?'<a href="'+h.pdp+'" target="_blank" rel="noopener"><img loading=lazy src="'+h.img+'" alt=""></a>':'';}).reverse().join('')+'</div></div>' : '';
-  var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a></div>' : '';
+  var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。'+(j.affiliate_link?'<a href="'+j.affiliate_link+'" style="color:#ffd700">あなたの紹介リンクで広める →</a>':'<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a>')+'</div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
   $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
@@ -9372,9 +9408,18 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // 生成直後が購入意欲のピーク。PDP を経由せず Stripe Checkout に直行できる
     // リンクも返す(サイズ/住所は Stripe 側の custom_fields で完結する)。
     let checkout_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/api/shop/checkout?sku={}", sku)) };
+    // デザイン依頼の完成通知: 依頼主にメール「できました→受け取る」(fire-and-forget)。
+    if let (Some(t), Some(re)) = (req_token.clone(), request_to.clone()) {
+        tokio::spawn(send_design_request_ready_email(re, t));
+    }
+    // 作って広める=報酬: 作者が判っていれば、その人の紹介リンク(/r/<code>)を返す
+    // (広めて売れた分の10%が作者に入る = 既存 maker 印税×アフィリエイト)。
+    let affiliate_link = maker_email.as_ref().map(|me| format!("https://wearmu.com/r/{}", crate::referral_code_for(me)));
     axum::Json(serde_json::json!({
         "ok": true,
         "sku": sku,
+        "affiliate_link": affiliate_link,
+        "design_for": request_to,
         "kind": kind,
         "display": display,
         "hook": hook,
@@ -16531,6 +16576,48 @@ pub async fn make_request_status(State(db): State<Db>, Path(token): Path<String>
         })).into_response(),
         None => axum::Json(serde_json::json!({"ok": true, "status": if claimed == 1 { "in_progress" } else { "waiting" }})).into_response(),
     }
+}
+
+#[derive(serde::Deserialize)]
+pub struct DesignMineQuery { #[serde(default)] pub email: Option<String> }
+
+/// GET /design/mine?email= — 自分が出した依頼の一覧と状態(待ち/制作中/完成)。
+pub async fn design_mine_page(State(db): State<Db>, Query(q): Query<DesignMineQuery>) -> Response {
+    let head = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>あなたのデザイン依頼 — MU</title><style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:520px;margin:0 auto;padding:46px 22px 80px}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:23px;font-weight:300;margin:10px 0 14px}p.m{color:#999;font-size:13px;line-height:1.8}input{background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:12px;font-size:15px;border-radius:4px}button{background:var(--gold);color:#000;border:0;padding:12px 18px;font-weight:600;border-radius:4px;cursor:pointer}.row{display:flex;gap:8px}.card{display:block;background:#0f0f0f;border:1px solid #222;border-radius:10px;padding:14px;margin-top:10px;text-decoration:none;color:inherit}.b{font-size:14px}.s{font-size:12px;margin-top:6px}.ready{color:#9bd97a}.prog{color:var(--gold)}.wait{color:#888}</style></head><body><div class="wrap"><div class="kick">🎁 MY REQUESTS</div><h1>あなたのデザイン依頼</h1>"##;
+    let email = q.email.as_deref().map(str::trim).unwrap_or("").to_lowercase();
+    if email.is_empty() || !email.contains('@') {
+        let form = r#"<p class="m">依頼に使ったメールを入れてください。</p><div class="row" style="margin-top:12px"><input id="e" type="email" placeholder="you@example.com" style="flex:1" onkeydown="if(event.key==='Enter')go()"><button onclick="go()">見る</button></div><script>function go(){var e=document.getElementById('e').value.trim();if(e)location.href='/design/mine?email='+encodeURIComponent(e);}</script>"#;
+        return Html(format!("{}{}</div></body></html>", head, form)).into_response();
+    }
+    let rows: Vec<(String, String, Option<String>, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(
+            "SELECT token, brief, result_sku, claimed FROM mu_design_requests \
+             WHERE LOWER(requester_email)=? ORDER BY rowid DESC LIMIT 50",
+        ) { Ok(s) => s, Err(_) => return Html(format!("{}<p class=\"m\">読み込みに失敗しました。</p></div></body></html>", head)).into_response() };
+        let v = stmt.query_map(rusqlite::params![email], |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?, r.get::<_, i64>(3)?,
+        ))).map(|it| it.filter_map(|x| x.ok()).collect::<Vec<_>>()).unwrap_or_default();
+        v
+    };
+    if rows.is_empty() {
+        return Html(format!("{}<p class=\"m\">このメールでの依頼は見つかりませんでした。<br><a href=\"/design/ask\" style=\"color:var(--gold)\">新しく頼む →</a></p></div></body></html>", head)).into_response();
+    }
+    let mut list = String::new();
+    for (token, brief, result_sku, claimed) in &rows {
+        let (cls, st) = if result_sku.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+            ("ready", "✅ できました — 受け取れます")
+        } else if *claimed == 1 { ("prog", "制作中…") } else { ("wait", "相手の制作待ち") };
+        list.push_str(&format!(
+            r#"<a class="card" href="/design-request/{tok}"><div class="b">{brief}</div><div class="s {cls}">{st}</div></a>"#,
+            tok = html_attr(token), brief = html_text(brief), cls = cls, st = st,
+        ));
+    }
+    Html(format!(
+        r#"{head}<p class="m">{n} 件 ・ <a href="/design/ask" style="color:var(--gold)">新しく頼む →</a></p>{list}</div></body></html>"#,
+        head = head, n = rows.len(), list = list,
+    )).into_response()
 }
 
 /// GET /design/ask — 依頼リンクを発行するフォーム(誰かに頼む入口)。
