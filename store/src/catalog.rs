@@ -3465,11 +3465,12 @@ fn compose_sock_mockup(design_png: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 /// Primary mockup path for `socks`: download the design, compose the MU-native
-/// sock mockup (sock-shaped, no Printful), mirror to R2 and swap
-/// `mockup_url_external`. Then kick off a best-effort photoreal "worn sock"
-/// Gemini render as a gallery sub-image (`catalog_product_extras`). The primary
-/// composite is deterministic and offline, so socks ALWAYS get a sock-shaped
-/// hero image even if Gemini / Printful are unavailable.
+/// sock mockup (sock-shaped, no Printful), mirror to R2 and set
+/// `mockup_url_external` as a FAST placeholder hero. Then kick off a
+/// best-effort photoreal "worn sock" Gemini render that, on success, replaces
+/// it as the hero (`sock_worn_subimage`). The composite is deterministic and
+/// offline, so socks always have a sock-shaped hero immediately and the
+/// composite remains the fallback if the Gemini render fails.
 async fn mu_sock_mockup(db: Db, sku: String, design_url: String) -> Result<(), String> {
     if !design_url.starts_with("http") {
         return Err("no design url for sock mockup".into());
@@ -3507,9 +3508,10 @@ async fn mu_sock_mockup(db: Db, sku: String, design_url: String) -> Result<(), S
 }
 
 /// Best-effort: render a photoreal "worn sock" featuring the exact design via
-/// Gemini (design PNG passed as a reference image) and attach it to the product
-/// as a gallery extra. Failure is non-fatal — the deterministic composite from
-/// `mu_sock_mockup` is always the hero image.
+/// Gemini (design PNG passed as a reference image) and PROMOTE it to the hero
+/// image. The flat composite from `mu_sock_mockup` is only a fast deterministic
+/// placeholder — when this render succeeds it becomes the storefront hero;
+/// when it fails (non-fatal) the composite stays as the fallback hero.
 async fn sock_worn_subimage(db: Db, sku: String, design_url: String) -> Result<(), String> {
     let prompt = "Photoreal e-commerce product photo of a single premium crew sock \
         standing upright on a clean light-grey studio surface, soft daylight, subtle \
@@ -3524,18 +3526,19 @@ async fn sock_worn_subimage(db: Db, sku: String, design_url: String) -> Result<(
         .ok_or_else(|| "R2 upload failed".to_string())?;
     {
         let conn = db.lock().unwrap();
-        // Idempotent: replace any prior worn sub-image for this sku.
+        // Promote the photoreal worn sock to the hero image — the flat
+        // composite set by mu_sock_mockup was only a placeholder/fallback.
+        let _ = conn.execute(
+            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
+            rusqlite::params![&r2_url, &sku],
+        );
+        // Clear any stale worn gallery row from older runs (now the hero).
         let _ = conn.execute(
             "DELETE FROM catalog_product_extras WHERE sku=? AND label='worn'",
             rusqlite::params![&sku],
         );
-        let _ = conn.execute(
-            "INSERT INTO catalog_product_extras (sku, label, image_url, sort_order)
-             VALUES (?, 'worn', ?, 50)",
-            rusqlite::params![&sku, &r2_url],
-        );
     }
-    tracing::info!("[catalog/mockup] sock worn sub-image sku={} → {}", sku, r2_url);
+    tracing::info!("[catalog/mockup] sock worn HERO sku={} → {}", sku, r2_url);
     Ok(())
 }
 
