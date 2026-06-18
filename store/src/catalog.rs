@@ -7120,7 +7120,7 @@ button:disabled{opacity:.5;cursor:default}
 __KIND_OPTIONS__
     </select>
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
-    <div style="text-align:center;margin-top:10px"><a href="/design/ask" data-funnel="cta_click" data-funnel-cta="make_ask_someone" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🎁 自分で作らず、誰かに頼む →</a></div>
+    <div style="text-align:center;margin-top:10px"><a href="/design/ask" data-funnel="cta_click" data-funnel-cta="make_ask_someone" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🎁 自分で作らず、誰かに頼む →</a> · <a href="/dojo" data-funnel="cta_click" data-funnel-cta="make_dojo" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🥋 道場の一着を作る →</a></div>
   </div>
   <div class="price-hint">__PRICE_HINT__</div>
   <div id="engRow" style="display:none;margin:6px 0 0;font-size:12.5px;color:rgba(245,245,240,.75)">
@@ -16568,6 +16568,33 @@ pub async fn make_request_status(State(db): State<Db>, Path(token): Path<String>
         })).into_response(),
         None => axum::Json(serde_json::json!({"ok": true, "status": if claimed == 1 { "in_progress" } else { "waiting" }})).into_response(),
     }
+}
+
+/// GET /dojo — BJJ向けの具体オファー。実需のある柔術コミュニティに「作る/頼む」を差す入口。
+/// なぜ¥で買うか(道場の一体感・昇級/卒業の記念・大会ユニフォーム)に答え、
+/// ①自分で作る(/make?k=rashguard_ls) ②道場の誰かに頼む(/design/ask) の2導線。
+pub async fn dojo_page() -> Response {
+    let page = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>道場の一着を、みんなで — MU × BJJ</title>
+<meta name="description" content="道場の一着を、言葉から。チームの一体感・昇級や卒業の記念・大会のユニフォームに。自分で作るか、道場の仲間に頼む。">
+<link rel="canonical" href="https://wearmu.com/dojo">
+<style>:root{--bg:#000;--fg:#f5f5f0;--mute:#9a9a96;--gold:#e6c449}html,body{background:var(--bg);color:var(--fg);margin:0;font-family:-apple-system,'Helvetica Neue',sans-serif;line-height:1.7}.wrap{max-width:560px;margin:0 auto;padding:54px 22px 90px}.kick{font-size:11px;letter-spacing:.32em;color:var(--gold);text-transform:uppercase}h1{font-size:30px;font-weight:300;line-height:1.3;margin:12px 0 12px}p.lead{color:#d8d8d2;font-size:15px;margin:0 0 26px}.why{display:flex;flex-direction:column;gap:10px;margin:0 0 30px}.why div{background:#0e0e0e;border:1px solid #1f1f1f;border-radius:10px;padding:13px 15px;font-size:14px}.why b{color:var(--gold);font-weight:600}a.cta{display:block;text-align:center;background:var(--gold);color:#000;text-decoration:none;font-weight:700;font-size:15px;padding:16px;border-radius:12px;margin:0 0 12px}a.cta.alt{background:transparent;border:1px solid #2f2f2f;color:var(--fg);font-weight:600}.fine{color:var(--mute);font-size:12px;margin-top:18px;text-align:center}.fine a{color:var(--gold)}</style></head>
+<body><div class="wrap">
+<div class="kick">🥋 MU × BJJ</div>
+<h1>道場の一着を、みんなで。</h1>
+<p class="lead">言葉ひとつで、世界に1枚。チームの名前も、昇級の記念も、大会のユニフォームも ── 「作りたい」を言うだけで形になります。</p>
+<div class="why">
+<div><b>道場の一体感</b>。同じ一着を着て、同じ畳の上に立つ。</div>
+<div><b>昇級・卒業の記念に</b>。その日付・その帯を、一着に刻む。</div>
+<div><b>大会・遠征のユニフォーム</b>。チームで揃える。1枚から受注生産・在庫リスクなし。</div>
+</div>
+<a class="cta" href="/make?k=rashguard_ls">自分で、道場の一着を作る →</a>
+<a class="cta alt" href="/design/ask">道場の誰か（先生・仲間）に頼む →</a>
+<a class="cta alt" href="/shop?brand=bjj">いまある BJJ の一着を見る →</a>
+<p class="fine">作った人には、売れるたびに印税が入ります。<br>住所などは購入時のみ・贈り主に伝わりません。<br><a href="/make">ふつうに作る →</a></p>
+</div></body></html>"##;
+    Html(page).into_response()
 }
 
 #[derive(serde::Deserialize)]
