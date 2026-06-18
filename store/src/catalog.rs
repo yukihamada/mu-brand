@@ -7105,7 +7105,7 @@ button:disabled{opacity:.5;cursor:default}
     </div>
   </div>
   __REQ_INJECT__
-  <textarea id="p" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
+  <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
   <div class="row" style="margin-top:8px">
     <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
     <span id="attChip" style="display:none;flex:1;min-width:0;align-items:center;gap:8px;font-size:12.5px;color:rgba(245,245,240,.8)"></span>
@@ -7116,7 +7116,7 @@ button:disabled{opacity:.5;cursor:default}
     <label style="margin-left:10px;cursor:pointer"><input type="radio" name="amode" value="goods"> 👕 グッズにのせる（商品ページで試聴）</label>
   </div>
   <div class="row">
-    <select id="k">
+    <select id="k" aria-label="作る種類を選ぶ">
 __KIND_OPTIONS__
     </select>
     <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
