@@ -16042,6 +16042,35 @@ pub async fn gift_claim_page(State(db): State<Db>, Path(token): Path<String>) ->
         .unwrap_or_else(|_| "MU のギフト".into())
     };
     let item = label.split(" · ").next().unwrap_or(&label).to_string();
+    // 過去に買った人のワンクリック受け取り。受取人のメール(slug由来)に過去の
+    // 発送済み注文の住所があれば、入力ゼロで「前回のお届け先で受け取る」を出す。
+    // 住所はページに出さない(リンクが転送されても漏れない)。
+    let recipient_email_known: String = if recipient_slug.is_empty() {
+        String::new()
+    } else {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(email,'') FROM you_users WHERE LOWER(slug)=? LIMIT 1",
+            rusqlite::params![recipient_slug.to_lowercase()],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default()
+    };
+    let has_past_address = !recipient_email_known.is_empty() && {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT 1 FROM catalog_orders WHERE LOWER(customer_email)=? AND status='submitted' \
+             AND COALESCE(shipping_address_json,'')!='' LIMIT 1",
+            rusqlite::params![recipient_email_known.to_lowercase()], |_| Ok(true),
+        ).unwrap_or(false)
+    };
+    let oneclick_block = {
+        let zero = if has_past_address {
+            r#"<button type="button" class="oc" onclick="oneclick('')">🎁 前回のお届け先で、そのまま受け取る</button><div style="text-align:center;font-size:11.5px;color:#9bd97a;margin:6px 0 2px">住所の入力は不要です（過去にお届けした住所に発送します）</div>"#.to_string()
+        } else { String::new() };
+        format!(r#"{zero}<details style="margin-top:8px"><summary style="font-size:12.5px;color:var(--gold);cursor:pointer">前に MU で買ったことがある方はこちら（メールでワンクリック）</summary>
+<div style="display:flex;gap:8px;margin-top:8px"><input id="ocemail" type="email" autocomplete="email" placeholder="購入時のメール" style="flex:1"><button type="button" class="oc2" onclick="oneclick(document.getElementById('ocemail').value.trim())">受け取る</button></div>
+<div style="font-size:11px;color:#777;margin-top:5px">そのメールでの購入履歴があれば、登録済みのお届け先に発送します（住所は表示されません）。</div></details>"#)
+    };
     let page = format!(
         r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -16063,11 +16092,15 @@ pub async fn gift_claim_page(State(db): State<Db>, Path(token): Path<String>) ->
  button:disabled{{opacity:.6}}
  .note{{color:#9bd97a;font-size:12px;margin-top:10px;text-align:center;line-height:1.7}}
  .err{{color:#e07b7b;font-size:12.5px;margin-top:8px;text-align:center}}
+ .oc{{background:var(--gold);color:#000;border:0;padding:15px;font-size:14px;font-weight:600;letter-spacing:.04em;border-radius:3px;cursor:pointer;width:100%}}
+ .oc2{{background:transparent;border:1px solid var(--gold);color:var(--gold);padding:11px 14px;border-radius:3px;cursor:pointer;font-weight:600;white-space:nowrap}}
 </style></head><body><div class="wrap">
  <div class="kicker">🎁 GIFT</div>
  <h1>ギフトを受け取る</h1>
  <div class="item">{item}</div>
  {from_block}
+ <div id="ocwrap" style="margin:0 0 20px">{oneclick_block}</div>
+ <div style="font-size:11px;color:#666;text-align:center;margin:0 0 10px">─ または、お届け先を入力 ─</div>
  <form id="f" onsubmit="return false">
   <div style="display:flex;flex-direction:column;gap:5px"><label>お名前</label><input id="name" autocomplete="name" required></div>
   <div class="row"><div><label>郵便番号</label><input id="postal_code" autocomplete="postal-code" required></div>
@@ -16095,9 +16128,18 @@ f.addEventListener('submit',async()=>{{
  if(j.ok){{var acc=(j.account&&/^[a-z0-9_-]{{3,20}}$/.test(j.account))?'<br>MU アカウント <b>@'+j.account+'</b> を作成しました。':'';msg.innerHTML='<div class="note">受け取りました！発送手配に入ります。'+acc+'<br>お届けまで通常 7〜14 日です 🎁</div>';f.style.display='none';}}
  else{{msg.innerHTML='<div class="err">'+(j.error||'エラーが発生しました')+'</div>';b.disabled=false;}}
 }});
+async function oneclick(email){{
+ b.disabled=true;msg.innerHTML='';
+ const url=location.pathname.replace('/gift/claim/','/api/gift/claim/')+'/one-click';
+ const r=await fetch(url,{{method:'POST',headers:{{'content-type':'application/json'}},body:JSON.stringify({{email:email||''}})}});
+ const j=await r.json().catch(()=>({{}}));
+ if(j.ok){{msg.innerHTML='<div class="note">受け取りました！前回のお届け先に発送手配します。<br>お届けまで通常 7〜14 日です 🎁</div>';f.style.display='none';var oc=document.getElementById('ocwrap');if(oc)oc.style.display='none';}}
+ else{{msg.innerHTML='<div class="err">'+(j.error||'ワンクリック受け取りができませんでした。下のフォームでご入力ください。')+'</div>';b.disabled=false;}}
+}}
 </script>
 </body></html>"#,
         item = html_text(&item),
+        oneclick_block = oneclick_block,
     );
     Html(page).into_response()
 }
@@ -16246,6 +16288,103 @@ pub async fn gift_claim_submit(
               &addr, &sender_email, &recipient_email, &gift_json_new).await;
 
     axum::Json(serde_json::json!({"ok": true, "account": created_handle})).into_response()
+}
+
+/// POST /api/gift/claim/:token/one-click — 過去に買ったことがある受取人は住所入力なしで
+/// 受け取れる。email(任意)が来ればそれを、無ければ gift の宛先(recipient_slug→you_users)
+/// から受取人メールを解決し、そのメールの **発送済み(submitted) 過去注文の住所** に発送する。
+/// セキュリティ: トークン(推測不能)+pending状態のみ。住所はレスポンスに出さない(送り主に漏れない)。
+/// 過去注文が無ければエラー(フォーム入力にフォールバック)。
+pub async fn gift_claim_one_click(
+    State(db): State<Db>,
+    Path(token): Path<String>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> Response {
+    let token = token.trim().to_string();
+    let provided = body.get("email").and_then(|v| v.as_str()).unwrap_or("").trim().to_lowercase();
+
+    let order: Option<(String, String, i64, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT stripe_session_id, sku, COALESCE(amount_jpy,0), COALESCE(gift_json,'{}') \
+             FROM catalog_orders \
+             WHERE json_extract(gift_json,'$.claim_token')=? AND status='gift_pending_address' LIMIT 1",
+            rusqlite::params![&token],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).ok()
+    };
+    let Some((session_id, sku, amount, gift_json_old)) = order else {
+        return axum::Json(serde_json::json!({"ok": false, "error": "この受け取りリンクは無効か、すでに使用済みです"})).into_response();
+    };
+    let gv: serde_json::Value = serde_json::from_str(&gift_json_old).unwrap_or(serde_json::json!({}));
+    let recipient_slug = gv["recipient_slug"].as_str().unwrap_or("").to_string();
+    let sender_email = gv["sender_email"].as_str().unwrap_or("").to_string();
+
+    // 受取人メールの解決: 明示 email > gift 宛先(slug)のアカウントメール。
+    let email = if !provided.is_empty() {
+        if !looks_like_email(&provided) {
+            return axum::Json(serde_json::json!({"ok": false, "error": "メールアドレスの形式が正しくありません"})).into_response();
+        }
+        provided
+    } else if !recipient_slug.is_empty() {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(email,'') FROM you_users WHERE LOWER(slug)=? LIMIT 1",
+            rusqlite::params![recipient_slug.to_lowercase()],
+            |r| r.get::<_, String>(0),
+        ).unwrap_or_default().to_lowercase()
+    } else {
+        String::new()
+    };
+    if email.is_empty() {
+        return axum::Json(serde_json::json!({"ok": false, "error": "購入時のメールアドレスを入力してください"})).into_response();
+    }
+
+    // そのメールの直近の発送済み注文の住所(name/phone は別カラム)。
+    let past: Option<(String, String, String)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT COALESCE(customer_name,''), COALESCE(customer_phone,''), COALESCE(shipping_address_json,'') \
+             FROM catalog_orders \
+             WHERE LOWER(customer_email)=? AND status='submitted' AND COALESCE(shipping_address_json,'')!='' \
+             ORDER BY created_at DESC LIMIT 1",
+            rusqlite::params![email],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).ok()
+    };
+    let Some((cust_name, cust_phone, sa_raw)) = past else {
+        return axum::Json(serde_json::json!({"ok": false, "error": "そのメールでの購入履歴が見つかりませんでした。下のフォームでご入力ください。"})).into_response();
+    };
+    let sa: serde_json::Value = serde_json::from_str(&sa_raw).unwrap_or(serde_json::json!({}));
+    let line1 = sa["line1"].as_str().unwrap_or("");
+    let city = sa["city"].as_str().unwrap_or("");
+    let postal = sa["postal_code"].as_str().unwrap_or("");
+    if line1.is_empty() || city.is_empty() || postal.is_empty() {
+        return axum::Json(serde_json::json!({"ok": false, "error": "登録済みの住所が不完全でした。下のフォームでご入力ください。"})).into_response();
+    }
+    let addr = serde_json::json!({
+        "name": cust_name, "line1": line1, "line2": sa["line2"].as_str().unwrap_or(""),
+        "city": city, "state": sa["state"].as_str().unwrap_or(""), "postal_code": postal,
+        "country": sa["country"].as_str().unwrap_or("JP"), "phone": cust_phone,
+    });
+
+    // 次回のため受取人アカウントにも住所を保存(slug アカウントがあれば)。
+    if !recipient_slug.is_empty() {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE you_users SET shipping_address_json=?, updated_at=? WHERE LOWER(slug)=?",
+            rusqlite::params![addr.to_string(), chrono_now_iso(), recipient_slug.to_lowercase()],
+        );
+    }
+    let gift_json_new = serde_json::json!({
+        "recipient_slug": recipient_slug, "claimed": true, "sender_email": sender_email,
+    }).to_string();
+
+    ship_gift(db.clone(), &session_id, &sku, amount, "jpy",
+              &addr, &sender_email, &email, &gift_json_new).await;
+
+    // 住所はレスポンスに含めない(送り主に漏れない不変条件)。
+    axum::Json(serde_json::json!({"ok": true})).into_response()
 }
 
 // ─── Digital event tickets ────────────────────────────────────────────
