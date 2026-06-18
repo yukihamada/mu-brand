@@ -6648,21 +6648,13 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
 ];
 
 pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakePageQuery>) -> Response {
-    // 表示言語: ?lang= 明示 > Accept-Language の第一候補が ja 以外なら EN。
+    // 表示言語: 既定は日本語(日本先行)。英語は明示的な ?lang=en のときだけ。
+    // ブラウザの Accept-Language では切り替えない — en ロケールの端末でも日本語の
+    // 人が日本語で見られるように(英語が要る人はナビの EN 切替/ ?lang=en で)。
     // EN は JA レンダリング後に make_html_en() の対訳テーブルで差し替える
     // (訳が無い文字列は JA のまま残る=安全側)。
-    let en = match q.lang.as_deref().map(str::trim) {
-        Some("en") => true,
-        Some(_) => false,
-        None => headers
-            .get(axum::http::header::ACCEPT_LANGUAGE)
-            .and_then(|v| v.to_str().ok())
-            .map(|al| {
-                let first = al.split(',').next().unwrap_or("").trim().to_lowercase();
-                !first.is_empty() && !first.starts_with("ja")
-            })
-            .unwrap_or(false),
-    };
+    let _ = &headers;
+    let en = matches!(q.lang.as_deref().map(str::trim), Some("en"));
     // 勝者が決まっていれば全員に勝者を固定表示（?v は無視）。
     let winner = { let conn = db.lock().unwrap(); cv_get(&conn, "make_winner") };
     let locked = make_variant_norm(winner.as_deref());
