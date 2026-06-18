@@ -32,6 +32,21 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async
         -> UNNotificationPresentationOptions { [.banner, .sound, .badge] }
+
+    // 通知タップ → ペイロードに応じてアプリ内へ遷移。AppDelegate は SwiftUI の
+    // AppState を直接持てないので NotificationCenter 経由で AppState に橋渡しする。
+    // ペイロード例: {"aps":{...}, "tab":"shop", "id":"drop-2026..."}。
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse) async {
+        let info = response.notification.request.content.userInfo
+        Analytics.track("push_open", ["id": (info["id"] as? String) ?? ""])
+        NotificationCenter.default.post(name: .muPushOpen, object: nil, userInfo: info)
+    }
+}
+
+extension Notification.Name {
+    // 通知タップを SwiftUI 層へ渡すためのアプリ内イベント。
+    static let muPushOpen = Notification.Name("mu.push.open")
 }
 
 @MainActor
