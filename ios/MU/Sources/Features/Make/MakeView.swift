@@ -31,6 +31,13 @@ struct MakeView: View {
     @State private var showGift = false
     @FocusState private var promptFocused: Bool
 
+    // デザイン依頼: このお題を誰かに頼む(相手が作る→自分が受け取る→作手に印税)。
+    @State private var askEmail = false
+    @State private var requestEmail = ""
+    @State private var requestBusy = false
+    @State private var requestLink: String?
+    @State private var requestStatusURL: String?
+
     // 複数案 + スワイプ
     @State private var variants: [DesignVariant] = []
     @State private var current = 0           // スワイプ中の案
@@ -128,9 +135,45 @@ struct MakeView: View {
                         .buttonStyle(.borderedProminent)
                         .foregroundStyle(.black)
                         .disabled(isMaking || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        // このお題を、誰かにデザインしてもらう。
+                        Button(action: { startDesignRequest() }) {
+                            HStack {
+                                if requestBusy { ProgressView().controlSize(.small) }
+                                Image(systemName: "gift")
+                                Text("このお題を誰かに頼む")
+                            }
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isMaking || requestBusy || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .disabled(isMaking)
                     .opacity(isMaking ? 0.5 : 1)
+
+                    if let link = requestLink {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("🎁 依頼リンクができました")
+                                .font(.subheadline.weight(.semibold))
+                            Text("このリンクを送ると、相手がデザインして、できあがったらあなたが受け取れます。")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if let url = URL(string: link) {
+                                ShareLink(item: url) {
+                                    Label("リンクを送る", systemImage: "square.and.arrow.up")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                            }
+                            if let s = requestStatusURL, let surl = URL(string: s) {
+                                Link("自分の受け取りページを見る →", destination: surl)
+                                    .font(.caption)
+                            }
+                        }
+                        .padding(12)
+                        .background(.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    }
 
                     if let errorMessage {
                         Label(errorMessage, systemImage: "exclamationmark.triangle")
@@ -187,6 +230,15 @@ struct MakeView: View {
             } message: {
                 Text(String(localized: "make.priceHint"))
             }
+            .alert("あなたのメール", isPresented: $askEmail) {
+                TextField("you@example.com", text: $requestEmail)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                Button("リンクを作る") { Task { await createRequest(email: requestEmail) } }
+                Button(String(localized: "make.cancel"), role: .cancel) {}
+            } message: {
+                Text("完成のお知らせ・受け取りに使います")
+            }
         }
     }
 
@@ -194,6 +246,38 @@ struct MakeView: View {
     private func giftURL(_ checkout: String) -> URL? {
         let sep = checkout.contains("?") ? "&" : "?"
         return URL(string: checkout + sep + "gift=1")
+    }
+
+    // このお題を誰かに頼む: ログイン中ならそのメール、なければ入力を促す。
+    private func startDesignRequest() {
+        guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let e = session.email, e.contains("@") {
+            Task { await createRequest(email: e) }
+        } else {
+            if requestEmail.isEmpty { requestEmail = session.email ?? "" }
+            askEmail = true
+        }
+    }
+
+    private func createRequest(email: String) async {
+        let brief = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !brief.isEmpty, e.contains("@") else {
+            errorMessage = "メールとお題を入れてください"; return
+        }
+        requestBusy = true; errorMessage = nil
+        Analytics.track("design_request_create")
+        let kindArg = kind.rawValue.isEmpty ? nil : kind.rawValue
+        do {
+            let (link, status) = try await MUAPI.createDesignRequest(email: e, brief: brief, kind: kindArg)
+            requestLink = link
+            requestStatusURL = status
+        } catch let APIError.message(m) {
+            errorMessage = m
+        } catch {
+            errorMessage = "リンクを作成できませんでした"
+        }
+        requestBusy = false
     }
 
     private var header: some View {
