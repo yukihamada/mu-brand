@@ -1,0 +1,204 @@
+{
+  "sourceLanguage" : "ja",
+  "version" : "1.0",
+  "strings" : {
+    "common.retry" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "もう一度" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } } } },
+    "common.error" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込めませんでした" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't load" } } } },
+    "common.ok" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "OK" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "OK" } } } },
+    "common.cancel" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "キャンセル" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Cancel" } } } },
+    "tab.make" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "つくる" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Make" } } } },
+    "tab.gallery" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "みんなの棚" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Gallery" } } } },
+    "tab.mine" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "じぶん" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Mine" } } } },
+    "make.headline" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "何が欲しい？" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "What do you want?" } } } },
+    "make.subheadline" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "言葉にすれば、数十秒で買える一点ものになる。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Say it, and in seconds it becomes a one-of-one you can buy." } } } },
+    "make.placeholder" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "「道場のチームTシャツ、黒に金で」みたいに話しかけて" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Try \"a team tee for my dojo, black and gold\"" } } } },
+    "make.button" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "作る" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Make it" } } } },
+    "make.suggestTitle" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "たとえば" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "For example" } } } },
+    "make.suggest.1" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "道場のチームT、黒に金" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Team tee for my dojo, black & gold" } } } },
+    "make.suggest.2" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "娘の誕生日T、5歳、ユニコーン" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Birthday tee for my daughter, 5, unicorns" } } } },
+    "make.suggest.3" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "柴犬のステッカー" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "A shiba inu sticker" } } } },
+    "make.suggest.4" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "月曜が好きになるマグ" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "A mug that makes Mondays okay" } } } },
+    "make.suggest.5" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "焚き火の夜空のポスター" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "A poster of a campfire night sky" } } } },
+    "make.suggest.6" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "コーヒーと猫のトート" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Coffee-and-cats tote bag" } } } },
+    "make.recentTitle" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "みんなが作ったばかり" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Just made by everyone" } } } },
+    "make.recentEmpty" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "まだ誰も作っていません。最初のひとりになろう。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Nothing here yet. Be the first." } } } },
+    "make.failedTitle" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "作れませんでした" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't make it" } } } },
+    "make.kind.auto" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "おまかせ" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Auto" } } } },
+    "make.kind.hoodie" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "パーカー" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Hoodie" } } } },
+    "make.kind.sticker" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ステッカー" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Sticker" } } } },
+    "make.kind.mug" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "マグ" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Mug" } } } },
+    "make.kind.tote" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "トート" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Tote" } } } },
+    "make.kind.poster" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ポスター" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Poster" } } } },
+    "make.gen.1" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "言葉を読んでいます…" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading your words…" } } } },
+    "make.gen.2" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "デザインを描いています…" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Drawing the design…" } } } },
+    "make.gen.3" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "一点ものに仕上げています…" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Finishing your one-of-one…" } } } },
+    "make.gen.4" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "棚に並べています…" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Putting it on the shelf…" } } } },
+    "result.title" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "できました！" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "It's made!" } } } },
+    "result.reviewTitle" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "確認中" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "In review" } } } },
+    "result.reviewBody" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "内容を人の目で確認しています。OKになり次第、購入できるようになります。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "A human is reviewing this one. It becomes purchasable once approved." } } } },
+    "result.buy" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "購入する" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Buy" } } } },
+    "result.openPDP" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "商品ページ" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Product page" } } } },
+    "result.edit" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "編集する" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Edit" } } } },
+    "result.again" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "もうひとつ作る" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Make another" } } } },
+    "result.mockupPending" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "着用イメージを生成中" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Making on-body preview" } } } },
+    "result.mockupReady" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "着用イメージ完成" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "On-body preview ready" } } } },
+    "gallery.empty" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "棚はまだ空っぽです。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "The shelf is empty." } } } },
+    "feed.sold %lld" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 売れた" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld sold" } } } },
+    "mine.madeSection" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "この端末で作ったもの" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Made on this device" } } } },
+    "mine.empty" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "まだ何もありません。最初のひとつを作ろう。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Nothing yet. Make your first one." } } } },
+    "mine.makeCTA" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "作りにいく" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Go make" } } } },
+    "mine.loginTitle" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "名義をつける" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Claim your makes" } } } },
+    "mine.loginLead" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "メール認証すると作品があなたの名義になり、売れるたび売上の10%が入ります。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Verify your email to attribute your makes — you earn 10% of every sale." } } } },
+    "mine.accountSection" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "アカウント" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Account" } } } },
+    "mine.storeSection" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "あなたのストア" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Your store" } } } },
+    "auth.title" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログイン" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Log in" } } } },
+    "auth.lead" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "メールアドレスに6桁のコードを送ります。パスワードは不要です。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "We'll email you a 6-digit code. No password needed." } } } },
+    "auth.email" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "メールアドレス" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } } } },
+    "auth.code" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "6桁コード" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "6-digit code" } } } },
+    "auth.sendCode" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "コードを送る" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Send code" } } } },
+    "auth.sendCode.cta" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "メールでログイン" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Log in with email" } } } },
+    "auth.verify" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "確認する" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Verify" } } } },
+    "auth.restart" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "最初からやり直す" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Start over" } } } },
+    "account.email" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "メール" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } } } },
+    "account.orders" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "注文数" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Orders" } } } },
+    "account.revenue" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "売上" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Revenue" } } } },
+    "account.logout" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログアウト" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Log out" } } } },
+    "account.delete" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "アカウントを削除" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete account" } } } },
+    "account.deleteConfirmTitle" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "アカウントを削除しますか？" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete your account?" } } } },
+    "account.deleteConfirmAction" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除する" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } } } },
+    "account.deleteConfirmBody" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "サーバ上のアカウント情報を削除します。この操作は取り消せません。" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "This deletes your account data on the server. This cannot be undone." } } } },
+    "account.privacy" : { "extractionState" : "manual", "localizations" : {
+      "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシーポリシー" } },
+      "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy Policy" } } } }
+  }
+}

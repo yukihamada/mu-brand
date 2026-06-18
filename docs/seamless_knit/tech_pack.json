@@ -1,0 +1,69 @@
+{
+  "$schema_note": "MU seamless-knit tech pack v2. メーカー+ユーザー指摘反映: 18G/コットン100/きなり1色/試編み1着フェーズ化。寸法は設計値、価格/MOQ/納期/縮率は工場見積り・試編みで確定=未確認。画像はAIモック。",
+  "version": 2,
+  "product": {
+    "brand": "MU / wearmu",
+    "company": "株式会社イネブラ",
+    "name": "MU SEAMLESS ONE",
+    "name_ja": "無縫製クルーネック 半袖「一」",
+    "kind": "seamless_knit",
+    "category": "high_gauge_knit_short_sleeve_crew",
+    "method": "WHOLEGARMENT",
+    "seamless": true,
+    "post_sewn_parts": ["brand_name_label_only"],
+    "silhouette": "relaxed_slight_drop_shoulder",
+    "season": "all_year",
+    "target": "craft/quality-led, gift, BJJ premium line (not mass-market)",
+    "why_wholegarment": ["no_seams_no_chafe_long_life", "light_handfeel", "zero_cut_loss", "one_pattern_polished_amortizes_program_fee"],
+    "charter_self_score": { "comfort": 20, "silhouette": 18, "longevity": 20, "universality": 20, "noise_zero": 20, "total": 98, "status": "unverified_design_value" }
+  },
+  "knit": {
+    "gauge": "18G",
+    "weight_target_gsm": [180, 210],
+    "structure_body": "plain_jersey",
+    "structure_trim": "1x1_rib",
+    "stitch_density_note": "度目は目付目標に合わせ試編みで確定"
+  },
+  "yarn": {
+    "adopted_v2": { "composition": "cotton 100", "count_target": "~2/60 multi-ply for 18G", "source": "工場在庫糸を最優先(専用染色/混紡は糸MOQ回避のため初回避ける)" },
+    "future_phase3": { "composition": "cotton x merino 等", "gate": "染め糸/混紡糸MOQ確認後" }
+  },
+  "colors_phased": [
+    { "phase": "1-2", "code": "01", "name_ja": "きなり", "name_en": "Ecru", "dye": "undyed", "ref_image": "flatlay_ecru.png" },
+    { "phase": "3", "code": "02", "name_ja": "チャコール", "name_en": "Charcoal", "gate": "染め糸MOQ(数十kg〜)を工場確認後に追加判断", "ref_image": "flatlay_charcoal.png" }
+  ],
+  "measurements_cm": {
+    "_columns": ["1_S", "2_M", "3_L"],
+    "_grading_pitch_cm": 3,
+    "_note": "リブ伸びで実寸が動く→試編み後に実測補正。PDPに平置き実寸+着用身長例を必須掲載(返品対策)。",
+    "body_length":   [64, 67, 70],
+    "chest_width":   [50, 53, 56],
+    "shoulder_width":[45, 48, 51],
+    "sleeve_length": [21, 22, 23],
+    "sleeve_opening":[16, 17, 18],
+    "neck_width":    [18, 19, 20],
+    "neck_drop":     [8, 8.5, 9],
+    "collar_rib_w":  [2, 2, 2],
+    "hem_rib_w":     [3, 3, 3]
+  },
+  "finishing": {
+    "process": "wash + press (工場標準)",
+    "shrinkage_pct_required_from_factory": true,
+    "labels_required": ["組成(綿100%)", "原産国", "取扱絵表示(洗濯表示)", "ブランド編み/織ネーム"],
+    "wash_target": "家庭洗濯可(ネット) → 洗濯試験で確定"
+  },
+  "details": { "collar": "1x1 rib 2cm", "cuff": "1x1 rib", "hem": "1x1 rib 3cm (no roll)", "logo": "none (ネーム1点のみ)" },
+  "data_intake": { "deliver": ["this spec v2", "techflat.png", "flatlay/on-body", "knit_swatch.png", "参考現物(あれば)"], "factory_step": "島精機 SDS-ONE APEX で編成プログラム化" },
+  "phases": [
+    { "phase": 1, "goal": "試編み1着", "spec": "きなり / size2(M) / 18G / 綿100", "out": "型確定・目付/縮率確認・実物撮影" },
+    { "phase": 2, "goal": "量産3サイズ(きなり)", "out": "型費償却・実物写真でPDP差し替え" },
+    { "phase": 3, "goal": "色/素材拡張", "gate": "染め糸MOQ・メリノ混見積り後" }
+  ],
+  "assets": {
+    "tech_flat": "techflat.png", "knit_swatch": "knit_swatch.png",
+    "flatlay": ["flatlay_ecru.png", "flatlay_charcoal.png"], "on_body": ["onbody_ecru.png"],
+    "spec_doc": "SPEC_MU_SEAMLESS_ONE.md", "charter": "STRONGEST_TSHIRT_CHARTER.md", "viewer": "index.html"
+  },
+  "pricing_status": "retail未確定。Phase1の実原価(型費按分+糸+編成)が出てから確定。それまで公開面に価格を出さない/go-liveしない。",
+  "to_confirm_with_factory": ["moq(1着試作可否)", "program_fee_per_pattern", "sample_fee", "unit_price_by_qty", "lead_time", "18G_capability", "in_stock_cotton_yarn", "shrinkage_pct", "data_intake_format"]
+}

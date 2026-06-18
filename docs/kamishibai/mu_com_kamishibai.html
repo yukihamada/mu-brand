@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mu.com を、買わない。— MU 紙芝居</title>
+<style>
+  :root{ --gold:#d9a441; --ink:#0e0e10; --paper:#f4f1ea; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#000;overflow:hidden;font-family:"Hiragino Mincho ProN","Yu Mincho",serif}
+  #stage{position:fixed;inset:0}
+  .panel{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;
+    opacity:0;transition:opacity 1.1s ease;padding:8vw;text-align:center;pointer-events:none}
+  .panel.on{opacity:1;pointer-events:auto}
+  .panel.on .art{animation:burns 7s ease forwards}
+  @keyframes burns{from{transform:scale(1.06)}to{transform:scale(1)}}
+  .art{position:absolute;inset:0;z-index:0}
+  .jp{position:relative;z-index:2;color:var(--paper);font-size:min(7.2vw,58px);font-weight:700;line-height:1.4;
+    letter-spacing:.04em;text-shadow:0 2px 30px rgba(0,0,0,.6)}
+  .jp .accent{color:var(--gold)}
+  .sub{position:relative;z-index:2;color:#cfc8bb;font-size:min(3.4vw,20px);margin-top:3.2vh;letter-spacing:.06em;
+    font-family:"Hiragino Sans",sans-serif;font-weight:400;text-shadow:0 1px 16px rgba(0,0,0,.7)}
+  .en{position:relative;z-index:2;color:#8c8a85;font-size:min(2.6vw,14px);margin-top:1.4vh;letter-spacing:.12em;
+    font-family:"Helvetica Neue",sans-serif;text-transform:uppercase}
+  /* progress + controls */
+  #dots{position:fixed;bottom:26px;left:0;right:0;display:flex;gap:9px;justify-content:center;z-index:10}
+  #dots i{width:7px;height:7px;border-radius:50%;background:#ffffff33;transition:.3s;cursor:pointer}
+  #dots i.act{background:var(--gold);transform:scale(1.35)}
+  #hint{position:fixed;top:18px;right:20px;color:#ffffff55;font-family:sans-serif;font-size:12px;z-index:10;letter-spacing:.05em}
+  #bar{position:fixed;top:0;left:0;height:3px;background:var(--gold);width:0;z-index:11;transition:width .2s linear}
+  .draftbadge{position:fixed;top:16px;left:20px;z-index:10;color:#ffffff44;font-family:sans-serif;font-size:11px;letter-spacing:.15em}
+  /* ---- per-panel art (pure CSS scenes) ---- */
+  .bg{position:absolute;inset:0}
+  .p1 .bg{background:radial-gradient(circle at 50% 46%,#1a1a1f 0%,#000 70%)}
+  .gem{position:absolute;top:46%;left:50%;width:14px;height:14px;border-radius:50%;transform:translate(-50%,-50%);
+    background:var(--gold);box-shadow:0 0 40px 14px #d9a44188,0 0 120px 40px #d9a44133;animation:pulse 3.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.7}50%{opacity:1}}
+  .p2 .bg{background:linear-gradient(180deg,#15140f 0%,#000 100%)}
+  .smoke{position:absolute;inset:0;background:
+    repeating-linear-gradient(95deg,#ffffff08 0 2px,transparent 2px 26px);filter:blur(2px);opacity:.5;
+    -webkit-mask:linear-gradient(180deg,#000,transparent)}
+  .p3 .bg{background:radial-gradient(circle at 50% 50%,#101418 0%,#000 72%)}
+  .seed{position:absolute;top:50%;left:50%;width:10px;height:10px;border-radius:50%;transform:translate(-50%,-50%);
+    background:var(--gold);box-shadow:0 0 50px 18px #d9a44166}
+  .arc{position:absolute;top:50%;left:50%;width:46vmin;height:46vmin;transform:translate(-50%,-50%);
+    border:1px solid #d9a44144;border-radius:50%;clip-path:inset(0 50% 0 0)}
+  .arc.r{transform:translate(-50%,-50%) scaleX(-1)}
+  .p4 .bg{background:linear-gradient(180deg,#0a0c12 0%,#241a0c 100%)}
+  .ship{position:absolute;left:50%;bottom:24%;transform:translateX(-50%);width:0;height:0;
+    border-left:9vmin solid transparent;border-right:9vmin solid transparent;border-bottom:13vmin solid #d9a44122}
+  .sun{position:absolute;left:50%;bottom:30%;transform:translateX(-50%);width:30vmin;height:30vmin;border-radius:50%;
+    background:radial-gradient(circle,#d9a44155,transparent 65%)}
+  .p5 .bg{background:radial-gradient(circle at 50% 50%,#14130f,#000 75%)}
+  .ring{position:absolute;top:50%;left:50%;width:40vmin;height:40vmin;transform:translate(-50%,-50%);border-radius:50%;
+    border:2px solid #ffffff14}
+  .slice{position:absolute;top:50%;left:50%;width:40vmin;height:40vmin;transform:translate(-50%,-50%);border-radius:50%;
+    background:conic-gradient(var(--gold) 0 3.6deg,transparent 3.6deg)}
+  .p6 .bg{background:linear-gradient(180deg,#0c0e14 0%,#1a160d 100%)}
+  .door{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:22vmin;height:34vmin;border-radius:10vmin 10vmin 0 0;
+    background:radial-gradient(ellipse at 50% 60%,#d9a44188,#d9a44111 70%);box-shadow:0 0 90px 30px #d9a44122}
+  .p7 .bg{background:radial-gradient(circle at 50% 40%,#1b1b20,#000 70%)}
+  .wordmark{position:absolute;top:42%;left:50%;transform:translate(-50%,-50%);font-size:min(26vw,220px);font-weight:800;
+    color:var(--paper);letter-spacing:.02em;opacity:.96}
+  #replay{position:fixed;inset:0;display:none;z-index:20;background:#000a;color:#fff;
+    flex-direction:column;justify-content:center;align-items:center;font-family:sans-serif;cursor:pointer}
+  #replay b{font-size:20px;letter-spacing:.1em}#replay span{color:#888;margin-top:10px;font-size:13px}
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div class="draftbadge">MU ・ NON-BINDING DRAFT</div>
+<div id="hint">クリック / → で進む</div>
+<div id="stage">
+
+  <section class="panel p1"><div class="art"><div class="bg"></div><div class="gem"></div></div>
+    <div class="jp"><span class="accent">mu.com</span> を、買わない。</div>
+    <div class="sub">世界に 676 個だけの、2 文字の .com。</div>
+    <div class="en">We won't buy mu.com</div></section>
+
+  <section class="panel p2"><div class="art"><div class="bg"></div><div class="smoke"></div></div>
+    <div class="jp">現金で買えば、<span class="accent">1.5 億</span>が消える。</div>
+    <div class="sub">そして売上は、1 円も増えない。ランウェイだけが、溶ける。</div>
+    <div class="en">Pay cash, and the runway just burns</div></section>
+
+  <section class="panel p3"><div class="art"><div class="bg"></div><div class="arc"></div><div class="arc r"></div><div class="seed"></div></div>
+    <div class="jp">だから、買わない。<span class="accent">仲間にする。</span></div>
+    <div class="sub">現金の代わりに、MU の株を渡す。</div>
+    <div class="en">So we don't buy it — we make them a partner</div></section>
+
+  <section class="panel p4"><div class="art"><div class="bg"></div><div class="sun"></div><div class="ship"></div></div>
+    <div class="jp">売り手は、<span class="accent">投資家</span>になる。</div>
+    <div class="sub">字面を売る人から、上がる船に乗る人へ。</div>
+    <div class="en">The seller becomes an investor</div></section>
+
+  <section class="panel p5"><div class="art"><div class="bg"></div><div class="ring"></div><div class="slice"></div></div>
+    <div class="jp">希薄化は、<span class="accent">1% 以内。</span></div>
+    <div class="sub">手付は少しだけ。残りは次のラウンドの価格で。いつでも買い戻せる。</div>
+    <div class="en">Dilution stays under one percent</div></section>
+
+  <section class="panel p6"><div class="art"><div class="bg"></div><div class="door"></div></div>
+    <div class="jp"><span class="accent">mu.com</span> を、本拠にする。</div>
+    <div class="sub">世界中の言葉が、一着になる場所。その住所が、mu.com。</div>
+    <div class="en">Make mu.com the home of a globally worn brand</div></section>
+
+  <section class="panel p7"><div class="art"><div class="bg"></div><div class="wordmark">MU</div></div>
+    <div class="jp" style="margin-top:30vh">言えば、<span class="accent">一着</span>になる。</div>
+    <div class="sub">MU ・ wearmu.com</div>
+    <div class="en">Say it, and it becomes a garment</div></section>
+
+</div>
+<div id="dots"></div>
+<div id="replay"><b>もう一度見る</b><span>Replay ↺</span></div>
+
+<script>
+  const panels=[...document.querySelectorAll('.panel')], dotbox=document.getElementById('dots'),
+        bar=document.getElementById('bar'), replay=document.getElementById('replay');
+  const DUR=6200; let i=-1, timer=null, raf=null;
+  panels.forEach((_,k)=>{const d=document.createElement('i');d.onclick=e=>{e.stopPropagation();go(k)};dotbox.appendChild(d)});
+  const dots=[...dotbox.children];
+  function progress(){const t0=performance.now();cancelAnimationFrame(raf);
+    (function step(t){const p=Math.min(1,(t-t0)/DUR);bar.style.width=(p*100)+'%';if(p<1)raf=requestAnimationFrame(step)})(t0)}
+  function go(n){ if(n>=panels.length){finish();return;}
+    i=n; panels.forEach((p,k)=>p.classList.toggle('on',k===i));
+    dots.forEach((d,k)=>d.classList.toggle('act',k===i));
+    replay.style.display='none'; clearTimeout(timer); progress();
+    timer=setTimeout(()=>go(i+1),DUR);
+  }
+  function finish(){clearTimeout(timer);cancelAnimationFrame(raf);bar.style.width='100%';replay.style.display='flex';}
+  function next(){clearTimeout(timer);go(i+1)}
+  function prev(){clearTimeout(timer);go(Math.max(0,i-1))}
+  document.body.onclick=()=> i>=panels.length-1?go(0):next();
+  replay.onclick=e=>{e.stopPropagation();go(0)};
+  document.onkeydown=e=>{if(e.key==='ArrowRight'||e.key===' ')next();else if(e.key==='ArrowLeft')prev();};
+  go(0);
+</script>
+</body>
+</html>

@@ -1,0 +1,408 @@
+{
+  "sourceLanguage" : "ja",
+  "strings" : {
+    "tab.pulse" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パルス" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pulse" } }
+      }
+    },
+    "tab.drops" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ドロップ" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Drops" } }
+      }
+    },
+    "tab.ledger" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "台帳" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Ledger" } }
+      }
+    },
+    "tab.closet" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "クローゼット" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Closet" } }
+      }
+    },
+    "common.error" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "エラー" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "ERROR" } }
+      }
+    },
+    "common.retry" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "再読み込み" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } }
+      }
+    },
+    "pulse.loading" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "心拍を計測中…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Reading the pulse…" } }
+      }
+    },
+    "pulse.live" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "LIVE" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "LIVE" } }
+      }
+    },
+    "pulse.asOf" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AS OF" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "AS OF" } }
+      }
+    },
+    "pulse.totalRevenue" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "累計売上" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Total Revenue" } }
+      }
+    },
+    "pulse.revenueNote" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オークション含む全実売 — /transparency と同じ数字" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All real sales incl. auctions — same numbers as /transparency" } }
+      }
+    },
+    "pulse.stat.sku" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "総SKU" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Total SKUs" } }
+      }
+    },
+    "pulse.stat.bornToday" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "今日生まれた服" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Born Today" } }
+      }
+    },
+    "pulse.stat.sinceLastGen" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最終生成から" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Since Last Gen" } }
+      }
+    },
+    "pulse.stat.buyers" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "外部購入者" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "External Buyers" } }
+      }
+    },
+    "pulse.stat.purchases7d" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "購入 / 7日" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Purchases 7D" } }
+      }
+    },
+    "pulse.stat.brands" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ブランド" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Brands" } }
+      }
+    },
+    "pulse.systemLog" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "システムログ" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "System Log" } }
+      }
+    },
+    "pulse.honesty" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "※ 生成はバッチ実行のため「次の生成まで」の予告は出さない (偽カウントダウンをしない)。表示は全て公開APIの実数: /api/transparency・/api/brands・/api/shop/feed.json・/api/updates。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Generation runs in batches, so we show elapsed time instead of a fake countdown. Every number here is real, from public APIs: /api/transparency, /api/brands, /api/shop/feed.json, /api/updates." } }
+      }
+    },
+    "drops.empty" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "まだ何もない" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Nothing yet" } }
+      }
+    },
+    "drops.madeThis" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIがこれを作った" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "AI made this" } }
+      }
+    },
+    "feed.sold %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 売れた" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld sold" } }
+      }
+    },
+    "pdp.buy" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "購入する" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Buy" } }
+      }
+    },
+    "pdp.openWeb" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Webで見る" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "View on web" } }
+      }
+    },
+    "detail.sku" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "SKU" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "SKU" } }
+      }
+    },
+    "detail.brand" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ブランド" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Brand" } }
+      }
+    },
+    "detail.created" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "生成時刻" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Created" } }
+      }
+    },
+    "detail.price" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "価格" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Price" } }
+      }
+    },
+    "detail.sold" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "販売数" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sold" } }
+      }
+    },
+    "ledger.lede" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "売上・購入・返金・欠番。一切隠さない数字を、毎リクエスト再計算。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revenue, purchases, refunds, missing drops. Nothing hidden, recomputed on every request." } }
+      }
+    },
+    "ledger.breakdown.auctions" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "オークション" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Auctions" } }
+      }
+    },
+    "ledger.breakdown.shirts" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "シャツ" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Shirts" } }
+      }
+    },
+    "ledger.breakdown.youtee" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "/you tee" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "/you tee" } }
+      }
+    },
+    "ledger.real" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Stripe Live 実売" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Real (Stripe Live)" } }
+      }
+    },
+    "ledger.purchases %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件の購入" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld purchases" } }
+      }
+    },
+    "ledger.external" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "第三者購入" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "External (no dogfood)" } }
+      }
+    },
+    "ledger.externalSub %lld %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件 / %lld 人 (dogfood除外)" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld purchases / %lld customers" } }
+      }
+    },
+    "ledger.byBrand" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ブランド別売上" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revenue by Brand" } }
+      }
+    },
+    "ledger.orders %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld orders" } }
+      }
+    },
+    "ledger.honesty" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "隠さないコーナー" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Nothing Hidden" } }
+      }
+    },
+    "ledger.refunded" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "返金 (売上から除外済)" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Refunds (excluded from revenue)" } }
+      }
+    },
+    "ledger.refunded.detail %lld %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld 件 / %@" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld orders / %@" } }
+      }
+    },
+    "ledger.missing.mugen" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "MUGEN 欠番ドロップ" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "MUGEN missing drops" } }
+      }
+    },
+    "ledger.missing.muon" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "MUON 欠落日 (直近14日)" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "MUON missing days (last 14d)" } }
+      }
+    },
+    "ledger.recent" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最近の購入" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Recent Purchases" } }
+      }
+    },
+    "ledger.split" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "利益のゆくえ" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Where Profit Goes" } }
+      }
+    },
+    "ledger.pledge" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "弟子屈への寄付誓約 (§27)" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Teshikaga pledge (§27)" } }
+      }
+    },
+    "ledger.note" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "※ このページは公開API /api/transparency の生データをそのまま表示している。アプリ独自の加工値はない。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This page renders the raw public /api/transparency JSON as-is. No app-side adjustments." } }
+      }
+    },
+    "ledger.openWeb" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Web版 /transparency を開く" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open /transparency on web" } }
+      }
+    },
+    "auth.lead" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メールアドレスに6桁コードを送って、MU アカウントにログインします。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "We'll email you a 6-digit code to sign in to your MU account." } }
+      }
+    },
+    "auth.email" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メールアドレス" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } }
+      }
+    },
+    "auth.code" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "6桁コード" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "6-digit code" } }
+      }
+    },
+    "auth.sendCode" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "コードを送る" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Send code" } }
+      }
+    },
+    "auth.verify" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログイン" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sign in" } }
+      }
+    },
+    "auth.restart" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メールアドレスを入れ直す" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Use a different email" } }
+      }
+    },
+    "account.email" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "メール" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Email" } }
+      }
+    },
+    "account.sales" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "自分の売上" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "My Sales" } }
+      }
+    },
+    "account.orders" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "注文数" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Orders" } }
+      }
+    },
+    "account.revenue" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "売上" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revenue" } }
+      }
+    },
+    "account.loadingSales" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "読み込み中…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Loading…" } }
+      }
+    },
+    "account.mypage" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "マイページ (Web)" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "My Page (web)" } }
+      }
+    },
+    "account.logout" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ログアウト" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Log out" } }
+      }
+    },
+    "account.delete" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アカウントを削除" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete account" } }
+      }
+    },
+    "account.privacy" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "プライバシーポリシー" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Privacy Policy" } }
+      }
+    },
+    "account.deleteConfirmTitle" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アカウントを削除しますか?" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete your account?" } }
+      }
+    },
+    "account.deleteConfirmAction" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除する" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete" } }
+      }
+    },
+    "account.deleteConfirmBody" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "アカウントと API キーが無効化されます。この操作は取り消せません。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Your account and API key will be deactivated. This cannot be undone." } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

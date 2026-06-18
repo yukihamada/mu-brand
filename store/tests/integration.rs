@@ -57,8 +57,30 @@ fn free_port() -> u16 {
 struct ServerGuard {
     child: Child,
     base: String,
+    // Path to the throw-away sqlite file the server opened — tests seed
+    // rows into it directly (rusqlite is a normal dep, available here).
+    db_path: PathBuf,
     // Keep tempdir alive for the test lifetime — drop = rm -rf.
     _db_dir: tempfile::TempDir,
+}
+
+impl ServerGuard {
+    /// Insert one live catalog product into the server's DB. The server
+    /// is idle during tests (autopilot disabled), so a second connection
+    /// can write; busy_timeout covers the rare lock overlap. Only the
+    /// NOT NULL columns without a default are supplied.
+    fn seed_product(&self, sku: &str, brand: &str, label: &str) {
+        let conn = rusqlite::Connection::open(&self.db_path).expect("open seed db");
+        conn.busy_timeout(Duration::from_secs(5)).ok();
+        conn.execute(
+            "INSERT INTO catalog_products
+                (sku, brand, label, description_ja, retail_price_jpy,
+                 printful_product_id, printful_variant_id)
+             VALUES (?1, ?2, ?3, ?3, 4900, 71, 4012)",
+            rusqlite::params![sku, brand, label],
+        )
+        .expect("seed catalog_products row");
+    }
 }
 
 impl Drop for ServerGuard {
@@ -118,6 +140,7 @@ fn start_server() -> ServerGuard {
     ServerGuard {
         child,
         base,
+        db_path,
         _db_dir: db_dir,
     }
 }
@@ -205,5 +228,72 @@ fn merch_category_renders_with_empty_db() {
         s == 200 || (300..=399).contains(&s),
         "expected 2xx/3xx from /merch/bjj, got {}",
         s
+    );
+}
+
+// ── BJJ funnel: reason-to-buy on the PDP ────────────────────────────────────
+//
+// Organic/social traffic lands directly on a BJJ product page and never sees
+// the /bjj gallery hero, so the conversion framing must live on the PDP itself
+// for brand=bjj. These tests pin that block on (ja + en) for a bjj SKU and
+// pin it OFF for a non-bjj SKU so it can't leak onto unrelated products.
+
+#[test]
+fn bjj_pdp_shows_reason_to_buy_ja() {
+    let srv = start_server();
+    srv.seed_product("MU-BJJ-TEST-TEE-BLACK", "bjj", "TAP TEST — BJJ tee");
+    let resp = client()
+        .get(format!("{}/shop/MU-BJJ-TEST-TEE-BLACK", srv.base))
+        .send()
+        .expect("GET /shop/MU-BJJ-TEST-TEE-BLACK");
+    assert_eq!(resp.status().as_u16(), 200, "bjj PDP should render 200");
+    let body = resp.text().expect("body");
+    assert!(
+        body.contains("なぜ柔術家がこれを選ぶか"),
+        "bjj PDP missing the JA reason-to-buy heading"
+    );
+    assert!(
+        body.contains(r#"data-funnel-cta="pdp_bjj_make""#),
+        "bjj PDP missing the 'make your own' escape-hatch CTA"
+    );
+}
+
+#[test]
+fn bjj_pdp_reason_to_buy_en() {
+    let srv = start_server();
+    srv.seed_product("MU-BJJ-TEST-TEE-WHITE", "bjj", "TAP TEST — BJJ tee");
+    let resp = client()
+        .get(format!("{}/shop/MU-BJJ-TEST-TEE-WHITE?lang=en", srv.base))
+        .send()
+        .expect("GET /shop/...?lang=en");
+    assert_eq!(resp.status().as_u16(), 200, "bjj PDP (en) should render 200");
+    let body = resp.text().expect("body");
+    assert!(
+        body.contains("Why grapplers pick this"),
+        "bjj PDP (en) missing the EN reason-to-buy heading"
+    );
+    assert!(
+        body.contains(r#"href="/make?lang=en""#),
+        "bjj PDP (en) make link should preserve ?lang=en"
+    );
+}
+
+#[test]
+fn non_bjj_pdp_has_no_bjj_reason() {
+    let srv = start_server();
+    srv.seed_product("MU-ZEN-TEST-TEE-BLACK", "mu", "ZEN TEST tee");
+    let resp = client()
+        .get(format!("{}/shop/MU-ZEN-TEST-TEE-BLACK", srv.base))
+        .send()
+        .expect("GET /shop/MU-ZEN-TEST-TEE-BLACK");
+    assert_eq!(resp.status().as_u16(), 200, "non-bjj PDP should render 200");
+    let body = resp.text().expect("body");
+    assert!(
+        !body.contains("なぜ柔術家がこれを選ぶか"),
+        "bjj reason-to-buy block leaked onto a non-bjj product"
+    );
+    assert!(
+        !body.contains(r#"data-funnel-cta="pdp_bjj_make""#),
+        "bjj make CTA leaked onto a non-bjj product"
     );
 }
