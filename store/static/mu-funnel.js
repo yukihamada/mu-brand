@@ -108,9 +108,44 @@
     send(name, extra.product_id !== undefined ? extra : (Object.keys(extra).length ? { product_id: null, ...extra } : null));
   }, true);
 
+  // Impression tracker: fire cta_view ONCE when an element carrying
+  // data-funnel-view="<cta>" scrolls ≥50% into view. Independent of the
+  // click tracker (an element can have data-funnel="cta_click" AND
+  // data-funnel-view="..."), so we get CTR = cta_click / cta_view for the
+  // same slug — e.g. "did they even see the buy button before bouncing?".
+  // No-op where IntersectionObserver is unsupported.
+  function observeImpressions(root) {
+    if (!('IntersectionObserver' in window)) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        var el = en.target;
+        if (el.__muSeen) return;
+        el.__muSeen = 1;
+        io.unobserve(el);
+        var pid = el.getAttribute('data-funnel-product');
+        var cta = el.getAttribute('data-funnel-view');
+        var pos = el.getAttribute('data-funnel-pos');
+        var extra = {};
+        if (pid) extra.product_id = parseInt(pid, 10);
+        if (cta) extra.cta = cta;
+        if (pos !== null && pos !== '') extra.pos = parseInt(pos, 10);
+        send('cta_view', extra.product_id !== undefined ? extra
+          : (Object.keys(extra).length ? { product_id: null, ...extra } : null));
+      });
+    }, { threshold: 0.5 });
+    var els = (root || document).querySelectorAll('[data-funnel-view]');
+    for (var i = 0; i < els.length; i++) io.observe(els[i]);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { observeImpressions(); });
+  } else {
+    observeImpressions();
+  }
+
   // Expose for inline send (e.g. before /api/checkout fetch, or after
   // a Stripe checkout success). Both spellings are accepted because
   // older pages call MU_FUNNEL.send and newer ones call MuFunnel.track.
-  window.MU_FUNNEL = { send: send };
+  window.MU_FUNNEL = { send: send, observe: observeImpressions };
   window.MuFunnel  = { track: send, send: send };
 })();

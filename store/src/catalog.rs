@@ -12313,7 +12313,7 @@ pub async fn shop_pdp(
             (String::new(), String::new())
         };
         format!(
-            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{cross_script}{phone_script}{acctgift_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{cross_script}{phone_script}{acctgift_script}"#,
             cross_html = cross_html,
             phone_html = phone_html,
             gift_html = gift_html,
@@ -12461,7 +12461,7 @@ pub async fn shop_pdp(
     {
         let make_href = if lang == "en" { "/make?lang=en" } else { "/make" };
         if lang == "en" {
-            format!(r##"<div class="bjj-why">
+            format!(r##"<div class="bjj-why" data-funnel-view="pdp_bjj_why">
   <div class="bjj-why-h">🥋 Why grapplers pick this</div>
   <ul>
     <li>An inside joke only people who <b>actually train</b> will get — wear it, get the nod on the mats.</li>
@@ -12470,7 +12470,7 @@ pub async fn shop_pdp(
   </ul>
 </div>"##, href = make_href)
         } else {
-            format!(r##"<div class="bjj-why">
+            format!(r##"<div class="bjj-why" data-funnel-view="pdp_bjj_why">
   <div class="bjj-why-h">🥋 なぜ柔術家がこれを選ぶか</div>
   <ul>
     <li>道場で「それな」と伝わる、<b>柔術が分かる人にだけ刺さる</b>ネタ。</li>
