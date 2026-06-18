@@ -8,6 +8,13 @@ on:
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
+# デプロイは 1 本ずつ完走させる。新しい push は実行中をキャンセルせず後ろに並ぶ
+# (cancel-in-progress: false)。並走する自走セッションの高頻度 push でデプロイが
+# 互いをキャンセルし本番に出ない問題への対策。
+concurrency:
+  group: deploy-mu-store
+  cancel-in-progress: false
+
 jobs:
   # Pre-deploy gate: build the release binary AND actually start it briefly.
   # cargo check alone misses runtime panics like axum router conflicts
@@ -115,7 +122,6 @@ jobs:
     # hard gate: if it fails, `needs` short-circuits and deploy is skipped.
     if: ${{ always() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
-    concurrency: deploy-mu-store
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -127,7 +133,7 @@ jobs:
         run: |
           # The current (about to become previous) version number.
           ver=$(flyctl releases -a mu-store --json 2>/dev/null \
-            | jq -r '.[0].version' 2>/dev/null || echo "")
+            | jq -r '.[0].version // empty' 2>/dev/null || echo "")
           echo "previous_version=${ver}" >> "$GITHUB_OUTPUT"
           echo "previous=v${ver}"
 
