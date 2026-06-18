@@ -44,3 +44,22 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: MUWidget/Info.plist
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+  MUTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - MUTests
+    dependencies:
+      - target: MU
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MU:
+    build:
+      targets:
+        MU: all
+    test:
+      targets:
+        - MUTests

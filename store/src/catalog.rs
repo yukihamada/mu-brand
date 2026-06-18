@@ -197,6 +197,23 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     // NULL for every ordinary (non-gift) order → full backward compat.
     let _ = conn.execute("ALTER TABLE catalog_orders ADD COLUMN gift_json TEXT", []);
 
+    // ⭐ 商品レーティング(買った人/受け取った人 の星1-5 + コメント)。認可は
+    // stripe_session_id(注文ごとにユニーク)で、実購入者/受贈者だけが評価可能。
+    // 低評価の SKU は /admin/catalog/remake_low_rated でコメントを反映して作り直す。
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS catalog_ratings (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            stripe_session_id TEXT NOT NULL,
+            sku               TEXT NOT NULL,
+            stars             INTEGER NOT NULL,
+            comment           TEXT,
+            rater_type        TEXT NOT NULL DEFAULT 'buyer',
+            created_at        TEXT DEFAULT (datetime('now')),
+            UNIQUE(stripe_session_id, sku)
+         );
+         CREATE INDEX IF NOT EXISTS idx_catratings_sku ON catalog_ratings(sku);",
+    );
+
     // iOS アプリの APNs デバイストークン (ドロップ/売れた通知の宛先)。1端末1行。
     // email は任意(ログイン端末のみ刻む)。実送信の APNs 認証キーは別途(人間ゲート)。
     let _ = conn.execute_batch(
@@ -1053,6 +1070,226 @@ pub(crate) fn route_for_kind(kind: &str) -> &'static str {
         "event_ticket" | "song" | "zine" | "video" | "karaoke_ticket" => "digital",
         _ => "printful_dtg",
     }
+}
+
+// ─── Manufacturing Router (Phase 1) ─────────────────────────────────────
+//
+// 「言えば、最適な供給先に流れる」。kind/数量/地域/予算 → 供給先を選び見積を返す。
+// read-only。注文・DB は一切触らない（契約: docs/manufacturing-router-contract.md）。
+// PRODUCT_SPECS と同じ const 流儀。可変データ(受領見積)は Phase 2 で別テーブルへ。
+
+/// 不変の供給先能力。`mode="auto"` は API 即発注(Printful)、`"quote"` は
+/// 見積必須(人手 RFQ)。`kinds=["*"]` は PRODUCT_SPECS の全 POD kind を意味する。
+/// `moq`/`lead_time_days` の `-1` と `est_unit_jpy=None` は「要見積で確定」。
+pub struct SupplierCapability {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub mode: &'static str,        // "auto" | "quote"
+    pub route: &'static str,       // fulfillment_route 値（"*" kinds は kind 毎に解決）
+    pub regions: &'static [&'static str],
+    pub kinds: &'static [&'static str],
+    pub moq: i64,
+    pub lead_time_days: i64,
+    pub est_unit_jpy: Option<i64>,
+    pub note: &'static str,
+}
+
+/// 初期レジストリ。全エントリ docs 由来で裏取り済（contract 参照）。
+/// 供給先を足す = ここに 1 行（CATALOG_CONTRACT「vendor=1 arm」と同じ思想）。
+const SUPPLIER_REGISTRY: &[SupplierCapability] = &[
+    SupplierCapability {
+        id: "printful", name: "Printful (POD)",
+        mode: "auto", route: "*",
+        regions: &["global"], kinds: &["*"],
+        moq: 1, lead_time_days: 10, est_unit_jpy: None,
+        note: "オンデマンド印刷・在庫ゼロ・1点から・EU/US 製造。単価は kind の price floor。",
+    },
+    SupplierCapability {
+        id: "isami_gi", name: "ISAMI 柔術衣(刺繍)",
+        mode: "quote", route: "manual",
+        regions: &["jp"], kinds: &["gi", "gi_embroidery"],
+        moq: 10, lead_time_days: 45, est_unit_jpy: None,
+        note: "BJJ 柔術衣・刺繍17箇所・試作要・IBJJF 準拠。docs/gi-isami-2026-05-12。",
+    },
+    SupplierCapability {
+        id: "heritage_loopwheel", name: "Heritage ループウィール(受注生産)",
+        mode: "quote", route: "manual",
+        regions: &["jp"], kinds: &["loopwheel_sweat", "cut_and_sew", "sweatshirt_mto"],
+        moq: 15, lead_time_days: 90, est_unit_jpy: Some(35000),
+        note: "和歌山ループウィール×弟子屈鉱物染×兵庫縫製・30着限定。docs/heritage-fulfillment-workflow.md。",
+    },
+    SupplierCapability {
+        id: "shima_seamless", name: "島精機 WHOLEGARMENT 無縫製ニット",
+        mode: "quote", route: "manual",
+        regions: &["jp"], kinds: &["seamless_knit", "wholegarment"],
+        moq: -1, lead_time_days: -1, est_unit_jpy: None,
+        note: "無縫製ニット・型代¥1-2M(複数ドロップで償却)・要見積。docs/seamless_knit/tech_pack.json。",
+    },
+    SupplierCapability {
+        id: "contrado_uk", name: "Contrado UK プレミアム全面",
+        mode: "quote", route: "contrado_uk",
+        regions: &["global"], kinds: &["rashguard_premium", "aop_edge_to_edge"],
+        moq: 1, lead_time_days: 14, est_unit_jpy: Some(19800),
+        note: "縁まで全面サブリメーション(waistband/cuffs/collar も)・Printful の2-3倍原価のプレミアム線。docs/CONTRADO_SALES_OUTREACH.md。",
+    },
+];
+
+/// kind が PRODUCT_SPECS の既知 POD kind か。
+fn is_pod_kind(kind: &str) -> bool {
+    PRODUCT_SPECS.iter().any(|s| s.kind == kind)
+}
+
+/// kind の price floor（= PRODUCT_SPECS の検証済み retail）。
+fn floor_for_kind(kind: &str) -> Option<i64> {
+    PRODUCT_SPECS.iter().find(|s| s.kind == kind).map(|s| s.retail_jpy)
+}
+
+/// 自由文から kind を推論（kind 未指定の `mu_quote` 用）。日英ざっくり。
+fn infer_kind_from_text(text: &str) -> Option<&'static str> {
+    let t = text.to_lowercase();
+    // (キーワード, kind)。先勝ち。
+    let table: &[(&[&str], &str)] = &[
+        (&["道着", "柔術衣", "柔道着", " gi", "ｷﾞ"], "gi"),
+        (&["ループウィール", "loopwheel", "吊り編み", "スウェット", "sweat", "トレーナー"], "loopwheel_sweat"),
+        (&["無縫製", "ホールガーメント", "wholegarment", "seamless", "ニット", "knit", "セーター"], "seamless_knit"),
+        (&["ラッシュガード", "rashguard", "rash guard"], "rashguard_ls"),
+        (&["パーカー", "フーディ", "hoodie"], "hoodie"),
+        (&["スウェットシャツ", "クルーネック", "crewneck", "トレーナー"], "crewneck"),
+        (&["スマホケース", "phone case", "iphone", "スマホ"], "phone_case"),
+        (&["マグ", "mug", "マグカップ"], "mug"),
+        (&["ステッカー", "sticker", "シール"], "sticker"),
+        (&["トート", "tote", "エコバッグ"], "tote"),
+        (&["キャップ", "帽子", "cap", "ニット帽", "beanie"], "cap"),
+        (&["タンク", "tank"], "tank"),
+        (&["ポスター", "poster"], "poster"),
+        (&["tシャツ", "ティーシャツ", "tee", "t-shirt", "シャツ", "shirt"], "tee"),
+    ];
+    for (keys, k) in table {
+        if keys.iter().any(|kw| t.contains(kw)) {
+            return Some(k);
+        }
+    }
+    None
+}
+
+/// レジストリ全体の JSON（kind 不明時に「何が作れるか」を返すため）。
+pub fn supplier_registry_json() -> serde_json::Value {
+    let arr: Vec<serde_json::Value> = SUPPLIER_REGISTRY.iter().map(|s| serde_json::json!({
+        "supplier_id": s.id,
+        "supplier_name": s.name,
+        "mode": s.mode,
+        "kinds": s.kinds,
+        "regions": s.regions,
+        "moq": (s.moq >= 0).then_some(s.moq),
+        "lead_time_days": (s.lead_time_days >= 0).then_some(s.lead_time_days),
+        "est_unit_jpy": s.est_unit_jpy,
+        "note": s.note,
+    })).collect();
+    serde_json::json!(arr)
+}
+
+/// 製造ルーター本体。kind(or description) → 供給先候補をランキングして返す。
+/// read-only・副作用なし。返り値はそのまま `/api/agent/quote` の本文。
+pub fn route_request(
+    kind_in: Option<&str>,
+    description: Option<&str>,
+    qty: i64,
+    region: Option<&str>,
+    budget: Option<i64>,
+) -> serde_json::Value {
+    let qty = qty.max(1);
+    let region_lc = region.map(|r| r.to_lowercase());
+
+    // kind 解決: 明示 > description 推論。
+    let resolved_kind: Option<String> = kind_in
+        .filter(|k| !k.trim().is_empty())
+        .map(|k| k.trim().to_lowercase())
+        .or_else(|| description.and_then(infer_kind_from_text).map(|s| s.to_string()));
+
+    let Some(kind) = resolved_kind.clone() else {
+        // kind を特定できない → 何が作れるかのレジストリを返す。
+        return serde_json::json!({
+            "ok": true,
+            "request": { "kind": serde_json::Value::Null, "qty": qty, "region": region, "budget_jpy": budget },
+            "makeable": false,
+            "options": [],
+            "all_suppliers": supplier_registry_json(),
+            "next": "kind を特定できませんでした。`kind` を渡すか `description` を具体化してください（例: 道着 / ループウィールのスウェット / 無縫製ニット）。一覧は all_suppliers。",
+        });
+    };
+
+    // (auto優先, 地域不一致, 価格, 納期) を sort key に候補を集める。
+    let mut ranked: Vec<(i64, i64, i64, i64, serde_json::Value)> = Vec::new();
+    for s in SUPPLIER_REGISTRY {
+        let kind_match = s.kinds.contains(&"*") && is_pod_kind(&kind)
+            || s.kinds.iter().any(|k| *k == kind);
+        if !kind_match {
+            continue;
+        }
+        let region_match = match &region_lc {
+            None => true,
+            Some(r) => s.regions.contains(&"global") || s.regions.iter().any(|x| *x == r.as_str()),
+        };
+        // 単価・経路: "*"(Printful) は kind から解決、その他はレジストリ値。
+        let unit_price = if s.kinds.contains(&"*") { floor_for_kind(&kind) } else { s.est_unit_jpy };
+        let route = if s.route == "*" { route_for_kind(&kind) } else { s.route };
+        let moq = s.moq;
+        let lead = s.lead_time_days;
+        let meets_moq = moq <= 0 || qty >= moq;
+        let within_budget = match (budget, unit_price) {
+            (Some(b), Some(u)) => Some(u <= b),
+            _ => None,
+        };
+        let requires_rfq = s.mode == "quote";
+
+        let opt = serde_json::json!({
+            "supplier_id": s.id,
+            "supplier_name": s.name,
+            "mode": s.mode,
+            "fulfillment_route": route,
+            "unit_price_jpy": unit_price,
+            "moq": (moq >= 0).then_some(moq),
+            "lead_time_days": (lead >= 0).then_some(lead),
+            "regions": s.regions,
+            "region_match": region_match,
+            "meets_moq": meets_moq,
+            "within_budget": within_budget,
+            "requires_rfq": requires_rfq,
+            "note": s.note,
+        });
+
+        // sort key（昇順で良い順）:
+        //  1. auto かつ価格あり かつ予算内(=出せる) を最優先
+        //  2. 地域一致
+        //  3. 価格（不明は最後尾）
+        //  4. 納期（不明は最後尾）
+        let buyable_now = s.mode == "auto" && unit_price.is_some() && within_budget != Some(false);
+        let k1 = if buyable_now { 0 } else { 1 };
+        let k2 = if region_match { 0 } else { 1 };
+        let k3 = unit_price.unwrap_or(i64::MAX);
+        let k4 = if lead >= 0 { lead } else { i64::MAX };
+        ranked.push((k1, k2, k3, k4, opt));
+    }
+
+    ranked.sort_by(|a, b| (a.0, a.1, a.2, a.3).cmp(&(b.0, b.1, b.2, b.3)));
+    let options: Vec<serde_json::Value> = ranked.into_iter().map(|t| t.4).collect();
+
+    let has_auto = options.iter().any(|o| o["mode"] == "auto");
+    let next = if options.is_empty() {
+        format!("「{}」を作れる既知サプライヤがレジストリにありません。description を具体化するか、Phase2 の RFQ 起票（mu_rfq_create・準備中）で新規供給先を開拓してください。", kind)
+    } else if has_auto {
+        "auto 経路あり: そのまま mu_create_product で即作成・販売できます（在庫ゼロ）。".to_string()
+    } else {
+        "要見積(quote)のみ: 実見積は人手 RFQ（Phase2 で mu_rfq_create 予定）。est_unit_jpy は目安です。".to_string()
+    };
+
+    serde_json::json!({
+        "ok": true,
+        "request": { "kind": kind, "inferred": kind_in.is_none(), "qty": qty, "region": region, "budget_jpy": budget },
+        "makeable": !options.is_empty(),
+        "options": options,
+        "next": next,
+    })
 }
 
 struct ProductSpec {
@@ -7892,16 +8129,25 @@ pub async fn agent_chat(
          世界に一つの服やグッズをAIが作って即販売できる。あなたはユーザーの言葉から意図を判定し、\
          アプリのアクションを起こすために **JSONのみ** を返す(前後に文章・コードフェンス禁止)。\n\
          スキーマ: {{\"reply\":\"<画面に出す短い日本語の一言>\",\
-         \"action\":\"make|sales|list_mine|none\",\
-         \"args\":{{\"prompt\":\"<makeのときだけ: 具体的なデザインの依頼文(日英可)>\",\
-         \"kind\":\"tee|hoodie|sticker|rashguard|tote|mug|\",\"royalty\":<10〜50 または null>}}}}\n\
-         判定ルール:\n\
-         - 作りたい/つくって/デザインして 等 → action=\"make\"。args.prompt に魅力的で具体的な\
-           デザインブリーフを入れる(種類が明示されていれば kind も)。\n\
-         - 売上/いくら売れた/収益 → action=\"sales\"。\n\
-         - 自分の作品/何を作った/一覧 → action=\"list_mine\"。\n\
+         \"action\":\"make|polish|remix|sales|list_mine|status|affiliate|ship|none\",\
+         \"args\":{{\"prompt\":\"<makeのとき: 具体的なデザインの依頼文(日英可)>\",\
+         \"kind\":\"tee|hoodie|sticker|rashguard|tote|mug|\",\"royalty\":<10〜50 または null>,\
+         \"sku\":\"<polish/remixのとき: 対象のSKU(例 MAKE-...)>\",\
+         \"words\":\"<remixのとき: アレンジの指示(日英可)>\"}}}}\n\
+         判定ルール(自信のあるものだけ。曖昧なら none):\n\
+         - 作りたい/つくって/デザイン/create/design → action=\"make\"。args.prompt に\
+           魅力的で具体的なデザインブリーフ(種類が明示されていれば kind、印税希望があれば royalty)。\n\
+         - 磨く/みがく/改善/improve/better → action=\"polish\"。args.sku に対象SKU。\n\
+         - リミックス/アレンジ/別バージョン/remix/variation → action=\"remix\"。args.sku に対象SKU、\
+           args.words にアレンジ指示。\n\
+         - 売上/収益/いくら売れた/revenue/earnings → action=\"sales\"(args不要)。\n\
+         - 自分の作品/一覧/何作った/my products → action=\"list_mine\"(args不要)。\n\
+         - 状態/ステータス/アカウント/残高/credit/account → action=\"status\"(args不要)。\n\
+         - 紹介/アフィリ/referral/affiliate/commission → action=\"affiliate\"(args不要)。\n\
+         - 発送/配送/注文/shipping/orders/tracking → action=\"ship\"(args不要)。\n\
          - それ以外(雑談・質問) → action=\"none\" で reply に親切に答える。\n\
-         - reply は常に短い日本語の一文(アクション時も「柔術の黒Tをつくるね！」のように)。\n\
+         - reply は **どのアクションでも** 常に短い日本語の一文を入れる\
+           (make=「柔術の黒Tをつくるね！」/ sales=「売上を確認しますね」のように)。\n\
          {hist_block}\
          User: {msg}",
         hist_block = if hist.is_empty() { String::new() } else { format!("これまでの会話:\n{}\n", hist) },
@@ -7918,13 +8164,15 @@ pub async fn agent_chat(
         serde_json::json!({"reply": raw.chars().take(200).collect::<String>(), "action": "none"})
     });
     let action = match parsed["action"].as_str() {
-        Some(a @ ("make" | "sales" | "list_mine")) => a,
+        Some(a @ ("make" | "polish" | "remix" | "sales" | "list_mine" | "status" | "affiliate" | "ship")) => a,
         _ => "none",
     };
     let reply = parsed["reply"].as_str().filter(|s| !s.is_empty()).unwrap_or("はい！").to_string();
     let kind_in = parsed["args"]["kind"].as_str().unwrap_or("");
     let kind = if ["tee","hoodie","sticker","rashguard","tote","mug"].contains(&kind_in) { kind_in } else { "" };
     let royalty = parsed["args"]["royalty"].as_i64().map(|r| r.clamp(10, 50));
+    let sku = parsed["args"]["sku"].as_str().unwrap_or("").trim().to_string();
+    let words: String = parsed["args"]["words"].as_str().unwrap_or("").trim().chars().take(120).collect();
     axum::Json(serde_json::json!({
         "ok": true,
         "reply": reply,
@@ -7933,6 +8181,8 @@ pub async fn agent_chat(
             "prompt": parsed["args"]["prompt"].as_str().unwrap_or("").chars().take(300).collect::<String>(),
             "kind": kind,
             "royalty": royalty,
+            "sku": sku,
+            "words": words,
         }
     })).into_response()
 }

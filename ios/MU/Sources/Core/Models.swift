@@ -55,12 +55,105 @@ struct ProductList: Codable {
 struct AgentChatResponse: Codable {
     let ok: Bool
     let reply: String
-    let action: String          // make | sales | list_mine | none
+    let action: String          // make|polish|remix|sales|list_mine|status|affiliate|ship|none
     let args: AgentArgs?
     struct AgentArgs: Codable {
         let prompt: String?
         let kind: String?
         let royalty: Int?
+        let sku: String?
+        let words: String?
+    }
+}
+
+// GET /api/agent/products (Bearer) — 自分が作った商品一覧。
+struct ProductsResponse: Codable {
+    let ok: Bool?
+    let count: Int?
+    let products: [Item]
+
+    struct Item: Codable, Identifiable {
+        let sku: String
+        let store: String?
+        let label: String?
+        let kind: String?
+        let retailPriceJpy: Int?
+        let status: String?
+        let designFile: String?
+        let pdpUrl: String?
+
+        var id: String { sku }
+
+        enum CodingKeys: String, CodingKey {
+            case sku, store, label, kind, status
+            case retailPriceJpy = "retail_price_jpy"
+            case designFile = "design_file"
+            case pdpUrl = "pdp_url"
+        }
+
+        var priceLabel: String { retailPriceJpy.map { "¥\($0.formatted())" } ?? "" }
+    }
+}
+
+// GET /api/agent/me (Bearer) — アカウント状態 (クレジット残高・ストア数)。
+struct MeResponse: Codable {
+    let email: String?
+    let muCreditsBalance: Int?
+    let isMaCouncil: Bool?
+    let stores: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case email, stores
+        case muCreditsBalance = "mu_credits_balance"
+        case isMaCouncil = "is_ma_council"
+    }
+}
+
+// GET /api/agent/affiliate (Bearer) — 紹介リンクと実績。
+struct AffiliateResponse: Codable {
+    let ok: Bool?
+    let code: String?
+    let link: String?
+    let clicks: Int?
+    let uses: Int?
+    let earnedJpy: Int?
+    let muCreditBalance: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case ok, code, link, clicks, uses
+        case earnedJpy = "earned_jpy"
+        case muCreditBalance = "mu_credit_balance"
+    }
+}
+
+// GET /api/agent/ship/orders (Bearer) — 配送状況。PII (メール/住所) はサーバ側でマスク済み。
+struct ShipOrdersResponse: Codable {
+    let count: Int?
+    let piiMasked: Bool?
+    let orders: [Item]
+
+    enum CodingKeys: String, CodingKey {
+        case count, orders
+        case piiMasked = "pii_masked"
+    }
+
+    struct Item: Codable, Identifiable {
+        let id: Int
+        let createdAt: String?
+        let sku: String?
+        let shipStatus: String?
+        let courier: String?
+        let tracking: String?
+        let amountJpy: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case id, sku, courier, tracking
+            case createdAt = "created_at"
+            case shipStatus = "ship_status"
+            case amountJpy = "amount_jpy"
+        }
+
+        var amountLabel: String { amountJpy.map { "¥\($0.formatted())" } ?? "" }
     }
 }
 

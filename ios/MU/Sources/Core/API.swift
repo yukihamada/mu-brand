@@ -103,8 +103,8 @@ struct MUAPI {
         return try JSONDecoder().decode(PolishResult.self, from: data)
     }
 
-    // リミックス — 既存デザインに一言足して別バージョンを織る。POST /api/design-remix
-    // (form)。元の作者にはリミックス印税5%が流れる。応答は make 互換。
+    // リミックス — 既存デザインに一言足して別バージョンを織る。POST /make/remix
+    // (form: sku, words)。元の作者にはリミックス印税5%が流れる。応答は make 互換。
     static func remix(sku: String, words: String, apiKey: String?) async throws -> MakeResult {
         var req = URLRequest(url: base.appendingPathComponent("api/design-remix"))
         req.httpMethod = "POST"
@@ -218,10 +218,41 @@ struct MUAPI {
         return try JSONDecoder().decode(SalesResponse.self, from: data)
     }
 
+    // 自分が作った商品一覧。GET /api/agent/products (Bearer)
+    static func listMine(apiKey: String) async throws -> ProductsResponse {
+        try await authedGet(base.appendingPathComponent("api/agent/products"), apiKey: apiKey, as: ProductsResponse.self)
+    }
+
+    // アカウント状態 (クレジット残高・ストア)。GET /api/agent/me (Bearer)
+    static func status(apiKey: String) async throws -> MeResponse {
+        try await authedGet(base.appendingPathComponent("api/agent/me"), apiKey: apiKey, as: MeResponse.self)
+    }
+
+    // 紹介リンクと実績。GET /api/agent/affiliate (Bearer)
+    static func affiliate(apiKey: String) async throws -> AffiliateResponse {
+        try await authedGet(base.appendingPathComponent("api/agent/affiliate"), apiKey: apiKey, as: AffiliateResponse.self)
+    }
+
+    // 配送状況 (PIIマスク済み)。GET /api/agent/ship/orders (Bearer)
+    static func shipOrders(apiKey: String) async throws -> ShipOrdersResponse {
+        try await authedGet(base.appendingPathComponent("api/agent/ship/orders"), apiKey: apiKey, as: ShipOrdersResponse.self)
+    }
+
     // MARK: - plumbing
 
     private static func get<T: Decodable>(_ url: URL, as type: T.Type) async throws -> T {
         let (data, resp) = try await URLSession.shared.data(from: url)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.badStatus((resp as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
+    // Bearer 認証つき GET (sales と同じエラー処理規約)。
+    private static func authedGet<T: Decodable>(_ url: URL, apiKey: String, as type: T.Type) async throws -> T {
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
             throw APIError.badStatus((resp as? HTTPURLResponse)?.statusCode ?? -1)
         }

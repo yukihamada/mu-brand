@@ -1284,7 +1284,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px" id="fabric-cards">
           <label class="fabric-card" data-variant="suzuri" data-funnel="cta_click" data-funnel-cta="fabric_pick_suzuri"
                  style="cursor:pointer;padding:11px 12px;border:1px solid rgba(255,138,138,0.35);background:rgba(255,138,138,0.04);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
-            <input type="radio" name="fabric" value="suzuri" style="display:none">
+            <input type="radio" name="fabric" value="suzuri" aria-label="素材: Standard（国内 SUZURI・¥4,900）" style="display:none">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
               <span style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#ff8a8a;font-weight:600">🇯🇵 Standard</span>
               <span style="font-size:14px;color:#fff;font-weight:600" id="fc-suzuri-price">¥4,900</span>
@@ -1294,7 +1294,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           </label>
           <label class="fabric-card" data-variant="stripe" data-funnel="cta_click" data-funnel-cta="fabric_pick_stripe"
                  style="cursor:pointer;padding:11px 12px;border:1px solid rgba(230,196,73,0.35);background:rgba(230,196,73,0.05);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
-            <input type="radio" name="fabric" value="stripe" style="display:none">
+            <input type="radio" name="fabric" value="stripe" aria-label="素材: Premium（Stanley/Stella・EU製・Printful）" style="display:none">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
               <span style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;font-weight:600">★ Premium</span>
               <span style="font-size:14px;color:#fff;font-weight:600" id="fc-stripe-price">¥—</span>
@@ -1318,14 +1318,14 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       </div>
       <form id="checkout-form" onsubmit="doCheckout(event)">
         <div class="input-row">
-          <input class="mu-input" type="email" name="email" placeholder="Email (任意・決済画面でも入力できます)">
+          <input class="mu-input" type="email" name="email" aria-label="Email（任意・決済画面でも入力できます）" placeholder="Email (任意・決済画面でも入力できます)">
         </div>
         <details style="margin:8px 0">
           <summary style="font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;cursor:pointer;list-style:none">
             + NFT証明書を受け取る（オプション）
           </summary>
           <div style="margin-top:10px">
-            <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（後からでもOK）">
+            <input class="mu-input" type="text" name="wallet" aria-label="Solana ウォレットアドレス（任意・後からでもOK）" placeholder="Solanaウォレットアドレス（後からでもOK）">
             <div class="soulbound-note" style="margin-top:6px;display:block">
               <strong style="color:#e6c449">📧 ご購入後、Email で NFT 受け取り方法をお送りします。</strong><br>
               ここで wallet を未入力でも OK — 後日メールから wallet を登録すれば mint パイロット (2026 Q3) で受け取れます。間 MA はローンチ時に Soulbound (転売不可) となります。
@@ -1534,12 +1534,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       </div>
       <form onsubmit="submitFragment(event)">
         <div class="input-row">
-          <input class="mu-input" type="email" name="email" placeholder="購入時のEmail" required>
-          <select class="mu-input" name="direction">
+          <input class="mu-input" type="email" name="email" aria-label="購入時のEmail" placeholder="購入時のEmail" required>
+          <select class="mu-input" name="direction" aria-label="変換する方向">
             <option value="mugen_to_muon">MUGEN × 3 → MUON × 1</option>
             <option value="muon_to_ma">MUON × 3 → 間 MA × 1</option>
           </select>
-          <input class="mu-input" type="text" name="order_ids" placeholder="注文番号（カンマ区切りで3つ）" required>
+          <input class="mu-input" type="text" name="order_ids" aria-label="注文番号（カンマ区切りで3つ）" placeholder="注文番号（カンマ区切りで3つ）" required>
         </div>
         <div class="fragment-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:8px"></div>
         <button type="submit" class="btn-primary" style="margin-top:8px">申請する</button>
@@ -1582,7 +1582,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:6px;color:#F5F5F0">毎日1着、世界に生まれる新作を最速で。</div>
   <div style="font-size:12px;opacity:0.55;line-height:1.7;margin-bottom:18px;color:#F5F5F0">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
   <form class="mu-drop-form" data-source="homepage" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;max-width:420px;margin:0 auto;flex-wrap:wrap;justify-content:center">
-    <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.04);color:#F5F5F0;font-size:14px">
+    <input type="email" name="email" required aria-label="メールアドレス（ドロップ通知の登録）" placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.04);color:#F5F5F0;font-size:14px">
     <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
     <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px;color:#F5F5F0" aria-live="polite"></div>
   </form>
@@ -2062,14 +2062,14 @@ async function loadMA(){
         </div>
         ${rem>0?`
         <div class="input-row">
-          <input class="mu-input" type="number" id="ma-bid" placeholder="入札金額（¥）" min="${(p.current_bid||p.price_jpy)+1000}">
-          <input class="mu-input" type="email" id="ma-email" placeholder="Email">
+          <input class="mu-input" type="number" id="ma-bid" aria-label="入札金額（円）" placeholder="入札金額（¥）" min="${(p.current_bid||p.price_jpy)+1000}">
+          <input class="mu-input" type="email" id="ma-email" aria-label="Email" placeholder="Email">
         </div>
         <label style="display:flex;align-items:flex-start;gap:8px;margin:10px 0 6px;font-size:9px;line-height:1.6;letter-spacing:0.05em;opacity:0.85;cursor:pointer">
           <input type="checkbox" id="ma-nft-opt" style="margin-top:2px;accent-color:#e6c449" onchange="document.getElementById('ma-nft-wallet').style.display=this.checked?'block':'none'">
           <span>🎫 Soulbound NFT 証明書を発行する <span style="opacity:0.55">(wallet は今ここで or 後日メールから登録 OK)</span></span>
         </label>
-        <input class="mu-input" type="text" id="ma-nft-wallet" placeholder="Solana ウォレットアドレス（任意・後からでもOK）" style="display:none;margin-bottom:6px">
+        <input class="mu-input" type="text" id="ma-nft-wallet" aria-label="Solana ウォレットアドレス（任意・後からでもOK）" placeholder="Solana ウォレットアドレス（任意・後からでもOK）" style="display:none;margin-bottom:6px">
         <button class="btn-primary" onclick="placeBid(${p.id})">入札する</button>
         <div id="bid-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:4px"></div>
         <div class="soulbound-note">📧 落札後、NFT 受け取り方法を Email でお送りします。wallet を今ここで入力しなくても OK — メールから後で登録できます。Soulbound = 転売不可の真正証明書、所有が変わる際は NFT の移転手続きが必要です。</div>
@@ -2945,7 +2945,7 @@ if ('serviceWorker' in navigator) {
     <div style="font-size:19px;font-weight:300;line-height:1.5;margin-bottom:6px;color:#F5F5F0">毎日1着、世界に生まれる新作を最速で。</div>
     <div style="font-size:12px;opacity:0.6;line-height:1.7;margin-bottom:20px;color:#F5F5F0">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
     <form class="mu-drop-form" data-source="modal" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
-      <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.05);color:#F5F5F0;font-size:14px">
+      <input type="email" name="email" required aria-label="メールアドレス（ドロップ通知の登録）" placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.05);color:#F5F5F0;font-size:14px">
       <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
       <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px;color:#F5F5F0" aria-live="polite"></div>
     </form>

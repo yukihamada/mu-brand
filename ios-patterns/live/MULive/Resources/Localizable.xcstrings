@@ -1,0 +1,174 @@
+{
+  "sourceLanguage" : "ja",
+  "strings" : {
+    "tab.feed" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "フィード" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Feed" } }
+      }
+    },
+    "tab.wants" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "欲しい" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Wants" } }
+      }
+    },
+    "tab.pulse" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "鼓動" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Pulse" } }
+      }
+    },
+    "kind.all" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "すべて" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "All" } }
+      }
+    },
+    "kind.hoodie" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "パーカー" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Hoodie" } }
+      }
+    },
+    "kind.rashguard" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ラッシュガード" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Rashguard" } }
+      }
+    },
+    "kind.sticker" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "ステッカー" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Sticker" } }
+      }
+    },
+    "feed.loading" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "生まれたての一着を呼んでいます…" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Calling up the freshest drop…" } }
+      }
+    },
+    "feed.error.title" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "フィードを読み込めませんでした" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Couldn't load the feed" } }
+      }
+    },
+    "feed.retry" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "もう一度" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Retry" } }
+      }
+    },
+    "feed.empty" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "このチャンネルにはまだ商品がありません" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "No products in this channel yet" } }
+      }
+    },
+    "feed.generated %@" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "⚡︎ AIが%@に生成" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "⚡︎ AI-generated %@" } }
+      }
+    },
+    "action.want" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "欲しい" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Want" } }
+      }
+    },
+    "action.wanted" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "保存済み" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Wanted" } }
+      }
+    },
+    "action.share" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "共有" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Share" } }
+      }
+    },
+    "action.details" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "詳細" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Details" } }
+      }
+    },
+    "detail.buy" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "購入する" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Buy now" } }
+      }
+    },
+    "detail.openWeb" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "Webで商品ページを開く" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Open product page on the web" } }
+      }
+    },
+    "detail.sizeNote" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "サイズ・配送先は購入ページ (Stripe) で選択できます。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Size and shipping are selected on the checkout page (Stripe)." } }
+      }
+    },
+    "detail.sold %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld着が旅立ちました" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld sold" } }
+      }
+    },
+    "wants.empty.title" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "まだ何も欲しがっていません" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Nothing wanted yet" } }
+      }
+    },
+    "wants.empty.body" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "フィードでダブルタップすると、ここに集まります" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Double-tap anything in the feed and it lands here" } }
+      }
+    },
+    "wants.delete" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "削除" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Remove" } }
+      }
+    },
+    "pulse.alive" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "MUは生きている" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "MU is alive" } }
+      }
+    },
+    "pulse.subtitle" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "AIが毎時、新しい一着を生んでいます。これはその鼓動です。" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "AI drops a new piece every hour. This is the heartbeat." } }
+      }
+    },
+    "pulse.born24h %lld" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "%lld着" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "%lld pieces" } }
+      }
+    },
+    "pulse.born24h.label" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "この24時間で誕生" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "born in the last 24h" } }
+      }
+    },
+    "pulse.latestDrop" : {
+      "localizations" : {
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "最新ドロップ" } },
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "latest drop" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
