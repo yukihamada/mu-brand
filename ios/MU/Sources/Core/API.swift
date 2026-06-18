@@ -241,4 +241,17 @@ struct MUAPI {
         }
         return json
     }
+
+    /// デザイン依頼リンクを発行（誰かに「これ作って」と頼む）。
+    /// 返り値: (頼む人に送る designerLink, 自分の受け取りページ statusURL)。
+    static func createDesignRequest(email: String, brief: String, kind: String?) async throws -> (designerLink: String, statusURL: String) {
+        var body = ["email": email, "brief": brief]
+        if let k = kind, !k.isEmpty { body["kind"] = k }
+        let json = try await post(base.appendingPathComponent("api/make/request"), body: body)
+        guard let link = json["designer_link"] as? String,
+              let status = json["status_url"] as? String else {
+            throw APIError.message("リンクを作成できませんでした")
+        }
+        return (link, status)
+    }
 }
