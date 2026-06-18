@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>60秒煽りV を 完全 AI 生成 — MU Labs</title>
+<meta property="og:title" content="60秒煽りV を 完全 AI 生成 / MU Labs">
+<meta property="og:description" content="ElevenLabs v3 + Veo 3.1 + ffmpeg で 焼肉古今 vs FLEX GROUP の試合煽りVを17イテレーション。プロンプト全公開。">
+<style>
+:root{
+  --bg:#0a0807;--surface:#15110e;--card:#1c1814;--ink:#f0e9df;--mute:#8a7f72;
+  --gold:#d4af55;--red:#c8102e;--ember:#8a3010;--line:rgba(212,175,85,.2);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:'Noto Sans JP','Hiragino Sans',sans-serif;line-height:1.7;-webkit-font-smoothing:antialiased}
+a{color:var(--gold);text-decoration:none;border-bottom:1px solid rgba(212,175,85,.3)}
+a:hover{border-color:var(--gold)}
+.wrap{max-width:880px;margin:0 auto;padding:48px 28px 120px}
+header{padding:60px 0 40px;border-bottom:1px solid var(--line);margin-bottom:48px}
+.kicker{font-size:12px;letter-spacing:6px;color:var(--gold);text-transform:uppercase;margin-bottom:18px}
+h1{font-family:'Noto Serif JP',serif;font-size:38px;line-height:1.35;margin:0 0 22px;font-weight:600;letter-spacing:.02em}
+.lede{font-size:17px;color:var(--ink);opacity:.85;margin:0 0 24px;max-width:720px}
+.meta{display:flex;flex-wrap:wrap;gap:18px;font-size:13px;color:var(--mute)}
+.meta span{display:inline-flex;align-items:center;gap:6px}
+.video{margin:0 0 56px;background:#000;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+video{display:block;width:100%;height:auto;background:#000}
+h2{font-family:'Noto Serif JP',serif;font-size:24px;margin:64px 0 14px;font-weight:600;color:var(--ink);padding-bottom:8px;border-bottom:1px solid var(--line)}
+h2 .num{color:var(--gold);font-family:'Noto Sans JP';font-size:14px;letter-spacing:4px;display:block;margin-bottom:6px}
+h3{font-size:18px;margin:32px 0 10px;color:var(--gold);font-weight:600}
+h4{font-size:15px;margin:20px 0 6px;color:var(--ink);font-weight:600}
+p{margin:0 0 14px}
+ul,ol{padding-left:22px;margin:0 0 14px}
+li{margin-bottom:6px}
+code{background:#241e18;border:1px solid var(--line);padding:1px 6px;border-radius:3px;font-family:'JetBrains Mono','SF Mono',monospace;font-size:13px;color:#e5d4a8}
+pre{background:#100c08;border:1px solid var(--line);border-radius:4px;padding:18px 20px;overflow-x:auto;margin:14px 0 22px;font-size:13px;line-height:1.6}
+pre code{background:none;border:none;padding:0;color:#d8c896}
+.note{background:rgba(212,175,85,.06);border-left:3px solid var(--gold);padding:14px 18px;margin:18px 0;font-size:14px;color:var(--ink)}
+.warn{background:rgba(200,16,46,.08);border-left:3px solid var(--red);padding:14px 18px;margin:18px 0;font-size:14px}
+table{width:100%;border-collapse:collapse;margin:18px 0;font-size:13px}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{color:var(--gold);font-weight:600;font-size:12px;letter-spacing:1px;text-transform:uppercase}
+hr{border:none;border-top:1px solid var(--line);margin:64px 0 48px}
+.toc{background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:20px 24px;margin:0 0 48px;font-size:14px}
+.toc h4{margin:0 0 12px;color:var(--gold);font-size:12px;letter-spacing:3px;text-transform:uppercase;font-weight:600}
+.toc ol{padding-left:22px;margin:0;columns:2;column-gap:32px}
+.toc li{margin-bottom:4px;break-inside:avoid}
+footer{margin-top:96px;padding-top:32px;border-top:1px solid var(--line);color:var(--mute);font-size:12px;text-align:center}
+.tag{display:inline-block;background:#241e18;color:var(--gold);padding:2px 10px;border-radius:3px;font-size:11px;letter-spacing:1px;margin-right:6px}
+@media(max-width:680px){
+  .wrap{padding:32px 18px 80px}
+  h1{font-size:28px}
+  h2{font-size:20px}
+  .toc ol{columns:1}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">MU Labs · Pipeline Tutorial</div>
+  <h1>60秒の煽りV を AI で 完全自動 で 作る方法</h1>
+  <p class="lede">
+    柔術団体戦の煽りVを、ナレーション・実写・アニメ・BGM・効果音・字幕・コンポジット
+    まで <em>すべて生成 AI</em> で組み上げる。17 イテレーション分のプロンプト・コード・
+    ffmpeg フィルタを 全公開 する。
+  </p>
+  <div class="meta">
+    <span><span class="tag">案件</span>焼肉古今 vs FLEX GROUP</span>
+    <span><span class="tag">尺</span>70秒</span>
+    <span><span class="tag">制作</span>約7時間 / Claude Code</span>
+    <span><span class="tag">公開</span>2026-05-23</span>
+  </div>
+</header>
+
+<div class="video">
+  <video controls preload="metadata" poster="">
+    <source src="kokon_aori.mp4" type="video/mp4">
+  </video>
+</div>
+
+<!-- ============================================================
+     全パイプライン詳細は MU Tシャツ ホルダー のみ閲覧可
+     ============================================================ -->
+<section id="claude-section" style="margin-top:48px">
+
+  <div id="claude-locked" style="display:none">
+    <div class="note" style="border-left-color:var(--gold);padding:28px 30px;margin:0">
+      <div style="font-size:11px;letter-spacing:5px;color:var(--gold);margin-bottom:10px">MU HOLDER ONLY</div>
+      <h2 style="font-family:'Noto Serif JP',serif;font-size:24px;margin:0 0 14px;border:none;padding:0">パイプライン全公開は<br>MU Tシャツ ホルダー だけ</h2>
+      <p style="color:var(--ink);opacity:.85;font-size:14px;margin:0 0 18px;line-height:1.8">
+        この動画 1 本に 使った <strong>全プロンプト</strong>、 <strong>Veo / ElevenLabs / ffmpeg コマンド 一式</strong>、 17 イテレーション の <strong>ユーザー 指示 全文</strong>、 失敗 → 修正 ループ、 実コスト ¥1,828 内訳 まで、 <strong>そのまま 写経 で 自分の 試合煽りV が 作れる</strong> レベルで 公開しています。
+      </p>
+      <p style="color:var(--mute);font-size:12px;margin:0 0 22px;line-height:1.7">
+        Tシャツ 購入時の メアド で ログインすれば 即 解錠。 1 枚 持ってれば 永続 アクセス。
+      </p>
+      <p style="margin:0">
+        <a href="/mypage" style="display:inline-block;background:var(--gold);color:#1a1408;padding:12px 26px;border-radius:3px;font-weight:600;letter-spacing:2px;border:none;margin-right:10px;text-decoration:none">ログイン</a>
+        <a href="/buy" style="display:inline-block;background:transparent;color:var(--gold);padding:12px 26px;border-radius:3px;border:1px solid var(--gold);letter-spacing:2px;text-decoration:none">Tシャツを買う →</a>
+      </p>
+    </div>
+  </div>
+
+  <div id="claude-loading" style="padding:60px 0;text-align:center;color:var(--mute);font-size:12px;letter-spacing:4px">CHECKING HOLDER STATUS…</div>
+
+  <div id="claude-content" style="display:none"></div>
+</section>
+
+<script>
+(async function(){
+  try{
+    const r = await fetch('/api/labs/kokon-aori/claude', {credentials:'same-origin'});
+    document.getElementById('claude-loading').style.display = 'none';
+    if (r.status === 200){
+      const html = await r.text();
+      const c = document.getElementById('claude-content');
+      c.innerHTML = html;
+      c.style.display = 'block';
+    } else {
+      document.getElementById('claude-locked').style.display = 'block';
+    }
+  } catch(e){
+    document.getElementById('claude-loading').style.display = 'none';
+    document.getElementById('claude-locked').style.display = 'block';
+  }
+})();
+</script>
+
+<footer>
+  <p>© 2026 MU Labs · 焼肉古今 × FLEX GROUP / SUPER YAWARA SWEEP CUP 試合煽りV<br>
+     公開: 2026-05-23 · 配信ツール: Claude Code (Opus 4.7 / 1M context)</p>
+</footer>
+
+</div>
+</body>
+</html>

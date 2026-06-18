@@ -1,0 +1,77 @@
+# Rust
+target/
+**/target/
+Cargo.lock.bak
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Databases (local state)
+*.db
+*.db-shm
+*.db-wal
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Private / non-public outreach assets (likeness, personal invites — never commit)
+private/
+scripts/gen_oneok_invite_shirts.py
+*.key
+*.pem
+secrets/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Generated assets (kept in static/)
+designs/raw/
+# AI-generated drop assets — uploaded to Printful + R2, not source-of-truth in git
+designs/*.png
+designs/*.jpg
+designs/*.webp
+node_modules
+.wrangler/
+
+# Claude Code per-agent scratch worktrees
+.claude/worktrees/
+
+# Print package ZIPs are too big for git (~250 MB). Re-host elsewhere.
+store/static/jiufight/print/orderA_*.zip
+store/static/jiufight/print/orderB_*.zip
+store/static/jiufight/print/jiufight_print_package_*.zip
+
+# Mockup regen backup copies — rollback only, not source-of-truth.
+store/static/proposals/*_old.jpg
+
+# wearmu data — DB backups are local-only (too big, churning)
+data/backups/
+.secrets.local
+
+# iOS build artifacts
+ios/build_device/
+ios/build/
+
+# fastlane build output
+ios/build/
+ios/build_archive/
+ios/build_release/
+ios/Gemfile.lock
+ios/fastlane/report.xml
+ios/fastlane/Preview.html

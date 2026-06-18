@@ -1,0 +1,143 @@
+{
+  "slug": "charfilm",
+  "name": "CHAR (土屋 尚幸) × MU — Amami / 海から山へ",
+  "ip_owner": "土屋 尚幸 / CHAR (charfilm.com · 奄美 15 年 · OND° 所属)",
+  "design": {
+    "monogram": "CH",
+    "accent": "#3aa6c4"
+  },
+  "meta": {
+    "display_name": "CHAR (土屋 尚幸)",
+    "live": false,
+    "partner_url": "charfilm.com",
+    "tagline": "眼差しが変われば、世界が変わる。",
+    "h1": "<em>眼差し</em>を、 着る。 飾る。 贈る。",
+    "subtitle": "MU × CHAR — Patagonia「尊々加那志」/ NHK大河「西郷どん」/ Joel Tudor portrait の海の写真家 × 無在庫 POD",
+    "accent_hex": "#3aa6c4",
+    "hero_image": "/static/charfilm/wave-golden.jpg",
+    "og_image": "/static/charfilm/og.jpg",
+    "lede": "本資料は MU (株式会社イネブラ) から <strong>CHAR (土屋 尚幸)</strong> 様 (および所属 <strong>OND°</strong> 様) へ、 <strong>奄美 15 年・海から山へ</strong> 拡張中の眼差しを 12 SKU の 無在庫 POD lifestyle goods に展開する collab 提案です。<br><br>CHAR 様の核心事業 <strong>charfilm.thebase.in (額装 ¥38-88K / 写真集 COLORS ¥8.8K / 1000部)</strong> と <strong>DONT PANIC × CHAR FILM TEE 5th installment (¥7,700 オーガニックコットン重厚 · YTS Store)</strong> には<strong>一切重ねず</strong>、 <strong>「3600×2400 master file で確実に印刷可能なサイズだけ」 + 「無在庫 POD で global Printful EU 配送 + 50% を NEDI に固定寄付」</strong> という別軸を担う設計。",
+    "honesty_box": "<b>本資料の誠実性について</b>: 当 LP に並ぶ写真は CHAR 様の作品を仮 web プレビュー (1800px) として配置しています。 <b>実際の出荷 SKU は 「下記 12 SKU 全てを CHAR 様の 3600×2400 master file で確実に印刷できるサイズ・媒体に限定」 して設計</b>しました。 サイン入りキャンバス・限定エディション・ネリヤカナヤ夜明け・写真集 ZINE・150cm ビーチタオル等の<b>媒体は意図的に除外</b> (master file 解像度・印刷 partner 選定・物流フロー が未確立なため)。 それらは下記 「Phase 2 候補」 セクションに別記し、 合意後に順次追加。",
+    "hero_kv": [
+      ["50%", "NEDI (奄美のサンゴ再生) 固定寄付"],
+      ["写真家取分", "売上 25% (POD 原価控除後) · 月締 Wise 振込"],
+      ["在庫リスク", "¥0 (Printful EU / Gelato JP)"],
+      ["SKU 数", "12 SKU · 全て 3600×2400 master で印刷品質確実"],
+      ["既存事業", "charfilm.thebase / DONT PANIC TEE 不可侵"]
+    ],
+    "why_md": "CHAR 様が <code>charfilm.com/about</code> に書かれた言葉:<br><br><b>「写真の力や可能性は、 人間の眼差しを変える力であり、 眼差しが変わることが意識を変え、 意識が変われば世界が変わり、 自分が生まれ変わる」</b><br><br>このコラボの一行はここから取ります:<br><br><b>1 枚の写真が眼差しを変える。 1 枚のキャンバスが部屋を変える。 1 個のマグが朝を変える。</b><br><br>───<br><br><b>3 つの軸 + 出荷品質ゲート</b><br><br><b>① 額装相当の壁掛け (¥4,800-¥18,000) · 4 SKU</b> — Canvas A2 (594mm 木枠) / Canvas A3 (420mm 木枠) / Poster A3 (420mm マット紙)。 3600×2400 source で A2 = 154dpi (Printful canvas 基準 150dpi 超え) / A3 = 217dpi。 既存 ¥38-88K 額装プリント市場とは<b>異なる媒体 (キャンバス・紙) と異なる価格帯</b>。<br><br><b>② アパレル AOP (¥4,900-¥10,800) · 3 SKU</b> — Athletic Tee (黄金の波 AOP 前面) / Rashguard LS (透明バレル AOP 全身) / Hoodie (光の柱 背面 35×40cm 印刷)。 全て 3600×2400 source で印刷面 150dpi 以上を確保。 DONT PANIC × CHAR FILM TEE (オーガニックコットン重厚 chest print) とは<b>素材・印刷面積・用途が完全に異なる</b>機能服 (速乾ポリ・UPF50+ 等)。<br><br><b>③ 写真ギフト (¥1,200-¥3,800) · 5 SKU</b> — iPhone Case × 2 / Mug × 2 / Mousepad / Postcard set / Magnet set。 全て小媒体で 3600×2400 source が 300dpi 超えで完全余裕。 charfilm.com / thebase 既存ファンへの<b>もう 1 段ライト</b>な入口価格。<br><br>───<br><br><b>無在庫 POD</b>なので CHAR 様側に在庫・出荷義務一切なし。 売上 50% は <b>一般社団法人 NEDI (代表 碇山勇生氏 · Patagonia「尊々加那志」で CHAR 様 が撮影した団体)</b> に固定。 25% が CHAR 様、 25% が MU 運営。 月 1 回 締めで Wise 振込。 寄付実績と NEDI 領収書は wearmu.com/charfilm/donations に毎月公開。",
+    "use_cases": [
+      "奄美のサンゴ再生 (NEDI) への定常寄付エンジン (1 着 = 50% donate)",
+      "charfilm.com / thebase 既存ファンの もう 1 段ライト な入口 (¥1,200-¥18,000)",
+      "Patagonia「尊々加那志」/ NHK大河「西郷どん」/ Joel Tudor 経由の知名度を海外に拡張 (Printful EU 直送)",
+      "DONT PANIC × CHAR FILM TEE (国内 streetwear) とは別軸の 機能服・lifestyle goods 担当",
+      "サーフショップ・宿・カフェ向け B2B 一括 (10 着+で Stripe Link 発行)",
+      "Phase 2 で 屋久島・ヒマラヤ シリーズ + サイン入り Limited Edition に拡張"
+    ],
+    "mu_intro": {
+      "brand": "MU (━◯━)",
+      "operator": "株式会社イネブラ (Enabler Inc.)",
+      "founder": "濱田 優貴 (代表取締役 · ex-Mercari US CEO · 柔術 青帯)",
+      "philosophy": "速く、 ノイズなく。 月相 で drop し、 在庫を持たない。 売上 50% を寄付に回し、 残りを 作る人 ・ 翻訳する人 ・ 配る人 で薄く分ける。",
+      "proof_points": [
+        "wearmu.com 稼働中 · 月相連動 drop · §28 利益分配 (寄付 50 / Yuki 10 / 株主 10 / MA 10 / Community 10 / Reserve 10) 公開",
+        "Printful (EU/US) + Gelato (JP/SG/AU) の dual channel POD で 在庫リスクなし",
+        "JiuFight / ATSUME / kokon / ELSOUL / NOJIMAHAL / SIIIEEP 等 既存 collab 8 件",
+        "GitHub Actions hourly heal + Fly watchdog + Telegram alert の 4 層 自己修復"
+      ]
+    },
+    "mechanism": [
+      {
+        "no": 1,
+        "title": "charfilm.thebase + DONT PANIC TEE 共に不可侵",
+        "body": "<b>charfilm.thebase.in (額装 ¥38-88K / 写真集 COLORS ¥8.8K / 1000部) と DONT PANIC × CHAR FILM TEE 5th installment (¥7,700 オーガニックコットン重厚 · YTS Store)</b> は CHAR 様の既存事業として完全保護。 MU は<b>異なる媒体・異なる用途・異なる国際配送</b>のみを担当。 値下げ競争・市場食い合いは構造的に発生しない。"
+      },
+      {
+        "no": 2,
+        "title": "印刷品質を解像度ベースで担保",
+        "body": "全 12 SKU を <b>3600×2400 master file (CHAR 様提供想定)</b> で印刷可能なサイズ・媒体に限定設計。 A2 Canvas で 154dpi (Printful 基準 150dpi 超え)、 A3 で 217dpi、 アパレル AOP で 100-180dpi (距離視認許容)、 ギフト系 (Mug / Phone Case / Postcard) は 300dpi 完全余裕。 印刷品質的に「これは間違いなく出せる」 範囲のみ。"
+      },
+      {
+        "no": 3,
+        "title": "アパレルは AOP / 機能服のみ (DONT PANIC と棲み分け)",
+        "body": "MU の T シャツ / ラッシュガード / フーディーは<b>全面昇華転写ポリ (Athletic Tee / Rashguard)</b> または <b>背面大判 print (Hoodie 35×40cm)</b>。 DONT PANIC × CHAR FILM TEE の<b>オーガニックコットン重厚 chest print</b>とは素材・印刷面積・用途が完全に異なる。 MU 軸 = surf / SUP / ヨガ / ジムで濡れて動く現場の機能服。"
+      },
+      {
+        "no": 4,
+        "title": "売上 50% は NEDI に固定",
+        "body": "場所 = 奄美 という限定で MU §28 寄付 50% 枠を <b>一般社団法人 NEDI (amami-nedi.com · 代表 碇山勇生氏 · 奄美のサンゴ再生 / 海洋環境保全)</b> に redirect。 CHAR 様が Patagonia「尊々加那志」で碇山氏自身を撮影した既存関係を活かす設計。 残り 25% CHAR 様 / 25% MU 運営。 寄付実績と NEDI 領収書は wearmu.com/charfilm/donations に毎月公開。"
+      },
+      {
+        "no": 5,
+        "title": "全 SKU から charfilm.com / thebase へ送客",
+        "body": "全 12 SKU の商品ページ /p/charfilm-* に <b>「写真家 CHAR (土屋 尚幸) の作品集を見る」 → charfilm.com</b> + <b>「額装プリント・写真集 COLORS を購入する」 → charfilm.thebase.in</b> の二段リンク。 inner tag + 同梱カード にも QR 印字。 MU で買った人が CHAR 様の本流顧客に転換する導線を設計。"
+      },
+      {
+        "no": 6,
+        "title": "出来ないことは Phase 2 に分離 (誠実性原則)",
+        "body": "「ネリヤカナヤ夜明け 限定 50 部 signed canvas」 「写真集 ZINE 海から山へ」 「150cm ビーチタオル」 等は<b>本 LP の 12 SKU に含めない</b>。 master file 解像度・サイン物流・印刷 partner 等が未確立なため。 これらは下記 「Phase 2 候補」 セクションで別記し、 各々の前提条件が揃った時点で個別合意で追加。 <b>嘘の在庫表示・誇大な仕様で売る事は構造的に不可能</b>。"
+      }
+    ],
+    "live_preconditions": [
+      ["契約", "CHAR 様 / OND° から<b>書面合意</b>: 写真利用許諾 + 寄付モデル + 価格範囲 + 撤退条項"],
+      ["写真 master", "CHAR 様から <b>3600×2400 px JPEG 5 枚</b> (黄金の波 / 透明バレル / 緑山の波 / 水中光柱 / 夜のイルカ) + <b>1567×1044 の whale / water-mirror</b> の<b>高解像度版</b> (現状 LINE 経由低解像度のみ)"],
+      ["印刷 proof", "12 SKU 全てを Printful / Gelato で実物 sample 印刷 → CHAR 様承認"],
+      ["NEDI 振込", "NEDI 法人口座 verify + 月次振込スキーム + 領収書 PDF 公開フロー構築"],
+      ["送客 QR", "全 SKU の inner tag + 同梱カード に印字する QR (charfilm.com + thebase へ二段リンク) のデザイン入稿"],
+      ["catalog 公開", "POST /api/proposal/charfilm/approve で 3 層 gate 解除 (LP DRAFT バナー解除 + Rust 410 gate 通過 + products.active=1) → /charfilm storefront 公開"],
+      ["launch arc", "14 日 SNS arc 開始 (CHAR + OND° + NEDI 同時投稿、 NALU / Surfin'Life / JAL SKYWARD に press release)"]
+    ],
+    "phase_2_candidates": [
+      ["ネリヤカナヤ夜明け Signed Limited 50 (A2 Canvas, ¥28K想定)", "CHAR 様の thebase ¥77-88K 額装と同被写体 (= 既存事業に影響しない別媒体・別価格)。 master file + サイン物流 (Printful → CHAR → 顧客 or 別紙 COA 同梱) + シリアル管理が前提"],
+      ["写真集 ZINE 「海から山へ」 A5 28p (¥4,500想定 / limited 500)", "既存 COLORS (A4 / 海 / 1000部) と被らないサイズ・narrative。 印刷 partner (lulu / 国内印刷) 選定 + ロット契約が前提"],
+      ["Beach Towel 150cm + Blanket 150cm + Pillow 50cm 大判 AOP", "現在の 3600px master でも解像度不足 (5000+ px 必要)。 CHAR 様から大判用 master file 受領後"],
+      ["Bandana 55cm + Flag 90×150cm + 大判 Puzzle", "同上、 解像度 4500-6000px 必要"],
+      ["屋久島 / ヒマラヤ シリーズ (Drop 04+ 全 SKU)", "CHAR 様の 2026 narrative pivot に同調、 新規撮影分の master 受領後に同じスキームで拡張"]
+    ],
+    "terms": [
+      ["契約期間", "Drop 01 + 30 日 review、 継続オプション"],
+      ["最低発注ロット", "<b>無在庫</b> — Printful (EU/US) / Gelato (JP/SG/AU) POD"],
+      ["売上分配", "<b>一般社団法人 NEDI 50% (固定 · 変更不可)</b> · CHAR 様 25% · MU 25% (POD 原価控除後の純売上)"],
+      ["支払サイト", "月 1 回 締め · 翌月末 Wise 振込"],
+      ["IP", "写真 IP は CHAR 様 / MU の monoline (linework / 同梱カード) は両者使用可 / 写真は contract 期間中 MU 内部参照のみ"],
+      ["credit", "全 SKU の inner tag + 同梱カード + 商品ページ に 「Inspired by CHAR · charfilm.com」 + QR、 + 「額装プリント・写真集 COLORS は charfilm.thebase.in」 の二段リンク必須"],
+      ["既存事業の保護", "<b>charfilm.thebase.in / DONT PANIC × CHAR FILM TEE は不可侵</b>。 MU では同じ媒体・同じ素材・同じ価格帯 の商品は一切扱わない"],
+      ["撤退条項", "30 日前通知でいつでも。 違約金なし"],
+      ["独占性", "コラボ期間中、 MU は他写真家との <b>同テーマ (奄美 + 海 + 鯨 + イルカ)</b> collab は新規受付しない"],
+      ["写真の取扱い", "下記 7 枚 のみ contract 期間中 MU 内部使用。 Phase 2 追加写真は別途協議で順次"],
+      ["寄付実績", "wearmu.com/charfilm/donations に毎月公開、 NEDI 領収書 PDF も同 URL に掲載"]
+    ],
+    "timeline": [
+      ["Day 0", "本提案合意 + NEDI 寄付スキーム確定 (碇山勇生氏に CHAR 様から先方ご連絡)"],
+      ["Day 5", "CHAR 様より master file 受領 (3600×2400 JPEG 5 枚 + whale / water-mirror 高解像度版)"],
+      ["Day 10", "MU が 12 SKU の Printful / Gelato 実物 sample 印刷 → CHAR 様承認 (修正 1 ラウンド)"],
+      ["Day 14", "全 SKU 確定 + inner tag / 同梱カード 入稿 + NEDI 振込スキーム確定"],
+      ["Day 18", "POST /api/proposal/charfilm/approve → /charfilm storefront 公開 + LP の DRAFT バナー解除"],
+      ["Day 21", "X / Instagram 14 日 launch arc 開始、 NALU / Surfin'Life / JAL SKYWARD に press release"],
+      ["Day 30", "Drop 01 ローンチ — 月相: 朔"],
+      ["Day 60", "売上 review + NEDI 振込 (第 1 回 · 領収書公開) + Phase 2 候補 から 1 つ 追加合意"],
+      ["Day 90", "Drop 03 + Phase 2 第 1 弾 (例: 写真集 ZINE) 順次追加"]
+    ],
+    "revenue_table": [
+      ["Tier 1 · 額装相当 (¥4,800-¥18,000) · 4 SKU", "Canvas A2 / Canvas A3 / Poster A3", "想定 月 8 個 × ¥10K avg = ¥80,000"],
+      ["Tier 2 · アパレル AOP (¥4,900-¥10,800) · 3 SKU", "Athletic Tee / Rashguard LS / Hoodie", "想定 月 15 個 × ¥7K avg = ¥105,000"],
+      ["Tier 3 · 写真ギフト (¥1,200-¥3,800) · 5 SKU", "iPhone Case×2 / Mug×2 / Mousepad / Postcard / Magnet", "想定 月 50 個 × ¥3K avg = ¥150,000"],
+      ["月商合計 (保守 estimate)", "12 SKU", "<b>¥335,000/月 · CHAR ¥41,875/月 · NEDI ¥83,750/月</b>"],
+      ["年商 (Drop 01 + 12 ヶ月)", "12 SKU 安定運用", "<b>¥4,020,000/年 · CHAR ¥502,500/年 · NEDI ¥1,005,000/年</b>"]
+    ]
+  },
+  "skus": [
+    { "letter": "a", "drop_num": 1, "price_jpy": 18000, "label": "Canvas A2 (594mm) · 透明バレル",            "kind": "canvas",        "design_slug": "barrel-teal",     "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "★ HERO ★ A2 (420×594mm) 木枠張りキャンバス。 3600×2400 master で 154dpi (Printful canvas 基準 150dpi クリア)。 既存 ¥38K 小額装と異なる媒体・サイズ・価格帯。" },
+    { "letter": "b", "drop_num": 1, "price_jpy": 10800, "label": "Canvas A3 (420mm) · 緑山の波",              "kind": "canvas",        "design_slug": "wave-green",      "image_url": "/static/charfilm/wave-green.jpg",      "description": "A3 (297×420mm) 木枠張りキャンバス。 3600×2400 master で 217dpi 余裕。 奄美の緑山を背景に砕ける波。" },
+    { "letter": "c", "drop_num": 1, "price_jpy": 4800,  "label": "Poster A3 (420mm) · 黄金の波",              "kind": "poster",        "design_slug": "wave-golden",     "image_url": "/static/charfilm/wave-golden.jpg",     "description": "A3 (297×420mm) マット紙ポスター。 普段使い壁掛け価格帯。 額装は別途。" },
+    { "letter": "d", "drop_num": 2, "price_jpy": 7800,  "label": "Athletic Tee AOP · 黄金の波",               "kind": "athletic_tee",  "design_slug": "wave-golden",     "image_url": "/static/charfilm/mockups/tee-wave-golden.jpg",          "description": "昇華転写アスレチック T 全面 AOP。 速乾ポリ。 ラン / ジム / SUP。 印刷面 100-180dpi (3600 source で機能服距離視認の許容範囲内)。 DONT PANIC × CHAR FILM TEE とは素材・印刷面積・用途が完全に異なる機能服。 ※mockup は Printful API 出力 (Bella+Canvas 3001 ベース、 本番 athletic_tee 別 product)" },
+    { "letter": "e", "drop_num": 2, "price_jpy": 9800,  "label": "Rashguard LS AOP · 透明バレル",             "kind": "rashguard_ls",  "design_slug": "barrel-teal",     "image_url": "/static/charfilm/mockups/rashguard-barrel-teal.jpg",    "description": "ラッシュガード LS 全面 AOP · UPF50+ 速乾。 surf / ヨガ / ダイビング。 「波の中で撮る写真家」 が作る 「波の中で着る服」。 ※mockup は Printful 公式 product 301 出力" },
+    { "letter": "f", "drop_num": 3, "price_jpy": 10800, "label": "Hoodie · 光の柱 背面プリント (35×40cm)",   "kind": "hoodie",        "design_slug": "underwater-rays", "image_url": "/static/charfilm/mockups/hoodie-underwater-rays.jpg",   "description": "プルオーバーフーディー · 背中に 35×40cm 印刷 (背面全面 AOP ではなく大判 print)。 3600 source で 130dpi 確保。 海上がりに被るパーカー。 ※mockup は Printful 公式 product 146 (Gildan 18500) 出力" },
+    { "letter": "g", "drop_num": 1, "price_jpy": 3800,  "label": "iPhone Case · 透明バレル",                  "kind": "phonecase",     "design_slug": "barrel-teal",     "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "iPhone 13-16 / Pro / Max 対応。 全面写真ラップ (印刷面 300dpi 余裕)。 落下衝撃緩衝。" },
+    { "letter": "h", "drop_num": 1, "price_jpy": 3800,  "label": "iPhone Case · 夜のイルカ",                  "kind": "phonecase",     "design_slug": "dolphins-stars",  "image_url": "/static/charfilm/dolphins-stars.jpg",  "description": "iPhone 13-16 / Pro / Max 対応。 セーリングボートからの星空のような水面下のイルカ。" },
+    { "letter": "i", "drop_num": 1, "price_jpy": 2800,  "label": "Mug · 鯨 11oz",                            "kind": "mug",           "design_slug": "whale",           "image_url": "/static/charfilm/whale.jpg",           "description": "昇華転写マグ 11oz (印刷面 240dpi 余裕)。 ザトウクジラ。 朝のコーヒーで 1 日 1 回奄美に潜る。 ※whale 元写真が 1567×1044 のため、 マグ最大サイズで使用 (より大判印刷は master 再受領後)。" },
+    { "letter": "j", "drop_num": 1, "price_jpy": 2800,  "label": "Mug · 透明バレル 11oz",                    "kind": "mug",           "design_slug": "barrel-teal",     "image_url": "/static/charfilm/barrel-teal.jpg",     "description": "昇華転写マグ 11oz。 透明バレルの内側階調。 ギフト最適。" },
+    { "letter": "k", "drop_num": 1, "price_jpy": 2800,  "label": "Mousepad · 夜のイルカ",                     "kind": "mousepad",      "design_slug": "dolphins-stars",  "image_url": "/static/charfilm/dolphins-stars.jpg",  "description": "昇華転写マウスパッド 240×200mm (印刷面 200dpi 余裕)。 デスクに 1 枚海。" },
+    { "letter": "l", "drop_num": 1, "price_jpy": 1800,  "label": "Postcard 7 photos set (A6) + Magnet 3 pack",  "kind": "postcard",      "design_slug": "ocean-7",         "image_url": "/static/charfilm/water-mirror.jpg",    "description": "マットポストカード A6 × 7 枚 (全 7 photo) + 冷蔵庫マグネット 3 枚 set。 来訪者ノベルティ / 友達へのギフト / 旅の土産。 ¥1,800 / 1 番低い入口価格。" }
+  ]
+}

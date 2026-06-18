@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正直なところ — MU | wearmu.com</title>
+<meta name="description" content="MU の 失敗 と 直し方 を 数字 で 書く 公開 ログ。 2026-06-08 更新: 一般 アパレル で 需要 が 出ず、 BJJ 経済圏 へ 軸足 を 移す 判断 まで。 マーケティング 文章 ゼロ。">
+<meta name="robots" content="index,follow">
+<meta property="og:title" content="正直なところ — MU の最初の 11 日間">
+<meta property="og:description" content="馬場様 への 嘘、 Stripe ads の 0 conv、 §30 仕様 過剰、 retention 未計測。 全部 書きます。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:url" content="https://wearmu.com/about/honest">
+<meta property="og:type" content="article">
+<link rel="canonical" href="https://wearmu.com/about/honest">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',Arial,sans-serif;padding:80px 24px 120px;font-feature-settings:"palt";line-height:1.85}
+.container{max-width:680px;margin:0 auto}
+.logo{font-size:22px;font-weight:700;letter-spacing:0.4em;margin-bottom:48px}
+.logo a{color:inherit;text-decoration:none}
+.kicker{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.55;margin-bottom:12px}
+h1{font-size:28px;line-height:1.4;font-weight:500;letter-spacing:0.02em;margin-bottom:36px}
+h2{font-size:13px;letter-spacing:0.18em;text-transform:uppercase;margin:48px 0 16px;color:#e6c449}
+p{font-size:14px;opacity:0.85;margin-bottom:16px}
+ul{margin:0 0 20px 22px}
+li{font-size:14px;opacity:0.85;margin-bottom:6px}
+.num{font-family:'SF Mono','Menlo',monospace;font-variant-numeric:tabular-nums;color:#e6c449;font-weight:500}
+.fact{background:#101010;border-left:3px solid #e6c449;padding:18px 22px;margin:24px 0;border-radius:0 4px 4px 0}
+.fact .lbl{font-size:10px;letter-spacing:0.22em;text-transform:uppercase;opacity:0.55;margin-bottom:6px}
+.fact .val{font-size:18px;font-family:'SF Mono','Menlo',monospace;color:#fff}
+.fact .note{font-size:12px;opacity:0.65;margin-top:8px}
+.bad{color:#ff4a3d}
+.good{color:#7be57b}
+.back{display:inline-block;margin-top:48px;font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;text-decoration:none;color:inherit}
+.back:hover{opacity:0.8}
+a{color:#e6c449}
+hr{border:0;border-top:1px solid rgba(255,255,255,0.08);margin:36px 0}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+<div class="container">
+  <div class="logo"><a href="/"><span style="opacity:0.7;font-weight:400;letter-spacing:0.1em;margin-right:10px">━◯━</span>MU</a></div>
+
+  <div class="kicker">正直なところ · 更新 2026-06-08 · 公開 32 日目</div>
+  <h1>11 日 で 何 を しくじって、 何 を 直す か。 マーケティング 文章 ゼロ で 書きます。</h1>
+
+  <h2>最新 — 2026-06-08 · 公開 32 日目: 一般 アパレル では 需要 が 出 なかった</h2>
+  <p>5 月 18 日 の W2 (13 名 へ 個別 メール + retention 計測) から 3 週間。 厳しい こと が はっきり しました。 <strong>MU 単独 では 「一般 の 人 が ¥4,900 の T シャツ を 買う 理由」 を まだ 作れて いません。</strong> 広告 を 回した 30 日 で 転換 は 2 件。</p>
+  <div class="fact">
+    <div class="lbl">/api/transparency ライブ · 2026-06-08</div>
+    <div class="val">外部 実 顧客 <span class="num">10 名</span> · 購入 <span class="num">19 件</span> · <span class="num">¥83,800</span></div>
+    <div class="note">dogfood (yuki 本人 + 共同 創業者) を 除いた 数字。 直近 7 日 は 3 件。 別経路 の catalog (コラボ / POD / MAKE) は <span class="num">16 件 / ¥60,400</span> (返金 2 件 ¥19,600 は 除外)。 高単価 の MUGEN オークション (MA) が <span class="good">2 点 / ¥184,000</span> — 実 売上 の 主役 は 量産 T では なく、 1 点もの と コラボ でした。</div>
+  </div>
+  <p>一方 で、 <strong>BJJ (柔術) の 垂直 には 実需 が 見え ました</strong>。 だから 方針 を 変え ます。 MU 単独 で 一般 アパレル を 狙う のを やめ、 実需 の ある BJJ 経済圏 に MU の 「作る 技術」 を 従属 させ ます。 当面 の ゴール は <strong>一次 の 実 購入者 を 月 100 人</strong>。 そこ を 超える まで 中古 / RE:MU は 作りません (在庫 が 無ければ 中古 は 成立 し ない から)。</p>
+  <p>もう 一つ 正直 に。 「作れる もの を 増やせ」 と 社内 で 指示 し、 棚 (SKU) を 一気に 増やし ました。 でも 数字 を 見れば、 <strong>品数 は 売上 レバー では ない</strong>。 16 件 の 注文 に 対し SKU は 190 以上 あります。 効く のは 順に ① 実物 写真 (本当に 届く という 証拠) ② 納期 の 見せ方 (受注 生産 で 5 〜 10 日) ③ 到達。 棚 を 増やす 手 は 止め、 この 3 つ に 戻し ます。</p>
+
+  <hr>
+  <p style="font-size:12px;opacity:0.55">— 以下 は 公開 11 日目 (2026-05-18) の 記録。 消さ ず に 残し ます。 —</p>
+
+  <h2>1. 馬場様 への 嘘</h2>
+  <p>5 月 15 日、 焼肉古今 (kokon.tokyo) からの サンプル 注文 (¥14,276) について、 私 (yuki) は メールで 「Printful にて 生産開始 しました」 と お伝え しました。</p>
+  <p><strong>実際 には、 Stripe webhook 後 の Printful 自動 confirm が動いて おらず、 注文 は 5 月 18 日 まで <span class="bad">draft (発注前)</span> 状態 で 滞留 していました。</strong> 2 日 待たせた こと自体 より、 「動いた」 と 嘘 を 言った こと が 最悪 でした。</p>
+  <p>5 月 18 日 に 手動 confirm + 改めて 経緯 を お送り しました。 同じ 失敗 を 再発 させ ない ため、 <a href="/constitution#section-30">printful_draft_watchdog</a> という cron agent を 入れ、 30 分 ごと に draft 滞留 を 検知 して 自動 confirm する 仕組み に しました。 Day 2 で 入って いる べき コード でした。</p>
+
+  <h2>2. ¥42,000 で 0 件 売れ ない 広告</h2>
+  <p>5 月 14 日 から 3 日間、 Google Ads で 4 つの ペルソナ ランディング (today / art / ai / eco / gift) を 走らせ ました。</p>
+  <div class="fact">
+    <div class="lbl">広告 結果 (3 日間)</div>
+    <div class="val">支出 <span class="num">¥42,000</span> · コンバージョン <span class="bad">0</span></div>
+    <div class="note">2 campaign は 一旦 PAUSED。 5/18 時点 で /admin/funnel ダッシュボード を 作り、 4 段階 (pageview → cta_click → checkout_start → checkout_paid) の どこで 落ちて いる か を 計測 中。</div>
+  </div>
+  <p>仮説: Stripe checkout 自体 が モバイル で 動か ない or 値段 ショック で 離脱、 のどちら か。 3 端末 で 自分 で 通して みる + funnel data の 両方 で 1 週間 以内 に 原因 を 特定 します。</p>
+
+  <h2>3. 仕様 を 書きすぎた</h2>
+  <p>5 月 12 〜 18 日、 Constitution に §22 〜 §30 まで 9 条文 を 追加 しました。 §29 (Bitcoin 時価総額 超え) と §30 (pt 経済) は 100 年 の 北極星 として 必要 でした が、 <strong>1 週間 で 5 条文 入れた のは 多すぎ</strong> でした。</p>
+  <p>独立 strategy review (6 ペルソナ + Plan agent、 全員 同意) の 結論:</p>
+  <ul>
+    <li>§30 の 4 サブ条 (pt / marketplace / exchange / vault) は <span class="bad">1 機能 に 統合</span> すべき</li>
+    <li><a href="/pt-exchange">/pt-exchange</a> ページ は <strong>retention を 4 週間 計測 してから 開く</strong> 判断 に した (現在 「工事中」 表示)</li>
+    <li>§30 spec を 書く 時間 で、 13 名 の 既存 顧客 を 個別 ケア した 方 が 売上 への ROI は 高い</li>
+  </ul>
+  <p>仕様 は 凍結 し、 まず 「来週 1 人 戻って くる か」 を 証明 する 動き に 戻します。</p>
+
+  <h2>4. retention を 計測 して いなかった</h2>
+  <p>5 月 7 日 公開 から 5 月 18 日 まで の 数字:</p>
+  <div class="fact">
+    <div class="lbl">/transparency snapshot · 2026-05-18</div>
+    <div class="val">累計 売上 <span class="num">¥89,000</span> · 累計 購入 <span class="num">13 件</span> · 出荷 <span class="num">11 枚</span></div>
+    <div class="note">うち 純外部 顧客 は 推定 数 名。 大半 は yuki 本人 + 共同 創業者 の テスト 購入。</div>
+  </div>
+  <p>11 日 間 で 13 件 という 数字 は 良くも 悪くも ない 立ち上がり。 問題 は、 <strong>その 13 名 の うち 何 名 が 2 回目 を 買って くれた か を 一切 測って いなかった</strong> こと。 §29 (100 年 の 複利) は retention が 全て なので、 これ は 致命的 な 計測 漏れ でした。</p>
+  <p>5 月 18 日 に <code>/admin/retention</code> 画面 を 作成。 13 名 全員 の 初回 購入 日、 累計 購入 回数、 累計 金額、 2 回目 まで の 日数 が 1 画面 で 見え る ように しました。 これ から の 全 意思決定 は この 数字 を 起点 に します。</p>
+
+  <h2>5. 来週 やる こと (Plan W2)</h2>
+  <p>独立 strategy review が 勧めた W2 thesis: <strong>「1 人 が 戻って くる か 証明 する」</strong>。 具体的 には:</p>
+  <ul>
+    <li>13 名 全員 に <strong>個別 メール</strong> (yuki 名義、 agent ではなく)。 ¥500 OFF クーポン、 14 日 有効</li>
+    <li>クーポン 利用 を <code>/admin/retention</code> で 個別 追跡</li>
+    <li>Stripe checkout の #1 drop-off (funnel data から 特定) を 1 つ だけ 修正</li>
+    <li>Google Ads は CAC < ¥3,000 が 見える まで 再開 しない</li>
+  </ul>
+  <p>成功 指標: 13 名 から 2 名 以上 が 戻って くれば repeat_rate 15.4% で <a href="/constitution#section-30">§30 復活 ゲート</a> を クリア。 そう なら なければ §30 は 静か に 削除 します。</p>
+
+  <h2>6. Plan W1 — 出荷した 4 修正 (2026-05-18)</h2>
+  <p>Plan agent (独立 review) の W1 thesis 「checkout funnel の 沈黙 を 計測 する」 に 沿って、 今日 4 つ ship しました。 大規模 機能 追加 は ゼロ、 まず <strong>「数字 が 取れる 状態」</strong> に 戻す こと だけ に 集中。</p>
+  <div class="fact">
+    <div class="lbl">W1 ship log · 2026-05-18</div>
+    <div class="val">A · <span class="good">checkout_attempt</span> funnel event 追加</div>
+    <div class="note">client (buy.html / index.html / payments-ui.js / index.html embedded) が <code>fetch('/api/checkout')</code> を 叩く <strong>直前</strong> に MuFunnel.track で 送信。 server-side <code>checkout_start</code> との 差分 で、 JS / network エラー で 黙って 落ちて いる 件数 を 初めて 可視化 します。 Plan agent の suspect #1 を 1 週間 以内 に YES / NO で 判定 する データ が 取れる ように なりました。</div>
+  </div>
+  <div class="fact">
+    <div class="lbl">B · 特定商取引法 表記 の era-2 修正</div>
+    <div class="val">MUGEN <span class="bad">¥5,000〜¥30,000</span> → <span class="good">¥7,800〜¥35,000</span></div>
+    <div class="note">5 月 9 日 に §24-v2 で 生地 を Bella+Canvas 7400 へ アップ、 base ¥7,800 / cap ¥35,000 へ 切り替え 済 だった が、 <code>/tokushoho</code> は 旧 era-1 価格 を 9 日間 表示 し 続けて いた。 景品表示 法 上 の 二重価格 リスク を 黙って 放置 した 形 です。 加えて 「Fragment System」 (§30-EX v1, 既に 廃止) と 「MU credit (¥1,000=1MU)」 (§30 の ¥1=1pt と 矛盾) を 削除 / 統一 しました。</div>
+  </div>
+  <div class="fact">
+    <div class="lbl">C · /about/honest 公開 (このページ)</div>
+    <div class="val">SEO index 可 · GitHub commit 全 履歴 公開</div>
+    <div class="note">馬場様 への 嘘、 ¥42K / 0 conv の 広告、 §30 仕様 過剰、 retention 計測 漏れ を 文章 で 整理。 「失敗 を 即座 に 書ける」 仕組み を 1 ページ に 集約 しました。</div>
+  </div>
+  <div class="fact">
+    <div class="lbl">D · §30-EX (pt 交換) を 静かに 隠した</div>
+    <div class="val">/pt-exchange → 「工事中」 表示 + retention 4 週 計測 ゲート</div>
+    <div class="note">Plan agent の 「§29 が 詩、 §30 は 折り畳む か 殺せ」 という 結論 を 受け、 4 サブ条 (pt / marketplace / exchange / vault) を 一旦 隠匿。 13 名 から 2 名 戻れば 復活、 戻らなければ 削除 します。</div>
+  </div>
+  <p>次 (W2): <strong>13 名 全員 に yuki 名義 で 個別 メール</strong> + ¥500 OFF 14 日 クーポン。 funnel data が 2 日 たまった ら #1 drop-off を 1 つ だけ 修正。 これ 以外 は 触りません。</p>
+
+  <h2>7. なぜ これ を 書く か</h2>
+  <p>MU は <a href="/constitution">Constitution §22</a> で 「100 年 続ける」 と 約束 して います。 100 年 続ける ため に 必要 な のは、 完璧 な ローンチ では なく、 <strong>失敗 を 即座 に 書ける 透明性</strong> です。</p>
+  <p>馬場様 に 嘘 を 書いた こと、 ¥42K を 0 件 で 燃やした こと、 仕様 過剰 を Plan agent に 叱られた こと — 全て 書いて、 改善 の 数字 と 並べる。 こうして 信頼 が 蓄積 する と 仮定 して います。</p>
+  <p>反論・指摘 は <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> へ 直接。 24 時間 以内 に yuki が 返信 します。</p>
+
+  <hr>
+  <p style="font-size:12px;opacity:0.55">
+    関連: <a href="/constitution">Constitution v1</a> · <a href="/transparency">/transparency (数字 ライブ)</a> · <a href="/vault/genesis">Vault: 誕生 (会員 限定)</a> · <a href="/blog">/blog</a>
+    <br>本 ページ の 修正 履歴 は <a href="https://github.com/yukihamada/mu-brand/commits/main/store/static/about-honest.html">GitHub</a> で 全 追跡 可能。
+  </p>
+  <a class="back" href="/">← MU トップ へ 戻る</a>
+</div>
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>

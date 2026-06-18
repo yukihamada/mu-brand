@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>JIUFIGHT デザイン FB — Tinder式</title>
+<meta name="robots" content="noindex">
+<link rel="canonical" href="https://wearmu.com/proposals/jiufight-swipe">
+<meta property="og:title" content="JIUFIGHT デザイン FB · スワイプして好き嫌い">
+<style>
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --red:#ff4a3d; --green:#7be57b; --line:#1f1f1f; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; height: 100%; overflow: hidden; touch-action: pan-y; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif; line-height: 1.65; padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); display: flex; flex-direction: column; }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  header a { color: var(--fg); text-decoration: none; font-size: 11px; letter-spacing: 0.42em; font-weight: 700; }
+  .progress { font-size: 11px; color: var(--mute); letter-spacing: 0.2em; }
+  .stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; position: relative; overflow: hidden; }
+  .stack { width: min(420px, 92vw); height: min(620px, 75vh); position: relative; }
+  .card { position: absolute; inset: 0; background: #0f0f0f; border: 1px solid #222; border-radius: 14px; padding: 18px; display: flex; flex-direction: column; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.35s; will-change: transform; user-select: none; -webkit-user-select: none; box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 4px 18px rgba(0,0,0,0.3); }
+  .card.below { transform: scale(0.94) translateY(14px); opacity: 0.55; pointer-events: none; }
+  .card.gone-left { transform: translate(-160%, 20px) rotate(-22deg) !important; opacity: 0 !important; }
+  .card.gone-right { transform: translate(160%, 20px) rotate(22deg) !important; opacity: 0 !important; }
+  .card-id { font-size: 10px; letter-spacing: 0.36em; color: var(--red); font-weight: 700; margin-bottom: 6px; }
+  .card-label { font-size: 17px; line-height: 1.4; font-weight: 600; margin: 0 0 10px; }
+  .card-thumb { flex: 1; background: #000; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; margin-bottom: 12px; }
+  .card-thumb img { width: 100%; height: 100%; object-fit: contain; padding: 6%; display: block; }
+  .card-meta { font-size: 12px; color: var(--mute); display: flex; justify-content: space-between; }
+  .card-meta strong { color: var(--fg); font-weight: 600; }
+  .stamp { position: absolute; top: 32px; padding: 8px 16px; border: 3px solid; border-radius: 8px; font-size: 22px; font-weight: 900; letter-spacing: 0.18em; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+  .stamp.nope { left: 24px; color: var(--red); border-color: var(--red); transform: rotate(-12deg); }
+  .stamp.like { right: 24px; color: var(--green); border-color: var(--green); transform: rotate(12deg); }
+  .card.swiping-left .stamp.nope { opacity: 1; }
+  .card.swiping-right .stamp.like { opacity: 1; }
+  .actions { display: flex; justify-content: center; gap: 16px; padding: 12px 24px 24px; flex-shrink: 0; }
+  .actions button { background: #0f0f0f; color: var(--fg); border: 1px solid var(--line); border-radius: 50%; width: 64px; height: 64px; font-size: 26px; cursor: pointer; transition: transform 0.15s, background 0.15s; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .actions button:hover, .actions button:active { transform: scale(1.05); }
+  .actions button.no { color: var(--red); border-color: rgba(255,74,61,0.3); }
+  .actions button.no:hover { background: rgba(255,74,61,0.08); }
+  .actions button.fb { color: var(--fg); border-color: rgba(245,245,240,0.3); width: 76px; height: 76px; font-size: 28px; }
+  .actions button.fb:hover { background: rgba(245,245,240,0.06); }
+  .actions button.yes { color: var(--green); border-color: rgba(123,229,123,0.3); }
+  .actions button.yes:hover { background: rgba(123,229,123,0.08); }
+  .empty { text-align: center; padding: 60px 24px; color: var(--mute); font-size: 14px; line-height: 2; }
+  .empty h2 { color: var(--fg); font-weight: 300; font-size: 22px; letter-spacing: 0.04em; margin: 0 0 16px; }
+  .empty .stats { margin-top: 32px; padding: 24px; background: #0f0f0f; border: 1px solid var(--line); border-radius: 10px; text-align: left; font-size: 13px; line-height: 2; max-width: 360px; margin-left: auto; margin-right: auto; }
+  .empty .stats .row { display: flex; justify-content: space-between; }
+  .empty a { color: var(--red); }
+  .fb-modal { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; padding: 24px; z-index: 100; }
+  .fb-modal.show { display: flex; }
+  .fb-card { background: #0f0f0f; border: 1px solid var(--line); border-radius: 12px; padding: 24px; max-width: 460px; width: 100%; }
+  .fb-card h3 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
+  .fb-card textarea { width: 100%; background: #000; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 12px; font-family: inherit; font-size: 14px; line-height: 1.7; min-height: 120px; resize: vertical; }
+  .fb-card textarea:focus { outline: none; border-color: var(--red); }
+  .fb-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .fb-actions button { flex: 1; padding: 12px; border-radius: 6px; font-size: 12px; letter-spacing: 0.24em; font-weight: 700; cursor: pointer; border: 0; font-family: inherit; }
+  .fb-actions .cancel { background: #1a1a1a; color: var(--mute); }
+  .fb-actions .send { background: var(--red); color: var(--fg); }
+  .fb-actions .send:disabled { opacity: 0.5; cursor: wait; }
+  .toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); background: #1a1a1a; border: 1px solid var(--line); color: var(--fg); padding: 10px 20px; border-radius: 30px; font-size: 12px; letter-spacing: 0.18em; opacity: 0; transition: opacity 0.25s, bottom 0.25s; pointer-events: none; z-index: 50; }
+  .toast.show { opacity: 1; bottom: 120px; }
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+<header>
+  <a href="/proposals/jiufight.html">←  /jiufight</a>
+  <div class="progress" id="progress">— / —</div>
+</header>
+
+<div class="stage">
+  <div class="stack" id="stack"></div>
+  <div id="empty" class="empty" style="display:none">
+    <h2>━◯━ FB ありがとうございました</h2>
+    <p>全 <span id="seen">0</span> デザインのフィードバックを受け取りました。<br>
+       <strong style="color:var(--green)" id="liked">0</strong> good ·
+       <strong style="color:var(--red)" id="disliked">0</strong> bad ·
+       <strong style="color:var(--fg)" id="commented">0</strong> 💭</p>
+    <div class="stats">
+      <div class="row"><span>FB は <strong>SUPER YAWARA SWEEP CUP</strong> 公式に共有されます。</span></div>
+      <div class="row"><span>good が多いデザインが量産候補に。</span></div>
+      <div class="row" style="margin-top:10px"><a href="/proposals/jiufight.html">→ デザインを買う</a></div>
+      <div class="row"><a href="javascript:location.reload()">→ もう一度スワイプ</a></div>
+    </div>
+  </div>
+</div>
+
+<div class="actions" id="actions">
+  <button class="no" id="btn-no" title="悪い (←)">👎</button>
+  <button class="fb" id="btn-fb" title="コメント (↑)">💭</button>
+  <button class="yes" id="btn-yes" title="良い (→)">👍</button>
+</div>
+
+<div class="fb-modal" id="fb-modal">
+  <div class="fb-card">
+    <h3 id="fb-title">━◯━ このデザインへのコメント</h3>
+    <textarea id="fb-text" placeholder="「もっとこうしたら良い」「色が惜しい」「字が大きすぎ」など…&#10;500 文字まで"></textarea>
+    <div class="fb-actions">
+      <button class="cancel" id="fb-cancel">キャンセル</button>
+      <button class="send" id="fb-send">送信</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SLUG = 'jiufight';
+let deck = [];           // [{letter, label, design_slug, kind, price_jpy}]
+let idx = 0;
+let stats = { like: 0, dislike: 0, comment: 0 };
+let currentCard = null;
+
+async function loadDeck() {
+  const r = await fetch(`/api/proposal/${SLUG}/skus`);
+  const d = await r.json();
+  // Shuffle so each visitor sees a different order.
+  deck = d.skus.slice().sort(() => Math.random() - 0.5);
+  renderStack();
+  updateProgress();
+}
+
+function renderStack() {
+  const stack = document.getElementById('stack');
+  stack.innerHTML = '';
+  if (idx >= deck.length) { finish(); return; }
+  // Render top two cards (top + below for depth).
+  for (let i = idx; i < Math.min(idx + 2, deck.length); i++) {
+    const sku = deck[i];
+    const el = document.createElement('div');
+    el.className = 'card' + (i === idx ? '' : ' below');
+    el.dataset.letter = sku.letter;
+    const mockup = `/proposals/jiufight-pf-${sku.letter}.jpg`;
+    const fallback = `/proposals/jiufight-design-${sku.design_slug}.png`;
+    el.innerHTML = `
+      <div class="stamp nope">NOPE</div>
+      <div class="stamp like">LIKE</div>
+      <div class="card-id">${sku.letter.toUpperCase()} · ${sku.kind}</div>
+      <h3 class="card-label">${sku.label}</h3>
+      <div class="card-thumb"><img src="${mockup}" data-fallback="${fallback}" alt="${sku.label}" onerror="this.onerror=null;this.src=this.dataset.fallback"></div>
+      <div class="card-meta"><span>¥${sku.price_jpy.toLocaleString()}</span><span><strong>${sku.design_slug}</strong> design</span></div>
+    `;
+    stack.appendChild(el);
+    if (i === idx) {
+      currentCard = el;
+      attachGestures(el, sku);
+    }
+  }
+}
+
+function updateProgress() {
+  document.getElementById('progress').textContent = `${Math.min(idx+1, deck.length)} / ${deck.length}`;
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._timer); toast._timer = setTimeout(() => t.classList.remove('show'), 1400);
+}
+
+async function postFeedback(letter, action, comment) {
+  try {
+    await fetch(`/api/proposal/${SLUG}/feedback`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ design: letter, action, comment: comment || '' })
+    });
+  } catch (e) { /* fire-and-forget; user can keep swiping */ }
+}
+
+function advance(action, letter, comment) {
+  stats[action] = (stats[action] || 0) + 1;
+  postFeedback(letter, action, comment);
+  if (action === 'like') toast('👍 LIKE 送信');
+  else if (action === 'dislike') toast('👎 NOPE 送信');
+  else toast('💭 コメント送信');
+  if (currentCard) {
+    currentCard.classList.add(action === 'dislike' ? 'gone-left' : 'gone-right');
+  }
+  setTimeout(() => {
+    idx += 1;
+    renderStack();
+    updateProgress();
+  }, 320);
+}
+
+function attachGestures(card, sku) {
+  let startX = 0, startY = 0, dx = 0, dy = 0, dragging = false;
+  const onDown = (e) => {
+    dragging = true;
+    const pt = e.touches ? e.touches[0] : e;
+    startX = pt.clientX; startY = pt.clientY;
+    card.style.transition = 'none';
+  };
+  const onMove = (e) => {
+    if (!dragging) return;
+    const pt = e.touches ? e.touches[0] : e;
+    dx = pt.clientX - startX; dy = pt.clientY - startY;
+    card.style.transform = `translate(${dx}px, ${dy}px) rotate(${dx*0.05}deg)`;
+    card.classList.toggle('swiping-left', dx < -40);
+    card.classList.toggle('swiping-right', dx > 40);
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    card.style.transition = '';
+    card.classList.remove('swiping-left', 'swiping-right');
+    if (dx > 100) {
+      advance('like', sku.letter);
+    } else if (dx < -100) {
+      advance('dislike', sku.letter);
+    } else {
+      card.style.transform = '';
+    }
+    dx = 0; dy = 0;
+  };
+  card.addEventListener('mousedown', onDown);
+  card.addEventListener('touchstart', onDown, { passive: true });
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('touchmove', onMove, { passive: true });
+  document.addEventListener('mouseup', onUp);
+  document.addEventListener('touchend', onUp);
+}
+
+function finish() {
+  document.getElementById('stack').style.display = 'none';
+  document.getElementById('actions').style.display = 'none';
+  document.getElementById('empty').style.display = 'block';
+  document.getElementById('seen').textContent = idx;
+  document.getElementById('liked').textContent = stats.like || 0;
+  document.getElementById('disliked').textContent = stats.dislike || 0;
+  document.getElementById('commented').textContent = stats.comment || 0;
+}
+
+// Buttons
+document.getElementById('btn-no').addEventListener('click', () => {
+  if (idx < deck.length) advance('dislike', deck[idx].letter);
+});
+document.getElementById('btn-yes').addEventListener('click', () => {
+  if (idx < deck.length) advance('like', deck[idx].letter);
+});
+document.getElementById('btn-fb').addEventListener('click', () => {
+  if (idx >= deck.length) return;
+  document.getElementById('fb-title').textContent = `━◯━ ${deck[idx].letter.toUpperCase()} ${deck[idx].label} へのコメント`;
+  document.getElementById('fb-text').value = '';
+  document.getElementById('fb-modal').classList.add('show');
+  document.getElementById('fb-text').focus();
+});
+document.getElementById('fb-cancel').addEventListener('click', () => {
+  document.getElementById('fb-modal').classList.remove('show');
+});
+document.getElementById('fb-send').addEventListener('click', async () => {
+  const txt = document.getElementById('fb-text').value.trim();
+  if (!txt) { document.getElementById('fb-text').focus(); return; }
+  const btn = document.getElementById('fb-send');
+  btn.disabled = true;
+  await postFeedback(deck[idx].letter, 'comment', txt);
+  stats.comment += 1;
+  document.getElementById('fb-modal').classList.remove('show');
+  btn.disabled = false;
+  toast('💭 コメント送信');
+  // After a comment, advance to the next card.
+  if (currentCard) currentCard.classList.add('gone-right');
+  setTimeout(() => { idx += 1; renderStack(); updateProgress(); }, 320);
+});
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (document.getElementById('fb-modal').classList.contains('show')) return;
+  if (e.key === 'ArrowLeft') document.getElementById('btn-no').click();
+  else if (e.key === 'ArrowRight') document.getElementById('btn-yes').click();
+  else if (e.key === 'ArrowUp' || e.key === 'c') document.getElementById('btn-fb').click();
+});
+
+loadDeck();
+</script>
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>

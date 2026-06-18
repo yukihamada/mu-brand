@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU · Costs</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg:#0A0A0A; --fg:#F5F5F0; --mute:#888; --accent:#e6c449; --line:#1c1c1c; --green:#7be57b; --red:#ff4a3d; --card:#101010; }
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; font-family: ui-monospace, "SF Mono", Menlo, "Helvetica Neue", Arial, sans-serif; line-height: 1.55; font-size: 13px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; position: sticky; top: 0; background: var(--bg); z-index: 50; }
+  header h1 { font-size: 14px; letter-spacing: 0.4em; margin: 0; font-weight: 700; }
+  header .nav { color: var(--mute); font-size: 11px; letter-spacing: 0.16em; }
+  header .nav a { margin-left: 14px; }
+  .wrap { padding: 24px 24px 120px; max-width: 1640px; margin: 0 auto; }
+  h2 { font-size: 11px; letter-spacing: 0.42em; color: var(--accent); text-transform: uppercase; margin: 26px 0 12px; font-weight: 700; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 18px; }
+  .toolbar select { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 9px 12px; font-family: inherit; font-size: 12px; border-radius: 4px; }
+  .toolbar .count { color: var(--mute); font-size: 11px; letter-spacing: 0.14em; margin-left: auto; }
+  .btn { background: #0f0f0f; border: 1px solid var(--line); color: var(--fg); padding: 7px 12px; font-family: inherit; font-size: 11px; border-radius: 4px; cursor: pointer; letter-spacing: 0.08em; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 4px 9px; font-size: 10px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 22px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .kpi .label { font-size: 10px; letter-spacing: 0.26em; color: var(--mute); text-transform: uppercase; margin-bottom: 6px; }
+  .kpi .v { font-size: 22px; font-weight: 200; color: var(--fg); }
+  .kpi .sub { font-size: 11px; color: var(--mute); margin-top: 3px; }
+  .kpi.good .v { color: var(--green); }
+  .kpi.warn .v { color: var(--red); }
+
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #161616; font-size: 12px; vertical-align: middle; }
+  th { font-size: 10px; color: var(--mute); letter-spacing: 0.20em; text-transform: uppercase; background: #0a0a0a; font-weight: 700; user-select: none; cursor: pointer; }
+  th.sorted { color: var(--accent); }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.pos { color: var(--green); }
+  td.neg { color: var(--red); }
+  tr:hover td { background: rgba(245,245,240,0.03); }
+  tr:last-child td { border-bottom: 0; }
+  tr.brand-row td { background: rgba(230,196,73,0.05); font-weight: 600; }
+  tr.brand-row td.num { color: var(--accent); }
+  tr.loss-row td { background: rgba(255,74,61,0.08); }
+  tr.loss-row td:first-child::before { content: "⚠ "; color: var(--red); font-weight: 700; }
+  td input.cost-edit { width: 88px; background: #050505; border: 1px solid var(--line); color: var(--fg); padding: 5px 7px; font-family: inherit; font-size: 11px; border-radius: 3px; text-align: right; font-variant-numeric: tabular-nums; }
+  td .default-tag { color: var(--mute); font-size: 9px; letter-spacing: 0.10em; margin-left: 6px; }
+  .sentinel { padding: 28px; text-align: center; color: var(--mute); font-size: 11px; letter-spacing: 0.18em; }
+  .err { color: var(--red); padding: 20px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>━◯━ MU · COSTS</h1>
+  <div class="nav">
+    <a href="/admin/products">products</a>
+    <a href="/admin/db">db overview</a>
+    <a href="/admin/bids">bids</a>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="totals" class="kpis"></div>
+
+  <h2>━ ブランド集計</h2>
+  <table id="brand-table">
+    <thead>
+      <tr>
+        <th>brand</th>
+        <th class="num">SKUs</th>
+        <th class="num">sold</th>
+        <th class="num">revenue</th>
+        <th class="num">total cost</th>
+        <th class="num">profit</th>
+        <th class="num">margin%</th>
+        <th class="num">default cost / 未設定 SKU</th>
+      </tr>
+    </thead>
+    <tbody id="brand-tbody"><tr><td colspan="8" class="sentinel">━◯━ loading…</td></tr></tbody>
+  </table>
+
+  <h2>━ SKU 個別 (sortable)</h2>
+  <div class="toolbar">
+    <select id="brand-filter" onchange="onFilter()">
+      <option value="">— all brands —</option>
+    </select>
+    <button class="btn" id="show-active" onclick="toggleActive()">active のみ ▢</button>
+    <button class="btn" id="show-loss" onclick="toggleLossOnly()">⚠ 赤字のみ ▢</button>
+    <button class="btn" style="border-color: var(--red); color: var(--red)" onclick="sweepLosses('report')">⚠ 赤字 SKU を一覧</button>
+    <button class="btn" onclick="sweepLosses('raise_price')">━ 推奨価格に一括引き上げ</button>
+    <button class="btn" onclick="sweepLosses('deactivate')">━ 赤字 SKU を停止</button>
+    <span class="count" id="count">0 loaded</span>
+  </div>
+
+  <table id="sku-table">
+    <thead>
+      <tr>
+        <th data-k="id">id</th>
+        <th data-k="brand">brand</th>
+        <th data-k="drop_num" class="num">#</th>
+        <th data-k="name">name</th>
+        <th data-k="price_jpy" class="num">price</th>
+        <th data-k="cost_effective_jpy" class="num">cost</th>
+        <th data-k="margin_unit_jpy" class="num">margin/unit</th>
+        <th data-k="margin_pct" class="num">m%</th>
+        <th data-k="sold" class="num">sold</th>
+        <th data-k="revenue_jpy" class="num">revenue</th>
+        <th data-k="profit_jpy" class="num">profit</th>
+      </tr>
+    </thead>
+    <tbody id="sku-tbody"></tbody>
+  </table>
+  <div class="sentinel" id="sentinel">━◯━ loading…</div>
+</div>
+
+<script>
+const PER = 100;
+let offset = 0;
+let hasMore = true;
+let loading = false;
+let products = [];
+let activeOnly = false;
+let lossOnly = false;
+let currentBrand = '';
+let sortKey = 'id';
+let sortDir = 'desc';
+const MIN_PRICE_OVER_COST = 1.30;
+function isLoss(p) {
+  return p.margin_pct < ((MIN_PRICE_OVER_COST - 1.0) * 100.0);
+}
+
+function adminToken() {
+  const u = new URL(window.location.href);
+  return u.searchParams.get('admin_token') || u.searchParams.get('token') || '';
+}
+function withTok(url) {
+  const t = adminToken();
+  return t ? url + (url.includes('?') ? '&' : '?') + 'admin_token=' + encodeURIComponent(t) : url;
+}
+document.querySelectorAll('header .nav a').forEach(a => {
+  const href = a.getAttribute('href');
+  if (href && href.startsWith('/')) a.setAttribute('href', withTok(href));
+});
+function escapeHtml(s) { if(s==null) return ''; return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmt(n) { return n.toLocaleString(); }
+function fmtY(n) { return '¥' + n.toLocaleString(); }
+function clsSign(n) { return n > 0 ? 'pos' : (n < 0 ? 'neg' : ''); }
+
+async function fetchPage() {
+  if (loading || !hasMore) return;
+  loading = true;
+  document.getElementById('sentinel').textContent = '━◯━ loading…';
+  const params = new URLSearchParams();
+  params.set('offset', String(offset));
+  params.set('limit', String(PER));
+  if (currentBrand) params.set('brand', currentBrand);
+  try {
+    const r = await fetch(withTok('/api/admin/costs?' + params.toString()));
+    if (!r.ok) {
+      document.getElementById('sentinel').innerHTML = `<span class="err">HTTP ${r.status}</span>`;
+      loading = false; return;
+    }
+    const data = await r.json();
+    const incoming = data.products || [];
+    products = products.concat(incoming);
+    offset += incoming.length;
+    hasMore = !!data.has_more;
+    document.getElementById('count').textContent = products.length.toLocaleString() + ' loaded';
+    document.getElementById('sentinel').textContent = hasMore ? '━ scroll for more ━' : '━◯━ end';
+    if (offset <= PER) {
+      populateBrands(data.brands || []);
+      renderTotals(data.brand_aggs || []);
+      renderBrandTable(data.brand_aggs || []);
+    }
+    renderSkuTable();
+  } catch (e) {
+    document.getElementById('sentinel').innerHTML = `<span class="err">${escapeHtml(String(e))}</span>`;
+  } finally { loading = false; }
+}
+
+function populateBrands(brands) {
+  const sel = document.getElementById('brand-filter');
+  while (sel.options.length > 1) sel.remove(1);
+  brands.forEach(b => {
+    const o = document.createElement('option');
+    o.value = b; o.textContent = b; sel.appendChild(o);
+  });
+}
+
+function renderTotals(brandAggs) {
+  let totalSkus = 0, totalSold = 0, totalRev = 0, totalCost = 0, totalProfit = 0;
+  for (const a of brandAggs) {
+    totalSkus += a.skus || 0;
+    totalSold += a.sold || 0;
+    totalRev += a.revenue_jpy || 0;
+    totalCost += a.total_cost_jpy || 0;
+    totalProfit += a.profit_jpy || 0;
+  }
+  const m = totalRev > 0 ? Math.round((totalProfit / totalRev) * 1000) / 10 : 0;
+  document.getElementById('totals').innerHTML = `
+    <div class="kpi"><div class="label">SKUs</div><div class="v">${fmt(totalSkus)}</div></div>
+    <div class="kpi"><div class="label">Units sold</div><div class="v">${fmt(totalSold)}</div></div>
+    <div class="kpi"><div class="label">Revenue</div><div class="v">${fmtY(totalRev)}</div></div>
+    <div class="kpi"><div class="label">Total cost</div><div class="v">${fmtY(totalCost)}</div></div>
+    <div class="kpi ${totalProfit>0?'good':(totalProfit<0?'warn':'')}"><div class="label">Profit</div><div class="v">${fmtY(totalProfit)}</div><div class="sub">margin ${m}%</div></div>
+  `;
+}
+
+function renderBrandTable(aggs) {
+  const tb = document.getElementById('brand-tbody');
+  if (!aggs.length) { tb.innerHTML = '<tr><td colspan="8" class="sentinel">no data</td></tr>'; return; }
+  tb.innerHTML = aggs.map(a => `
+    <tr class="brand-row">
+      <td>${escapeHtml(a.brand)}</td>
+      <td class="num">${fmt(a.skus||0)}</td>
+      <td class="num">${fmt(a.sold||0)}</td>
+      <td class="num">${fmtY(a.revenue_jpy||0)}</td>
+      <td class="num">${fmtY(a.total_cost_jpy||0)}</td>
+      <td class="num ${clsSign(a.profit_jpy||0)}">${fmtY(a.profit_jpy||0)}</td>
+      <td class="num">${(a.margin_pct||0).toFixed(1)}%</td>
+      <td class="num">${fmtY(a.default_cost_jpy||0)} / ${fmt(a.skus_unset_cost||0)} SKUs</td>
+    </tr>`).join('');
+}
+
+function sortedProducts() {
+  let rows = activeOnly ? products.filter(p => p.active === 1) : products;
+  if (lossOnly) rows = rows.filter(isLoss);
+  const k = sortKey, dir = sortDir === 'asc' ? 1 : -1;
+  return rows.slice().sort((a, b) => {
+    const av = a[k], bv = b[k];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+    return String(av).localeCompare(String(bv)) * dir;
+  });
+}
+
+function renderSkuTable() {
+  const rows = sortedProducts();
+  const arrow = k => sortKey === k ? (sortDir === 'asc' ? ' ↑' : ' ↓') : '';
+  const ths = document.querySelectorAll('#sku-table thead th');
+  ths.forEach(th => {
+    const k = th.dataset.k;
+    if (!k) return;
+    th.classList.toggle('sorted', sortKey === k);
+    th.textContent = th.textContent.replace(/ [↑↓]$/, '') + arrow(k);
+  });
+  const tb = document.getElementById('sku-tbody');
+  tb.innerHTML = rows.map(p => `
+    <tr class="${isLoss(p) ? 'loss-row' : ''}">
+      <td>${p.id}</td>
+      <td>${escapeHtml(p.brand)}</td>
+      <td class="num">${p.drop_num}</td>
+      <td><a href="/admin/products?admin_token=${encodeURIComponent(adminToken())}" title="${escapeHtml(p.name||'')}">${escapeHtml((p.name||'').slice(0,40))}</a></td>
+      <td class="num">${fmtY(p.price_jpy)}</td>
+      <td class="num"><input class="cost-edit" data-id="${p.id}" type="number" value="${p.cost_jpy ?? p.cost_effective_jpy}" />${p.is_cost_default ? '<span class="default-tag">default</span>' : ''}</td>
+      <td class="num ${clsSign(p.margin_unit_jpy)}">${fmtY(p.margin_unit_jpy)}</td>
+      <td class="num">${p.margin_pct.toFixed(1)}%</td>
+      <td class="num">${p.sold}</td>
+      <td class="num">${fmtY(p.revenue_jpy)}</td>
+      <td class="num ${clsSign(p.profit_jpy)}">${fmtY(p.profit_jpy)}</td>
+    </tr>`).join('');
+  // attach cost inputs
+  document.querySelectorAll('input.cost-edit').forEach(inp => {
+    inp.addEventListener('change', onCostChange);
+  });
+}
+
+async function onCostChange(e) {
+  const inp = e.currentTarget;
+  const id = inp.dataset.id;
+  const val = parseInt(inp.value || '0', 10);
+  inp.disabled = true;
+  try {
+    const r = await fetch(withTok(`/api/admin/products/${id}/update`), {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ cost_jpy: val }),
+    });
+    if (!r.ok) { alert('save failed: HTTP ' + r.status); return; }
+    // Update local row
+    const p = products.find(x => x.id === parseInt(id, 10));
+    if (p) {
+      p.cost_jpy = val;
+      p.cost_effective_jpy = val;
+      p.is_cost_default = false;
+      p.margin_unit_jpy = p.price_jpy - val;
+      p.margin_pct = p.price_jpy > 0 ? Math.round(((p.margin_unit_jpy / p.price_jpy) * 100) * 10) / 10 : 0;
+      p.total_cost_jpy = val * p.sold;
+      p.profit_jpy = p.revenue_jpy - p.total_cost_jpy;
+    }
+    renderSkuTable();
+  } finally { inp.disabled = false; }
+}
+
+document.querySelectorAll('#sku-table thead th').forEach(th => {
+  th.addEventListener('click', () => {
+    const k = th.dataset.k; if (!k) return;
+    if (sortKey === k) sortDir = (sortDir === 'asc' ? 'desc' : 'asc');
+    else { sortKey = k; sortDir = 'desc'; }
+    renderSkuTable();
+  });
+});
+function toggleActive() {
+  activeOnly = !activeOnly;
+  document.getElementById('show-active').textContent = activeOnly ? 'active のみ ☑' : 'active のみ ▢';
+  renderSkuTable();
+}
+function toggleLossOnly() {
+  lossOnly = !lossOnly;
+  document.getElementById('show-loss').textContent = lossOnly ? '⚠ 赤字のみ ☑' : '⚠ 赤字のみ ▢';
+  renderSkuTable();
+}
+async function sweepLosses(mode) {
+  const verb = mode === 'deactivate' ? '停止' : (mode === 'raise_price' ? '価格引き上げ' : '一覧表示');
+  if (mode !== 'report' && !confirm(`赤字 SKU を全て ${verb} します。よろしいですか？`)) return;
+  try {
+    const r = await fetch(withTok('/api/admin/costs/sweep_losses'), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ mode, limit: 5000 }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) { alert('sweep failed: ' + JSON.stringify(j)); return; }
+    const lines = j.offenders.map(o =>
+      `  id ${o.id} (${o.brand}) price ¥${o.price_jpy.toLocaleString()} < cost ¥${o.cost_jpy.toLocaleString()} → 推奨 ¥${o.recommended_price_jpy.toLocaleString()}`
+    ).join('\n');
+    alert(`scanned ${j.scanned} active SKUs / 赤字 ${j.offenders.length} 件\n\n${lines || '(なし)'}\n\nactions: ${j.actions.length} 件実行`);
+    if (mode !== 'report') {
+      // reload to reflect changes
+      offset = 0; hasMore = true; products = [];
+      document.getElementById('sku-tbody').innerHTML = '';
+      fetchPage();
+    }
+  } catch (e) { alert(String(e)); }
+}
+function onFilter() {
+  currentBrand = document.getElementById('brand-filter').value;
+  offset = 0; hasMore = true; products = [];
+  document.getElementById('sku-tbody').innerHTML = '';
+  fetchPage();
+}
+
+const io = new IntersectionObserver(entries => {
+  for (const e of entries) if (e.isIntersecting) fetchPage();
+}, { rootMargin: '600px' });
+io.observe(document.getElementById('sentinel'));
+
+fetchPage();
+</script>
+</body>
+</html>

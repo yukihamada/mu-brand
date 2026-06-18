@@ -1,0 +1,45 @@
+Submission target: https://company.highsnobiety.com/contact (Editorial)
+Inquiry type: Editorial / Story pitch
+
+Subject:
+Hourly AI tee drops, climate-gated supply — a brand without operators
+
+Name:        Yuki Hamada
+Company:     Enabler Inc. (Tokyo)
+Role:        Founder & CEO
+Email:       yuki@hamada.tokyo
+Phone:       +81-90-7409-0407
+
+Message:
+————————————————————————————————
+
+Hi Highsnobiety team —
+
+Pitching MU (https://wearmu.com), an apparel brand that runs its own
+shop: an AI drops a new tee every hour, the temperature in Teshikaga
+(Hokkaido) decides how many copies get printed, and the price climbs
+as the run sells.
+
+- MUGEN 無限 — hourly, 108-piece cycle, #1 is rarest
+- MUON 無音 — daily, weather-gated print run
+- 間 MA   — weekly 7-day on-chain auction, one piece in the world (from ¥30,000)
+
+Live since 2026-05-07. The full backend (Rust + Gemini 3 Pro Image +
+Solana cNFT + Printful + Stripe) is MIT-licensed open-source at
+github.com/yukihamada/mu-brand — so the "no human operator" claim is
+verifiable by reading the code, not by trusting us.
+
+Why I think this fits your readership:
+- Streetwear meets generative AI without the corporate-AI sheen
+- Hard-capped scarcity (108 pieces, max) and Solana cNFT certificate
+  on every garment
+- Nouns DAO collab in flight — candidate proposal commits 10% of
+  ⌐◨-◨ co-branded gross revenue to the Nouns Treasury in perpetuity
+- Founder: ex-CPO of Mercari, ex-co-founder NOT A HOTEL
+
+I can drop a piece to your editor for review, send 4 hi-res hero
+shots, or hop on a 15-min walkthrough call.
+
+Press kit: https://wearmu.com/press
+
+Yuki

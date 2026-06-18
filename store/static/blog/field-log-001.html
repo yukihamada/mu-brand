@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Field log #001 — 動いたもの / 壊れたもの / 直したもの (2026-05-11) | wearmu.com</title>
+<meta name="description" content="MU 運営の日次フィールドログ。直近 48h で動いたもの、壊れたもの、直したもの。月次の公開ノートとは別の「週次 / 必要ベースの速報」枠。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Field log #001 — MU 運営、直近 48h の壊れと修理">
+<meta property="og:description" content="MUGEN #95 の欠番、MUON 5/8-5/9 のドロップ抜け、3 ヶ月パック 15% OFF、Soulbound 表記の弱化。動いてない部分も全部出す。">
+<meta property="og:url" content="https://wearmu.com/blog/field-log-001">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Field log #001 — 動いたもの / 壊れたもの / 直したもの">
+<meta name="twitter:description" content="MUGEN #95 欠番、MUON 5/8-5/9 ドロップ抜け、欠番自動可視化、3 ヶ月パック 15% OFF、Soulbound 表記の弱化。">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111;--red:#C8362C;--green:#5a9e6f}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.9;font-size:15px;-webkit-font-smoothing:antialiased}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}
+nav a{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav a:hover{opacity:1}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+article{max-width:680px;margin:0 auto;padding:56px 32px 100px}
+.eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:14px}
+h1{font-size:clamp(24px,4vw,36px);font-weight:300;letter-spacing:0.02em;line-height:1.35;margin-bottom:14px}
+.lede{font-size:14px;color:var(--mute);font-style:italic;border-left:2px solid rgba(230,196,73,0.45);padding:10px 0 10px 18px;margin:20px 0 36px;font-family:'Helvetica Neue',Arial,sans-serif}
+h2{font-size:18px;font-weight:300;letter-spacing:0.02em;margin:48px 0 14px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:var(--y)}
+p{margin:0 0 14px}
+ul{margin:0 0 18px 22px;color:var(--mute)}
+ul li{margin-bottom:6px}
+strong{color:var(--fg);font-weight:500}
+em{color:var(--y);font-style:normal}
+a{color:var(--y);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+code{font-family:'Menlo','SF Mono',monospace;font-size:13px;background:rgba(230,196,73,0.08);padding:1px 6px;border-radius:2px;color:var(--y)}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:18px 0}
+.cell{background:var(--card);padding:14px 16px;border-radius:2px}
+.cell .v{font-size:20px;font-weight:200;color:var(--y);font-family:'Helvetica Neue',Arial,sans-serif}
+.cell .l{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.55;font-family:'Helvetica Neue',Arial,sans-serif;margin-top:4px}
+.tag{display:inline-block;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;padding:2px 8px;border-radius:2px;font-family:'Helvetica Neue',Arial,sans-serif;margin-right:6px}
+.tag.green{background:rgba(90,158,111,0.15);color:var(--green)}
+.tag.red{background:rgba(200,54,44,0.15);color:var(--red)}
+.tag.muted{background:rgba(255,255,255,0.06);color:var(--mute)}
+footer{padding:36px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:10px;letter-spacing:0.2em;opacity:0.5;font-family:'Helvetica Neue',Arial,sans-serif}
+.meta{display:flex;gap:18px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.55;margin-top:10px}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">MU</a>
+  <a href="/you">/ YOU</a>
+</nav>
+
+<article>
+  <div class="eyebrow">2026.05.11 · Field log #001</div>
+  <h1>動いたもの / 壊れたもの / 直したもの — 直近 48 時間。</h1>
+  <div class="meta">
+    <span>Enabler Inc.</span>
+    <span>読了 3 分</span>
+    <span>tag: ops, field-log</span>
+  </div>
+
+  <p class="lede">
+    月次の運営ノート (<a href="/blog/from-automation-to-autonomy.html">#001</a>) とは別の、必要に応じた速報枠。<br>
+    壊れているところは隠さず、直しているところは経過を出す。
+  </p>
+
+  <h2>1. ライブ数字</h2>
+  <div class="row" id="live">
+    <div class="cell"><div class="v" data-stat="total_drops">…</div><div class="l">total drops</div></div>
+    <div class="cell"><div class="v" data-stat="you_subscribers">…</div><div class="l">/you subscribers</div></div>
+    <div class="cell"><div class="v" data-stat="revenue">…</div><div class="l">revenue (test 含)</div></div>
+    <div class="cell"><div class="v" data-stat="missing">…</div><div class="l">missing drops</div></div>
+  </div>
+  <p style="font-size:11px;opacity:0.55;margin-top:-4px">↑ <a href="/api/transparency">/api/transparency</a> から fetch。生データそのまま。</p>
+
+  <h2>2. 壊れたもの</h2>
+  <p>自動 = 完璧、ではない。直近 48 時間で起きたこと:</p>
+  <ul>
+    <li><span class="tag red">cron miss</span> <strong>MUGEN #0095 が欠番</strong>。毎時 cron が一度失敗した痕跡。<br>"二度と復刻しない" 設計上、欠番は永続する。</li>
+    <li><span class="tag red">cron miss</span> <strong>MUON 2026-05-08 / 05-09 のドロップ無し</strong>。daily cron が 2 日連続失敗。<br>原因はまだ確定していない (m5 Mac の cron log を取りに行く必要)。</li>
+    <li><span class="tag red">spec drift</span> <strong>"Soulbound NFT" を mint 0 件のまま謳っていた</strong>。実装は Q3 ローンチ予定なのに、コピーが現在形だったので訂正。</li>
+    <li><span class="tag muted">cosmetic</span> <code>/api/products</code> の <code>latest_drop_at</code> が 6 日古い値を返していた。原因は mixed-format created_at を text-MAX で比較していた。fix 済み。</li>
+  </ul>
+
+  <h2>3. 直したもの</h2>
+  <ul>
+    <li><span class="tag green">ship</span> <strong>透明性 API</strong> <code>/api/transparency</code> — revenue, sold, subscribers をライブで返す。本記事の上部もこれ。</li>
+    <li><span class="tag green">ship</span> <strong>cron 死活エンドポイント</strong> <code>/api/health/cron</code> + 30 分ごとの自動 Telegram アラート (cadence 超過時)。</li>
+    <li><span class="tag green">ship</span> <strong>3 ヶ月パック ¥2,500</strong> (¥980 × 3 から 15% OFF)。サブスクの「終わりが見えない感」への対応。</li>
+    <li><span class="tag green">ship</span> <strong>TOP コピーを平易日本語に</strong> — 「AI が毎時間 T シャツをデザインして売る、無人ブランドです。」(64 歳が読んで分かる粒度)</li>
+    <li><span class="tag green">ship</span> <strong>欠番の自動可視化</strong> — <code>/api/transparency</code> に <code>missing_drops</code> フィールド追加。MUGEN の連番穴、MUON の日付穴が JSON で晒される。</li>
+    <li><span class="tag green">ship</span> <strong>取材 / 問い合わせ連絡先</strong> を footer に。<a href="mailto:info@enablerdao.com">info@enablerdao.com</a></li>
+  </ul>
+
+  <h2>4. 次の 48 時間</h2>
+  <ul>
+    <li>MUON 5/8, 5/9 の欠落原因を確定し、再発防止 (m5 cron + retry logic)。</li>
+    <li>欠番 (MUGEN #0095) を <strong>埋めるかどうか</strong>を決める。"二度と復刻しない" 原則を守るなら埋めない。</li>
+    <li>着画 (mock を着た人の写真 / 合成) を hero に 1 枚入れる。</li>
+    <li>英語 LP <code>/en</code> の素案。グローバル媒体に投げる前段。</li>
+  </ul>
+
+  <h2>5. 一言</h2>
+  <p>"無人で動いている" と "完璧に動いている" は別の話。最低限、<em>動いていない</em> ことがリアルタイムで見える状態にはなった。次は<em>動かない時間を短くする</em>側に進む。</p>
+  <p style="font-size:12px;opacity:0.6;margin-top:24px">— Enabler Inc.</p>
+</article>
+
+<footer>MU — wearmu.com / 次回 Field log: 必要に応じて、月次 Notes は 2026 年 6 月 11 日</footer>
+
+<script>
+(async () => {
+  const setStat = (key, val) => {
+    const el = document.querySelector('[data-stat="'+key+'"]');
+    if (el) el.textContent = val;
+  };
+  try {
+    const [t, brands] = await Promise.all([
+      fetch('/api/transparency').then(r => r.json()),
+      fetch('/api/products').then(r => r.json()),
+    ]);
+    const totalDrops = (brands.brands || []).reduce((s, b) => s + (b.active_drops || 0), 0);
+    const you = t.you || {};
+    const subs = (you.subscribers_free || 0) + (you.subscribers_paid || 0) + (you.lifetime_members || 0);
+    const missing = ((t.missing_drops && t.missing_drops.mugen_missing_drops) || []).length +
+                    ((t.missing_drops && t.missing_drops.muon_missing_dates)  || []).length;
+    setStat('total_drops', totalDrops);
+    setStat('you_subscribers', subs);
+    setStat('revenue', '¥' + (t.revenue_jpy || 0).toLocaleString('ja-JP'));
+    setStat('missing', missing);
+  } catch (e) {
+    document.querySelectorAll('[data-stat]').forEach(el => el.textContent = '—');
+  }
+})();
+</script>
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>

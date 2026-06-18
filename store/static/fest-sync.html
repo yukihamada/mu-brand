@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="robots" content="noindex,nofollow">
+<title>無音祭 — SYNC</title>
+<style>
+  :root { --black:#0A0A0A; --white:#FAFAFA; --red:#C8362C; --gold:#e6c449; --grey:#1a1a1a; --line:rgba(250,250,250,0.12); }
+  *,*::before,*::after { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; overflow:hidden; }
+  body { background:var(--black); color:var(--white);
+    font-family:'Helvetica Neue',Arial,'Hiragino Kaku Gothic ProN',sans-serif; font-weight:200;
+    -webkit-font-smoothing:antialiased; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:28px; text-align:center; padding:32px;
+    transition:background 1.2s ease; user-select:none; -webkit-tap-highlight-color:transparent; }
+  body.armed { background:#120f06; }
+  body.fired { background:var(--gold); color:var(--black); }
+  body.killed { background:#1a0a08; }
+  .mark { font-size:clamp(80px,30vw,200px); font-weight:600; letter-spacing:0.04em; line-height:0.9;
+    transition:transform .4s ease; }
+  body.fired .mark { transform:scale(1.12); }
+  .state { font-size:11px; letter-spacing:0.4em; text-transform:uppercase; opacity:0.5; }
+  .big { font-size:clamp(20px,5vw,30px); font-weight:200; letter-spacing:0.06em; min-height:1.4em; }
+  .count { font-size:clamp(48px,16vw,120px); font-weight:600; font-variant-numeric:tabular-nums; line-height:1; }
+  .sub { font-size:11px; letter-spacing:0.2em; opacity:0.45; max-width:320px; line-height:1.7; }
+  .start { font-size:12px; letter-spacing:0.3em; text-transform:uppercase; padding:18px 36px;
+    border:1px solid var(--gold); color:var(--gold); background:transparent; font-family:inherit;
+    cursor:pointer; border-radius:2px; }
+  .start:active { background:var(--gold); color:var(--black); }
+  .chan { display:flex; gap:8px; margin-top:6px; }
+  .chan button { font-size:10px; letter-spacing:0.2em; text-transform:uppercase; padding:10px 16px;
+    border:1px solid var(--line); background:transparent; color:var(--white); font-family:inherit;
+    cursor:pointer; opacity:0.5; }
+  .chan button.on { opacity:1; border-color:var(--gold); color:var(--gold); }
+  .diag { position:fixed; bottom:10px; left:0; right:0; font-size:9px; opacity:0.3; letter-spacing:0.1em;
+    font-family:'SF Mono',ui-monospace,monospace; }
+</style>
+</head>
+<body id="b">
+  <div class="mark" id="mark">無</div>
+  <div id="stage">
+    <div class="state">無音祭 · sync</div>
+    <div class="big" id="msg">音に入る準備を。</div>
+  </div>
+  <button class="start" id="startBtn">音に入る</button>
+  <div class="chan" id="chan" style="display:none">
+    <button data-ch="0" class="on">無</button>
+    <button data-ch="1">間</button>
+    <button data-ch="2">無限</button>
+  </div>
+  <div class="sub" id="sub">ヘッドホンを着けて、ボタンを押す。<br>合図で、全員の端末が一斉に鳴る。</div>
+  <div class="diag" id="diag">—</div>
+
+<script>
+(function(){
+  // ── audio engine (WebAudio; volume hard-capped for hearing safety) ──
+  let ctx = null, master = null, started = false, channel = 0;
+  const MAX_GAIN = 0.32; // hard cap — never exceed (headphone safety)
+  let droneNodes = [];
+
+  function ensureCtx(){
+    if(ctx) return;
+    ctx = new (window.AudioContext||window.webkitAudioContext)();
+    master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
+  }
+
+  // Three ambient "channels" = 無 / 間 / 無限. Pure synthesis (no assets).
+  const CH = [
+    {name:'無',   freqs:[110, 164.81], type:'sine'},      // calm fifth
+    {name:'間',   freqs:[98, 146.83, 220], type:'triangle'}, // sparse
+    {name:'無限', freqs:[130.81, 196, 261.63], type:'sine'}, // rising
+  ];
+
+  function startDrone(ch){
+    stopDrone();
+    channel = ch;
+    const spec = CH[ch];
+    spec.freqs.forEach((f,i)=>{
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = spec.type; o.frequency.value = f;
+      g.gain.value = (0.5/spec.freqs.length);
+      // gentle detune drift
+      o.detune.value = (i-1)*4;
+      o.connect(g); g.connect(master);
+      o.start();
+      droneNodes.push(o); droneNodes.push(g);
+    });
+  }
+  function stopDrone(){ droneNodes.forEach(n=>{try{n.stop&&n.stop();n.disconnect&&n.disconnect();}catch(e){}}); droneNodes=[]; }
+
+  function fadeTo(v, sec){
+    if(!master) return;
+    const now = ctx.currentTime;
+    master.gain.cancelScheduledValues(now);
+    master.gain.setValueAtTime(master.gain.value, now);
+    master.gain.linearRampToValueAtTime(Math.min(v,MAX_GAIN), now+sec);
+  }
+
+  // The synchronized "一斉発音" hit: a swell + bell at the exact fire time.
+  function fireHit(){
+    if(!ctx) return;
+    const t = ctx.currentTime;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(MAX_GAIN, t+0.04);
+    g.gain.exponentialRampToValueAtTime(0.0008, t+3.2);
+    g.connect(ctx.destination);
+    [523.25, 783.99, 1046.5].forEach((f,i)=>{
+      const o = ctx.createOscillator();
+      o.type = i===0?'sine':'triangle'; o.frequency.value=f;
+      const og=ctx.createGain(); og.gain.value=0.5/(i+1);
+      o.connect(og); og.connect(g); o.start(t); o.stop(t+3.4);
+    });
+    document.getElementById('b').classList.add('fired');
+    setTimeout(()=>document.getElementById('b').classList.remove('fired'), 2600);
+  }
+
+  // ── server-time sync (NTP-ish offset) ──
+  let offset = 0;        // serverNow - clientNow (ms)
+  let firedFor = 0;      // fire_ms we already fired, so we don't double-fire
+  async function syncClock(){
+    // 3 samples, keep the one with smallest round-trip.
+    let best = null;
+    for(let i=0;i<3;i++){
+      const t0 = Date.now();
+      try {
+        const r = await fetch('/api/fest/sync?ts='+t0, {cache:'no-store'});
+        const t1 = Date.now();
+        const j = await r.json();
+        const rtt = t1 - t0;
+        if(!best || rtt < best.rtt){
+          best = {rtt, off: j.server_ms - (t0 + rtt/2), state:j};
+        }
+      } catch(e){}
+    }
+    if(best){ offset = best.off; return best.state; }
+    return null;
+  }
+
+  function serverNow(){ return Date.now() + offset; }
+
+  function setMsg(m){ document.getElementById('msg').innerHTML = m; }
+
+  // ── poll loop: read shared fire time, schedule local fire ──
+  let lastState = '';
+  async function poll(){
+    let st = null;
+    try { const r = await fetch('/api/fest/sync', {cache:'no-store'}); st = await r.json(); } catch(e){}
+    if(!st){ setTimeout(poll, 1200); return; }
+    const body = document.getElementById('b');
+    const fire = st.fire_ms|0;
+    const now = serverNow();
+
+    if(st.killed){
+      body.className = 'killed';
+      setMsg('停止しました。');
+      fadeTo(0, 0.4);
+      document.getElementById('diag').textContent = 'STOPPED';
+      setTimeout(poll, 1500); return;
+    }
+
+    if(started && st.channel != null && st.channel !== channel && st.channel >=0){
+      // operator can broadcast a channel change
+      startDrone(st.channel);
+      document.querySelectorAll('#chan button').forEach(b=>b.classList.toggle('on', +b.dataset.ch===st.channel));
+    }
+
+    if(fire > 0 && fire > firedFor){
+      const dt = fire - now;
+      if(dt > 0){
+        body.className = 'armed';
+        const secs = Math.ceil(dt/1000);
+        if(dt <= 10000){
+          document.getElementById('stage').innerHTML =
+            '<div class="state">まもなく</div><div class="count">'+secs+'</div>';
+        } else {
+          setMsg('合図を待っています…');
+        }
+        // schedule precise local fire
+        if(dt <= 1500){
+          firedFor = fire;
+          const localFireAt = performance.now() + dt;
+          const tick = ()=>{ if(performance.now() >= localFireAt){ doFire(); } else { requestAnimationFrame(tick); } };
+          requestAnimationFrame(tick);
+        }
+      }
+    } else if(fire === 0 && started){
+      body.className = '';
+      document.getElementById('stage').innerHTML =
+        '<div class="state">無音祭 · sync</div><div class="big" id="msg">音の中にいます。</div>';
+    }
+    document.getElementById('diag').textContent =
+      'offset '+Math.round(offset)+'ms · ch'+channel+(fire>0?(' · fire in '+Math.max(0,Math.round((fire-serverNow())/1000))+'s'):'');
+    setTimeout(poll, 700);
+  }
+
+  function doFire(){
+    fireHit();
+    document.getElementById('stage').innerHTML =
+      '<div class="state">今</div><div class="big">— 無音祭 —</div>';
+    setTimeout(()=>{
+      document.getElementById('stage').innerHTML =
+        '<div class="state">無音祭 · sync</div><div class="big">音の中にいます。</div>';
+    }, 3000);
+  }
+
+  // ── start (requires user gesture for audio) ──
+  document.getElementById('startBtn').addEventListener('click', async ()=>{
+    ensureCtx();
+    if(ctx.state==='suspended') await ctx.resume();
+    started = true;
+    startDrone(0);
+    fadeTo(0.18, 2.5);
+    document.getElementById('startBtn').style.display='none';
+    document.getElementById('chan').style.display='flex';
+    setMsg('音の中にいます。');
+    await syncClock();
+    poll();
+  });
+
+  document.querySelectorAll('#chan button').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      if(!started) return;
+      startDrone(+b.dataset.ch);
+      document.querySelectorAll('#chan button').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on');
+    });
+  });
+
+  // re-sync clock every 30s
+  setInterval(()=>{ if(started) syncClock(); }, 30000);
+})();
+</script>
+</body>
+</html>

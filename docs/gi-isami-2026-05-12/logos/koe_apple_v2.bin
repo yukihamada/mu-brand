@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>404 — ページが見つかりません | Koe Device</title>
+<meta name="theme-color" content="#0a0f1a">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'Helvetica Neue','Hiragino Sans',sans-serif;
+  background:#07090f;color:#f1f5f9;-webkit-font-smoothing:antialiased;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:2rem}
+.wrap{max-width:480px}
+.code{font-size:7rem;font-weight:100;letter-spacing:-0.04em;color:#1f2937;line-height:1;margin-bottom:1rem}
+h1{font-size:1.4rem;font-weight:300;margin-bottom:0.6rem}
+p{color:#64748b;font-size:0.9rem;line-height:1.7;margin-bottom:2rem}
+.links{display:flex;flex-wrap:wrap;gap:0.6rem;justify-content:center}
+a{display:inline-flex;align-items:center;gap:0.3rem;padding:0.6rem 1.2rem;border-radius:9px;
+  font-size:0.82rem;border:1px solid rgba(255,255,255,0.1);color:#f1f5f9;text-decoration:none;
+  transition:border-color 0.2s}
+a:hover{border-color:rgba(16,185,129,0.4);color:#10B981}
+a.home{background:#10B981;color:#000;border-color:transparent}
+a.home:hover{opacity:0.88}
+</style>
+  <link rel="stylesheet" href="/assets/koe-nav.css">
+  <script src="/assets/koe-nav.js" defer></script>
+  <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body class="koe-with-nav">
+<div id="koe-nav"></div>
+<div class="wrap">
+  <div class="code">404</div>
+  <h1><span class="ja">ページが見つかりません</span><span class="en">Page not found</span></h1>
+  <p><span class="ja">お探しのページは移動・削除されたか、URLが間違っている可能性があります。</span><span class="en">The page you're looking for may have moved, been removed, or the URL might be incorrect.</span></p>
+  <div class="links">
+    <a href="/" class="home">← <span class="ja">トップへ</span><span class="en">Home</span></a>
+    <a href="/products"><span class="ja">製品一覧</span><span class="en">Products</span></a>
+    <a href="/status"><span class="ja">ステータス</span><span class="en">Status</span></a>
+    <a href="/coin">COIN</a>
+    <a href="/guide">GUIDE</a>
+  </div>
+</div>
+</body>
+</html>

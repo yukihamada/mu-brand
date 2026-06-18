@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MU って何？ — ホルダーのためのやさしい説明 | wearmu.com</title>
+<meta name="description" content="MU は在庫を持たないTシャツブランド。デザインは弟子屈の気温・月相・時刻を種に AI が生成するので、同じものは二度と作られません。MUGEN（毎時）→ MUON（毎日）→ MA（35日に1つ）の3層、Constitution NFT、利益の分配まで、ホルダー向けにやさしく説明します。">
+<meta name="keywords" content="MU, wearmu, MUGEN, MUON, MA, Master Artifact, Constitution NFT, ホルダー, 弟子屈, AI Tシャツ">
+<link rel="canonical" href="https://wearmu.com/holders">
+
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#0A0A0A">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wearmu.com/holders">
+<meta property="og:title" content="MU って何？ — ホルダーのためのやさしい説明">
+<meta property="og:description" content="在庫を持たないTシャツブランド。同じものは二度と作られない。MUGEN → MUON → MA の3層と、ホルダー還元のしくみ。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:site_name" content="MU">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU って何？ — ホルダーのためのやさしい説明">
+<meta name="twitter:description" content="在庫を持たないTシャツブランド。同じものは二度と作られない。MUGEN → MUON → MA の3層。">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
+
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.62);--y:#e6c449;--card:#141414;--line:rgba(255,255,255,0.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.9;font-size:16px;-webkit-font-smoothing:antialiased}
+a{color:var(--y);text-decoration:none}
+a:hover{text-decoration:underline;text-underline-offset:3px}
+em{color:var(--y);font-style:normal}
+strong{color:var(--fg);font-weight:500}
+
+nav{position:sticky;top:0;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);border-bottom:1px solid var(--line);padding:16px 28px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}
+nav a{color:var(--fg);font-size:11px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.85}
+nav .logo{font-weight:700;letter-spacing:0.5em;font-size:14px}
+nav .nav-cta{background:var(--y);color:#000;padding:8px 14px;border-radius:2px;font-weight:700;opacity:1}
+
+main{max-width:880px;margin:0 auto;padding:0 24px}
+
+/* HERO */
+.hero{padding:96px 0 72px;border-bottom:1px solid var(--line)}
+.hero-eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.42em;text-transform:uppercase;color:var(--y);margin-bottom:24px}
+h1{font-size:clamp(28px,5vw,46px);font-weight:300;line-height:1.32;letter-spacing:0.01em;margin-bottom:24px}
+.hero-lede{font-size:clamp(15px,1.8vw,18px);line-height:1.95;color:var(--mute);margin-bottom:18px;max-width:680px}
+
+/* SECTION */
+section{padding:80px 0;border-bottom:1px solid var(--line)}
+section:last-of-type{border-bottom:0}
+.sec-eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);margin-bottom:16px}
+h2{font-size:clamp(22px,3.2vw,32px);font-weight:300;line-height:1.4;letter-spacing:0.01em;margin-bottom:18px}
+.sec-lede{color:var(--mute);font-size:15px;line-height:1.95;margin-bottom:36px;max-width:680px}
+
+/* 3 LAYERS */
+.layers{display:grid;grid-template-columns:repeat(3,1fr);gap:2px}
+.layer{background:var(--card);padding:32px 28px}
+.layer .n{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;color:var(--y);margin-bottom:14px}
+.layer h3{font-size:18px;font-weight:400;line-height:1.45;letter-spacing:0.02em;margin-bottom:14px;color:var(--fg)}
+.layer p{font-size:13px;line-height:1.95;color:var(--mute)}
+.layer .meta{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10.5px;letter-spacing:0.12em;color:var(--mute);margin-top:14px;padding-top:10px;border-top:1px dashed rgba(255,255,255,0.08)}
+
+/* HOLD ITEMS */
+.holds{display:grid;grid-template-columns:repeat(2,1fr);gap:2px;margin-top:8px}
+.hold{background:var(--card);padding:30px 28px;display:flex;flex-direction:column;gap:12px}
+.hold .name{font-size:13px;letter-spacing:0.22em;text-transform:uppercase;color:var(--y);font-family:'Helvetica Neue',Arial,sans-serif;font-weight:600}
+.hold h3{font-size:18px;font-weight:400;line-height:1.45;color:var(--fg)}
+.hold p{font-size:13px;line-height:1.9;color:var(--mute);flex:1}
+.hold a.go{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);margin-top:6px}
+
+/* SPLIT TABLE */
+.split{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px}
+.split th,.split td{text-align:left;padding:14px 16px;border-bottom:1px solid var(--line)}
+.split th{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:var(--mute);font-weight:400}
+.split td.pct{text-align:right;font-variant-numeric:tabular-nums;color:var(--y);font-family:'Helvetica Neue',Arial,sans-serif;white-space:nowrap}
+.split tr.hl td{color:var(--fg)}
+.split tr.hl td.pct{font-weight:700}
+
+/* QUOTE */
+.quote{background:var(--card);border-left:2px solid var(--y);padding:28px 30px;margin-top:8px;font-size:15px;line-height:2.05;color:var(--fg)}
+
+footer{border-top:1px solid var(--line);padding:42px 28px;text-align:center;color:var(--mute);font-size:11px;letter-spacing:0.16em;font-family:'Helvetica Neue',Arial,sans-serif}
+footer a{color:var(--mute);margin:0 8px}
+footer a:hover{color:var(--y)}
+
+@media(max-width:760px){
+  nav{padding:14px 18px}
+  main{padding:0 18px}
+  .hero{padding:62px 0 48px}
+  section{padding:54px 0}
+  .layers,.holds{grid-template-columns:1fr}
+}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">━◯━ MU</a>
+  <div style="display:flex;gap:14px;align-items:center">
+    <a href="/about" style="color:#aaa;font-size:12px;letter-spacing:0.18em;text-transform:uppercase;text-decoration:none">About</a>
+    <a href="/you" class="nav-cta">あなた専用に 1 着</a>
+  </div>
+</nav>
+
+<main>
+
+<!-- ── 1. HERO ────────────────────────────────────────────── -->
+<div class="hero">
+  <div class="hero-eyebrow">For holders · MU って何？</div>
+  <h1>MU は、<br>在庫を持たない<br>T シャツブランドです。</h1>
+  <p class="hero-lede">
+    注文が入ってから作って送る (POD) ので、 売れ残りもゴミも出ません。 デザインは AI が <em>弟子屈 (てしかが) のいまの気温・月の満ち欠け・時刻</em> を種 (seed) にして生成します。 だから <strong>同じ条件は二度と来ない＝同じデザインも二度と作られません。</strong> これが MU の核です。
+  </p>
+  <p class="hero-lede" style="opacity:0.6;font-size:14px">
+    このページは、 MU を持っている人 (ホルダー) が「MU って何？」 を 30 秒で説明できるようにするための、 やさしいまとめです。
+  </p>
+</div>
+
+<!-- ── 2. 3 LAYERS ────────────────────────────────────────── -->
+<section>
+  <div class="sec-eyebrow">01 — デザインの3つの層</div>
+  <h2>ここだけ覚えれば OK。</h2>
+  <p class="sec-lede">
+    レア度は「値段」 ではなく <em>生成される頻度</em> の話です。 少なく生まれるものほど希少になります。
+  </p>
+  <div class="layers">
+    <div class="layer">
+      <div class="n">毎時 1 着</div>
+      <h3>MUGEN 無限</h3>
+      <p>毎時 00 分、 その時刻＋弟子屈の気温を読んで AI がデザインを生成。 気軽に入れる入口です。 早く買うほど安い bonding curve。</p>
+      <div class="meta">¥4,900〜 · 108 枚 / drop · 完売で永久終了</div>
+    </div>
+    <div class="layer">
+      <div class="n">毎日 1 案</div>
+      <h3>MUON 無音</h3>
+      <p>0:00 JST に翌日のデザインを 1 案だけ生成。 弟子屈の <em>気温 (°C) = 在庫数</em>。 21°C なら 21 着まで。 寒い日ほど手に入りにくい。</p>
+      <div class="meta">¥6,800 · 1 日 1 案 · 気温 = 在庫数</div>
+    </div>
+    <div class="layer">
+      <div class="n">35 日に 1 つ</div>
+      <h3>間 MA — Master Artifact</h3>
+      <p>35 日に 1 つだけ、 AI が「これは特別」 と判断したデザインを降ろす最上位の 1 点もの。 7 日間オークション、 落札者ただ 1 人。 NFT (Solana) で証明書付き。</p>
+      <div class="meta">¥30,000〜 · 1 of 1 · オークション</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 3. WHAT YOU HOLD ───────────────────────────────────── -->
+<section>
+  <div class="sec-eyebrow">02 — あなたが持っているもの</div>
+  <h2>「買って終わり」 ではありません。</h2>
+  <p class="sec-lede">
+    MU には、 持つ人 (ホルダー) のための仕組みがあります。 中心にいるのが MA ホルダーです。
+  </p>
+  <div class="holds">
+    <div class="hold">
+      <div class="name">Constitution NFT</div>
+      <h3>MU の意思決定に参加する鍵</h3>
+      <p>MU の憲法 (§1–) を NFT 化したもの。 持っていると <strong>DAO 投票権</strong>＋<strong>MA 自動 unlock</strong>＋各種特典。 mint の gas のみで取得できます。</p>
+      <a href="/constitution" class="go">→ Constitution</a>
+    </div>
+    <div class="hold">
+      <div class="name">MA — Master Artifact</div>
+      <h3>あなたが「MA ホルダー」 になる</h3>
+      <p>35 日に 1 つのオークションで落札するか、 「MUGEN を 1 着以上＋Constitution NFT」 の組み合わせで <em>静かに発行</em> されます。 これを持つ人が、 このページでいう MA ホルダーです。</p>
+      <a href="/ma" class="go">→ MA を見る</a>
+    </div>
+    <div class="hold">
+      <div class="name">PT — ポイント</div>
+      <h3>買った分だけ貯まる</h3>
+      <p>MUGEN / MUON を買った金額分の PT が貯まります (¥1 = 1 PT)。 PT を使うと自分でデザインを作れます (1 SKU 作成 = 30 PT)。</p>
+      <a href="/you" class="go">→ /you で作る</a>
+    </div>
+    <div class="hold">
+      <div class="name">ENAI — utility</div>
+      <h3>MU エコ内で使えるクレジット</h3>
+      <p>1 ENAI = 10 credits。 /you の生成や MUON / MUGEN の購入に充当可。 <strong>法定通貨や他暗号資産への換金性はありません</strong> — MU エコ内だけで使う utility です。</p>
+      <a href="/about" class="go">→ くわしく</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── 4. PROFIT SPLIT ────────────────────────────────────── -->
+<section>
+  <div class="sec-eyebrow">03 — お金の流れ</div>
+  <h2>利益の使い道は、 全部公開しています。</h2>
+  <p class="sec-lede">
+    Constitution §28 で、 税引後利益を毎期の監査確定後に 6 分割すると定めています (<a href="/profit-split">/profit-split</a> が一次ソース)。 ポイントは 2 つ — <strong>半分は寄付</strong>、 そして <strong>MA ホルダーには利益の 10% が MU クーポンで還る</strong>。
+  </p>
+  <table class="split">
+    <thead><tr><th>セグメント</th><th style="text-align:right">比率</th></tr></thead>
+    <tbody>
+      <tr class="hl"><td>寄付 (弟子屈町・企業版ふるさと納税)</td><td class="pct">50%</td></tr>
+      <tr><td>Yuki 報酬</td><td class="pct">10%</td></tr>
+      <tr><td>株主配当</td><td class="pct">10%</td></tr>
+      <tr class="hl"><td>MA ホルダー還元 (MU クーポン)</td><td class="pct">10%</td></tr>
+      <tr><td>MU Community Fund (公募 grant)</td><td class="pct">10%</td></tr>
+      <tr><td>運転備金 (内部留保)</td><td class="pct">10%</td></tr>
+    </tbody>
+  </table>
+  <p class="sec-lede" style="margin-top:28px;margin-bottom:0">
+    つまり「持っていると、 ブランドが伸びるほど還元が増える」 設計です。 還元・寄付の実績は append-only の台帳で公開しています (<a href="/donations">/donations</a>)。 過去エントリは消しません。
+  </p>
+</section>
+
+<!-- ── 5. 30秒トーク ──────────────────────────────────────── -->
+<section>
+  <div class="sec-eyebrow">04 — 30 秒で説明する</div>
+  <h2>誰かに MU を聞かれたら、 これを。</h2>
+  <div class="quote">
+    MU は在庫を持たない T シャツブランド。 デザインは弟子屈の気温・月相・時刻を種に AI が生成するから、 同じものは二度と作られない。 レア度は MUGEN (毎時) → MUON (毎日) → MA (35 日に 1 つ) の 3 層。 Constitution NFT を持つと DAO 投票権と MA が自動で開いて、 利益の 10% が MA ホルダーに MU クーポンで還る。 しかも利益の半分は弟子屈町へ寄付。 ぜんぶ数字を公開してる。
+  </div>
+</section>
+
+</main>
+
+<footer>
+  MU · wearmu.com ·
+  <a href="/about">MU とは</a>
+  <a href="/transparency">数字</a>
+  <a href="/constitution">Constitution</a>
+  <a href="/profit-split">利益分配</a>
+  <a href="/donations">寄付台帳</a>
+  <a href="https://github.com/yukihamada/mu-brand">GitHub</a>
+  <a href="mailto:info@enablerdao.com">info@enablerdao.com</a>
+  <div style="margin-top:14px;font-size:10px;opacity:0.55">運営: 株式会社イネブラ (Enabler Inc.) · 〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5F KS フロア · 代表 濱田優貴</div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,1638 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>MU × YOU — 毎朝、あなただけのTシャツ案が届く | wearmu.com</title>
+<meta name="description" content="あなたの好み（気分・色・着る場所）を1分で登録。翌朝から毎日、AIが生成したコラボTシャツの案が一枚ずつ届きます。気に入った日だけ、その一着を仕立てる。">
+<meta name="theme-color" content="#0A0A0A">
+<link rel="canonical" href="https://wearmu.com/you">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/you">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/you?lang=en">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/you">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.json">
+
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://wearmu.com/you">
+<meta property="og:title" content="MU × YOU — 毎朝、あなただけのTシャツ案が届く">
+<meta property="og:description" content="あなたの好みを1分で登録。翌朝から毎日、AIが生成したコラボ案が一枚ずつ届く。気に入った日だけ仕立てる。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU × YOU — 毎朝、あなただけのTシャツ案が届く">
+<meta name="twitter:description" content="あなたの好みを1分で登録。翌朝から毎日、AIが生成したコラボ案が一枚ずつ届く。">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
+
+<style>
+:root{--k:#0A0A0A;--w:#F5F5F0;--r:#C8362C;--g:#1C1C1C;--d:#2A2A2A;--a:#888;--y:#e6c449}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--k);color:var(--w);font-family:'Helvetica Neue',Arial,sans-serif;
+  font-weight:200;-webkit-font-smoothing:antialiased;overflow-x:hidden;line-height:1.6}
+a{color:inherit;text-decoration:none}
+button{cursor:pointer;font-family:inherit;border:none;background:none;color:inherit}
+
+/* NAV */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:16px 32px;background:rgba(10,10,10,0.92);backdrop-filter:blur(12px);
+  border-bottom:1px solid rgba(255,255,255,0.05)}
+.nav-logo{font-size:14px;font-weight:700;letter-spacing:0.45em;flex-shrink:0}
+.nav-back{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5;
+  transition:opacity 0.2s}
+.nav-back:hover{opacity:1}
+
+/* HERO */
+#hero{min-height:100vh;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;padding:120px 32px 80px;position:relative;text-align:center}
+.hero-bg{position:absolute;inset:0;background:
+  radial-gradient(ellipse at 30% 20%,rgba(230,196,73,0.08),transparent 50%),
+  radial-gradient(ellipse at 70% 80%,rgba(200,54,44,0.06),transparent 55%);
+  pointer-events:none}
+.hero-eyebrow{font-size:9px;letter-spacing:0.5em;text-transform:uppercase;opacity:0.6;
+  margin-bottom:32px;display:flex;align-items:center;gap:14px;justify-content:center}
+.hero-eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--y);
+  animation:pulse-dot 2s infinite}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.55;transform:scale(0.8)}}
+.hero-title{font-size:clamp(48px,9vw,116px);font-weight:200;letter-spacing:0.06em;
+  line-height:1.02;margin-bottom:32px;max-width:1100px}
+.hero-title .x{font-weight:300;opacity:0.5;margin:0 0.18em}
+.hero-title .you{background:linear-gradient(135deg,var(--y) 0%,#fff 60%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;font-weight:300}
+.hero-sub{font-size:15px;font-weight:300;line-height:1.95;opacity:0.7;
+  max-width:620px;margin:0 auto 56px}
+.hero-cta{display:inline-flex;align-items:center;gap:14px;background:var(--w);
+  color:var(--k);padding:18px 36px;font-size:10px;letter-spacing:0.35em;
+  text-transform:uppercase;font-weight:700;transition:transform 0.2s;cursor:pointer}
+.hero-cta:hover{transform:translateY(-2px)}
+.hero-cta svg{width:16px;height:16px}
+.hero-meta{margin-top:64px;display:flex;gap:64px;flex-wrap:wrap;justify-content:center}
+.hero-meta .m{display:flex;flex-direction:column;gap:6px;align-items:center}
+.hero-meta .v{font-size:24px;font-weight:200;letter-spacing:0.04em;color:var(--y)}
+.hero-meta .l{font-size:8px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.5}
+
+/* HOW */
+.how{padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05)}
+.how-inner{max-width:1100px;margin:0 auto}
+.how-eyebrow{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;opacity:0.55;
+  margin-bottom:24px;text-align:center}
+.how-title{font-size:clamp(30px,5vw,56px);font-weight:200;letter-spacing:0.04em;
+  text-align:center;margin-bottom:80px;line-height:1.15}
+.how-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(255,255,255,0.06)}
+.how-step{background:var(--k);padding:48px 36px;display:flex;flex-direction:column;gap:20px;
+  position:relative;min-height:280px}
+.how-num{font-size:11px;letter-spacing:0.35em;text-transform:uppercase;color:var(--y);opacity:0.85}
+.how-step-title{font-size:22px;font-weight:300;letter-spacing:0.03em;line-height:1.35}
+.how-step-desc{font-size:13px;opacity:0.65;line-height:1.85;flex:1}
+.how-step-meta{font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.4;
+  padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)}
+
+/* FORM */
+.form-wrap{padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05);
+  background:linear-gradient(180deg,#0d0d0d 0%,#0a0a0a 100%)}
+.form-inner{max-width:780px;margin:0 auto}
+.form-eyebrow{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);
+  opacity:0.85;margin-bottom:18px;text-align:center}
+.form-title{font-size:clamp(28px,4.6vw,48px);font-weight:200;letter-spacing:0.03em;
+  text-align:center;margin-bottom:18px;line-height:1.2}
+.form-sub{font-size:13px;opacity:0.6;line-height:1.85;text-align:center;margin-bottom:64px;
+  max-width:560px;margin-left:auto;margin-right:auto}
+
+.field{margin-bottom:36px}
+.label{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.7;
+  margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.label .req{color:var(--y);font-size:8px}
+.input{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+  color:var(--w);padding:16px 18px;font-size:13px;font-family:inherit;font-weight:300;
+  outline:none;width:100%;transition:border-color 0.2s,background 0.2s}
+.input:focus{border-color:rgba(230,196,73,0.5);background:rgba(255,255,255,0.05)}
+.input::placeholder{opacity:0.4}
+textarea.input{resize:vertical;min-height:88px;line-height:1.7}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  padding:10px 16px;font-size:11px;letter-spacing:0.08em;cursor:pointer;
+  transition:all 0.18s;user-select:none;font-weight:300}
+.chip:hover{border-color:rgba(255,255,255,0.25);background:rgba(255,255,255,0.06)}
+.chip.on{background:rgba(230,196,73,0.12);border-color:var(--y);color:var(--y)}
+
+.size-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.size{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+  padding:14px;text-align:center;font-size:11px;letter-spacing:0.18em;
+  cursor:pointer;transition:all 0.18s;font-weight:400}
+.size:hover{border-color:rgba(255,255,255,0.2)}
+.size.on{background:var(--w);color:var(--k);border-color:var(--w)}
+
+.submit{width:100%;background:var(--w);color:var(--k);padding:20px;
+  font-size:11px;letter-spacing:0.4em;text-transform:uppercase;font-weight:700;
+  margin-top:12px;transition:transform 0.2s,opacity 0.2s;cursor:pointer}
+.submit:hover{transform:translateY(-1px)}
+.submit:disabled{opacity:0.4;cursor:wait;transform:none}
+.fine{font-size:10px;opacity:0.4;text-align:center;margin-top:18px;letter-spacing:0.05em;
+  line-height:1.7}
+
+/* PREVIEW (shown after subscribe) */
+#preview{display:none;padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05)}
+#preview.show{display:block}
+.preview-inner{max-width:1100px;margin:0 auto}
+.preview-eyebrow{font-size:9px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);
+  margin-bottom:18px;text-align:center}
+.preview-title{font-size:clamp(28px,4.5vw,48px);font-weight:200;letter-spacing:0.03em;
+  text-align:center;margin-bottom:48px;line-height:1.2}
+.preview-card{display:grid;grid-template-columns:1fr 1fr;gap:0;
+  background:var(--g);border:1px solid rgba(255,255,255,0.06);overflow:hidden}
+.preview-img{aspect-ratio:1;background:#000 center/cover no-repeat;position:relative;overflow:hidden}
+.preview-img::after{content:'';position:absolute;inset:0;
+  background:linear-gradient(180deg,transparent 60%,rgba(0,0,0,0.4));pointer-events:none}
+.preview-img-stamp{position:absolute;top:18px;left:18px;background:rgba(0,0,0,0.55);
+  padding:6px 12px;font-size:8px;letter-spacing:0.3em;text-transform:uppercase;
+  color:var(--y);z-index:2;backdrop-filter:blur(8px)}
+.preview-img-loading{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  flex-direction:column;gap:14px;background:rgba(10,10,10,0.55);z-index:3;backdrop-filter:blur(2px)}
+.preview-img-loading.show{display:flex}
+.preview-img-loading .ring{width:38px;height:38px;border:1px solid rgba(255,255,255,0.18);
+  border-top-color:var(--y);border-radius:50%;animation:spin 1.1s linear infinite}
+.preview-img-loading .lbl{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.8}
+.preview-img-loading .sub{font-size:9px;letter-spacing:0.18em;opacity:0.5;max-width:240px;text-align:center;line-height:1.7}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* SHARE BAR */
+.share-bar{margin-top:24px;padding:18px;background:rgba(230,196,73,0.06);
+  border:1px solid rgba(230,196,73,0.18);display:none;flex-direction:column;gap:12px}
+.share-bar.show{display:flex}
+.share-bar .h{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.85}
+.share-row{display:flex;gap:8px;align-items:stretch}
+.share-row .input{flex:1;font-family:monospace;font-size:12px}
+.share-row .btn{flex:0 0 auto;padding:14px 18px;font-size:9px}
+.slug-edit{display:flex;gap:8px;align-items:stretch;margin-top:6px}
+.slug-edit .pre{display:flex;align-items:center;padding:0 14px;font-size:11px;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);
+  border-right:none;color:rgba(255,255,255,0.5);font-family:monospace}
+.slug-edit input{flex:1;border-left:none;font-family:monospace;font-size:12px}
+.slug-edit .btn{flex:0 0 auto;font-size:9px;padding:0 18px;letter-spacing:0.25em}
+.slug-msg{font-size:10px;opacity:0.55;line-height:1.7}
+.slug-msg.ok{color:#7ee27e}.slug-msg.err{color:var(--r);opacity:0.9}
+.share-sns{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.sns{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;padding:11px 14px;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.1);
+  flex:1;min-width:96px;text-align:center;cursor:pointer;transition:all 0.15s;font-weight:600;color:var(--w)}
+.sns:hover{border-color:var(--y);color:var(--y);background:rgba(230,196,73,0.06)}
+.preview-meta{padding:48px 44px;display:flex;flex-direction:column;gap:24px}
+.preview-day{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55}
+.preview-name{font-size:28px;font-weight:200;letter-spacing:0.03em;line-height:1.25}
+.preview-prompt{font-size:12px;opacity:0.6;line-height:1.95;font-style:italic;
+  border-left:2px solid var(--y);padding-left:16px}
+.preview-row{display:flex;gap:24px;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;
+  opacity:0.55;padding-top:16px;border-top:1px solid rgba(255,255,255,0.05)}
+.preview-row span b{color:var(--w);opacity:1;font-weight:400;letter-spacing:0.05em;text-transform:none}
+.preview-actions{display:flex;gap:10px;margin-top:8px;flex-wrap:wrap}
+.btn{padding:14px 22px;font-size:9px;letter-spacing:0.3em;text-transform:uppercase;
+  font-weight:600;cursor:pointer;transition:all 0.18s;flex:1;text-align:center;
+  border:1px solid transparent}
+.btn-primary{background:var(--y);color:#000}
+.btn-primary:hover{background:#fff}
+.btn-secondary{background:transparent;border-color:rgba(255,255,255,0.15);color:var(--w);opacity:0.75}
+.btn-secondary:hover{border-color:var(--w);opacity:1}
+.btn-ghost{background:transparent;border-color:rgba(255,255,255,0.1);color:var(--w);opacity:0.5;flex:0 0 auto}
+.btn-ghost:hover{opacity:1}
+
+/* HISTORY */
+#history{display:none;padding:0 32px 120px}
+#history.show{display:block}
+.history-inner{max-width:1100px;margin:0 auto}
+.history-title{font-size:11px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.6;
+  margin-bottom:32px}
+.history-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.history-card{background:var(--g);aspect-ratio:1;position:relative;overflow:hidden;cursor:pointer;
+  transition:transform 0.2s}
+.history-card:hover{transform:scale(1.02)}
+.history-img{width:100%;height:100%;background:#000 center/cover no-repeat}
+.history-meta{position:absolute;bottom:0;left:0;right:0;padding:12px 14px;
+  background:linear-gradient(180deg,transparent,rgba(0,0,0,0.85));font-size:9px;letter-spacing:0.18em}
+.history-meta b{color:var(--y);font-weight:600;text-transform:uppercase}
+.history-empty{font-size:12px;opacity:0.4;text-align:center;padding:40px;
+  border:1px dashed rgba(255,255,255,0.08)}
+
+/* FAQ */
+.faq{padding:120px 32px;border-top:1px solid rgba(255,255,255,0.05)}
+.faq-inner{max-width:780px;margin:0 auto}
+.faq-title{font-size:11px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;
+  margin-bottom:24px;text-align:center}
+.faq-h{font-size:clamp(28px,4vw,40px);font-weight:200;letter-spacing:0.03em;text-align:center;
+  margin-bottom:64px;line-height:1.2}
+details{border-top:1px solid rgba(255,255,255,0.06);padding:22px 0}
+details:last-of-type{border-bottom:1px solid rgba(255,255,255,0.06)}
+summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;
+  align-items:center;font-size:14px;font-weight:300;letter-spacing:0.02em;line-height:1.5}
+summary::-webkit-details-marker{display:none}
+summary::after{content:'+';font-size:22px;font-weight:200;opacity:0.5;flex-shrink:0;margin-left:24px}
+details[open] summary::after{content:'−'}
+.answer{font-size:13px;opacity:0.65;line-height:1.95;padding-top:18px;font-weight:300}
+
+/* FOOTER */
+footer{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.05);
+  display:flex;justify-content:space-between;align-items:center;gap:24px;flex-wrap:wrap;
+  font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.45}
+footer a:hover{opacity:1}
+
+/* TASTE EDIT */
+.taste-edit-bar{margin-top:48px;text-align:center;display:none}
+.taste-edit-bar.show{display:block}
+.taste-edit-bar a{font-size:10px;letter-spacing:0.3em;text-transform:uppercase;
+  opacity:0.55;border-bottom:1px solid rgba(255,255,255,0.15);padding-bottom:4px;cursor:pointer}
+.taste-edit-bar a:hover{opacity:1;border-color:var(--y);color:var(--y)}
+#taste-edit-form{display:none;margin-top:48px;padding:48px 28px;
+  background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.06);
+  max-width:780px;margin-left:auto;margin-right:auto}
+#taste-edit-form.show{display:block}
+#taste-edit-form .h{font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);
+  margin-bottom:14px}
+#taste-edit-form .sub{font-size:12px;opacity:0.55;line-height:1.85;margin-bottom:32px}
+
+/* TOAST */
+#toast{position:fixed;bottom:32px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--w);color:var(--k);padding:14px 28px;font-size:11px;
+  letter-spacing:0.2em;text-transform:uppercase;font-weight:600;
+  opacity:0;pointer-events:none;transition:all 0.3s;z-index:1000;white-space:nowrap}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{background:var(--r);color:#fff}
+
+@media(max-width:880px){
+  nav{padding:14px 18px}
+  .how-grid{grid-template-columns:1fr}
+  .preview-card{grid-template-columns:1fr}
+  .preview-meta{padding:32px 28px}
+  .hero-meta{gap:32px}
+  .form-wrap, .how, .faq{padding:80px 20px}
+  #preview{padding:80px 20px}
+  #history{padding:0 20px 80px}
+}
+</style>
+<script defer src="/mu-funnel.js"></script>
+<script defer src="/tracking.js"></script>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<!-- BANTO Google Ads conv tag (CID 5408218744) — wearmu.com/you is the LP
+     for "MU_YOU_Search_Registration_2026-05" campaign. Fires 会員登録
+     conversion (AW-17814724474/TfPQCOKOv9MbEPq-3K5C) on successful POST
+     to /api/you/subscribe. Independent from MU's AW-18007146784 wired
+     by tracking.js so both accounts get attribution. -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=AW-17814724474"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'AW-17814724474');
+  window.banto_report_signup = function(value){
+    try { gtag('event','conversion',{send_to:'AW-17814724474/TfPQCOKOv9MbEPq-3K5C',value:(value||1.0),currency:'JPY'}); } catch(_){}
+  };
+</script>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-logo">MU</a>
+  <a href="/" class="nav-back">← MU メイン</a>
+</nav>
+
+<!-- HERO -->
+<section id="hero">
+  <div class="hero-bg"></div>
+  <div class="hero-eyebrow"><span class="dot"></span>MU × YOU — Daily Collab Tee</div>
+  <h1 class="hero-title">MU<span class="x">×</span><span class="you">YOU</span></h1>
+  <p class="hero-sub">
+    あなたの好み（気分・色・着るシーン）を1分で登録。<br>
+    翌朝から毎日、AI が生成したコラボTシャツの案が一枚ずつ届きます。<br>
+    気に入った日だけ、その一着を仕立てる。
+  </p>
+  <button id="hero-cta" class="hero-cta" data-funnel="cta_click" data-funnel-cta="you_hero_subscribe" onclick="document.getElementById('subscribe-form').scrollIntoView({behavior:'smooth'})">
+    <span id="hero-cta-label">始める</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+  </button>
+<script>
+// Apply the hero CTA variant from cv_config so cv_pulse can rotate copy.
+(async () => {
+  try {
+    const r = await fetch('/api/cv/config', {cache: 'force-cache'});
+    if (!r.ok) return;
+    const c = await r.json();
+    const map = {
+      'value':    '30 日無料で始める',
+      'identity': 'あなた専用の一着を見る',
+      'loss':     '30 日後に消える、あなたの 30 案',
+    };
+    const v = c.hero_cta_variant || 'value';
+    const lbl = map[v] || map.value;
+    const el = document.getElementById('hero-cta-label');
+    if (el) el.textContent = lbl;
+  } catch (_) {}
+})();
+</script>
+  <!-- /you hero Buy CTA — added 2026-05-21 to fix the pageview→cta_click
+       -91.8% drop. /you receives ~70% of pageviews but had no direct Buy
+       action above the fold. Dynamically points at the latest active SKU.
+       data-funnel="cta_click" fires via /mu-funnel.js → /api/v1/event. -->
+  <div id="hero-buy-block" style="max-width:560px;margin:26px auto 0;display:none">
+    <a id="hero-buy-cta" href="#" target="_self"
+       data-funnel="cta_click" data-funnel-cta="you_hero_buy"
+       style="display:flex;align-items:center;gap:18px;padding:18px 22px;background:var(--y);color:#000;border:1px solid var(--y);border-radius:2px;text-decoration:none;transition:transform .15s ease,background .15s ease">
+      <img id="hero-buy-img" src="" alt="" style="width:64px;height:64px;object-fit:cover;border-radius:2px;background:#1a1a1a;flex-shrink:0;display:none">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:9px;letter-spacing:0.34em;text-transform:uppercase;opacity:0.7;margin-bottom:4px">今すぐ買う · 国内発送</div>
+        <div id="hero-buy-name" style="font-size:14px;font-weight:500;line-height:1.4;letter-spacing:0.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">最新の一着</div>
+        <div id="hero-buy-price" style="font-size:20px;font-weight:400;letter-spacing:0.04em;margin-top:2px">¥—</div>
+      </div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;flex-shrink:0"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+    </a>
+    <div style="font-size:10px;letter-spacing:0.06em;opacity:0.55;text-align:center;margin-top:8px">
+      30日 無料トライアルは下で。 今この瞬間 1 着欲しい人はここから。
+    </div>
+  </div>
+  <script>
+  // Fetch latest active SKU and wire up the hero Buy CTA. Falls back to a
+  // static /mugen link if the endpoint is offline so we never show a dead
+  // button. Keeps the block hidden until we have real data — no placeholder.
+  (async () => {
+    try {
+      const r = await fetch('/api/you/featured_buy', {cache: 'no-store'});
+      if (!r.ok) throw new Error('http ' + r.status);
+      const d = await r.json();
+      if (!d || !d.id || !d.serial_code) return;
+      const cta = document.getElementById('hero-buy-cta');
+      const nm  = document.getElementById('hero-buy-name');
+      const pr  = document.getElementById('hero-buy-price');
+      const img = document.getElementById('hero-buy-img');
+      const blk = document.getElementById('hero-buy-block');
+      if (!cta || !nm || !pr || !blk) return;
+      cta.href = d.buy_href || ('/p/' + d.serial_code + '?buy=1&utm_source=you_hero');
+      cta.setAttribute('data-funnel-product', String(d.id));
+      cta.setAttribute('data-funnel-href', cta.href);
+      nm.textContent = d.name || ('MU · ' + (d.brand || 'drop') + ' #' + (d.drop_num || ''));
+      pr.textContent = '¥' + (d.price_jpy || 0).toLocaleString() + '〜';
+      if (d.mockup_url) { img.src = d.mockup_url; img.style.display = 'block'; }
+      blk.style.display = 'block';
+    } catch (_) { /* keep hidden — no dead button */ }
+  })();
+  </script>
+  <div class="hero-meta">
+    <div class="m"><div class="v">30日</div><div class="l">無料トライアル</div></div>
+    <div class="m"><div class="v">毎朝 9:00</div><div class="l">JST 配信</div></div>
+    <div class="m"><div class="v">1日1案</div><div class="l">あなた専用</div></div>
+    <div class="m"><div class="v">¥6,800〜</div><div class="l">仕立て上がり</div></div>
+  </div>
+  <div id="ref-notice" style="display:none;max-width:560px;margin:14px auto 0;padding:10px 16px;background:rgba(90,158,111,0.12);border-left:2px solid #5a9e6f;color:#5a9e6f;font-size:11px;letter-spacing:0.04em;border-radius:2px"></div>
+  <div style="max-width:560px;margin:24px auto 0;padding:24px 28px;background:rgba(230,196,73,0.10);border:1px solid rgba(230,196,73,0.45);text-align:center;border-radius:2px">
+    <div style="font-size:10px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">30 日 無料</div>
+    <div style="font-size:22px;font-weight:300;line-height:1.5;margin-bottom:14px">
+      Email だけで始めて、 30 日 毎日 1 案。
+    </div>
+    <div style="font-size:13px;opacity:0.75;line-height:1.9;margin-bottom:18px">
+      気に入った日だけ、 ¥6,800 で 1 着仕立てる。 30 日 経っても続けたい場合のみ料金 (詳細は登録後に表示)。
+    </div>
+    <details style="font-size:11px;opacity:0.55;text-align:left">
+      <summary style="cursor:pointer;letter-spacing:0.18em;text-transform:uppercase;list-style:none">+ 価格詳細 / PT 経済を見る</summary>
+      <div style="margin-top:10px;line-height:1.95">
+        ① <strong>MU Tシャツを 1 着買う</strong> → 支払額分の <strong style="color:#e6c449">PT が貯まる</strong> (¥6,800 → 6,800 PT)<br>
+        ② <strong>3 ヶ月パック ¥2,500</strong> (自動更新なし)<br>
+        ③ <strong>サブスク ¥1,480/月</strong> (いつでも解約 OK)<br>
+        <span style="font-size:10.5px;opacity:0.75;margin-top:6px;display:block">— burn: <strong>1 SKU 作成 = 30 PT</strong>。 ¥6,800 = 226 回生成。 PT は /you 生成、 次の購入、 collab 等に使える MU エコ内ユニット。</span>
+      </div>
+    </details>
+  </div>
+  <!-- Referral block — visible after login: shareable URL + accumulated credit -->
+  <div id="referral-block" style="display:none;max-width:560px;margin:14px auto 0;padding:14px 18px;background:#0e0e0e;border:1px solid rgba(230,196,73,0.18);border-radius:2px">
+    <div style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:6px">友達招待</div>
+    <div style="font-size:12px;line-height:1.7;opacity:0.85">
+      1 人連れてくると、その人が初めて MU を買った瞬間、あなたに <strong>¥3,400 OFF</strong> クーポンが入ります。
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <input id="ref-link" readonly style="flex:1;min-width:220px;background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.12);font-family:'Menlo','SF Mono',monospace;font-size:11px;padding:8px 10px;border-radius:2px">
+      <button type="button" id="ref-copy" class="btn btn-secondary" style="font-size:10px;padding:8px 12px">コピー</button>
+    </div>
+    <div style="font-size:11px;opacity:0.7;margin-top:8px">
+      累計招待: <strong id="ref-count">0</strong> 人 · 獲得クレジット: <strong id="ref-credit">¥0</strong>
+    </div>
+  </div>
+  <!-- Live social proof: filled by /api/you/stats. Quietly empty if the
+       endpoint is offline so we never show placeholder zeros. -->
+  <div id="stats-block" style="max-width:560px;margin:14px auto 0;display:none;font-size:11px;letter-spacing:0.05em;opacity:0.7;text-align:center"></div>
+</section>
+<script>
+(async () => {
+  try {
+    const r = await fetch('/api/you/stats', {cache: 'no-store'});
+    if (!r.ok) return;
+    const d = await r.json();
+    const el = document.getElementById('stats-block');
+    if (!el) return;
+    const a = d.active_subscribers || 0;
+    const lf = d.lifetime_members || 0;
+    const dg = d.designs_generated || 0;
+    if (a < 10) return; // hide until we have meaningful numbers
+    el.style.display = 'block';
+    el.innerHTML = `今、${a} 人があなただけのデザインを育てています。 ` +
+      (dg > 0 ? `これまでに ${dg.toLocaleString()} 案を生成。` : '');
+  } catch (_) { /* offline — leave the badge hidden */ }
+})();
+</script>
+
+<!-- HOW -->
+<section class="how">
+  <div class="how-inner">
+    <div class="how-eyebrow">How it works</div>
+    <h2 class="how-title">「欲しい」が、毎朝届く。</h2>
+    <div class="how-grid">
+      <div class="how-step">
+        <div class="how-num">01 — Tell us</div>
+        <div class="how-step-title">好みを 1 分で登録</div>
+        <div class="how-step-desc">気分のキーワード、好きな色、着るシーン。AI のプロンプトに変換され、あなた専用の生成ループが起動します。サイズは仕立てる時に選ぶので登録は1分以下で終わります。</div>
+        <div class="how-step-meta">Email + Taste</div>
+      </div>
+      <div class="how-step">
+        <div class="how-num">02 — Daily drop</div>
+        <div class="how-step-title">毎朝 9:00 に 1 案だけ届く</div>
+        <div class="how-step-desc">AI が前日のフィードバックも踏まえて、その日のあなた専用デザインを 1 枚だけ生成。メールとここで確認できます。</div>
+        <div class="how-step-meta">JST 9:00 / 1案 / 24h limited</div>
+      </div>
+      <div class="how-step">
+        <div class="how-num">03 — Claim or skip</div>
+        <div class="how-step-title">気に入った日だけ仕立てる</div>
+        <div class="how-step-desc">「Claim」で受注生産（3〜10日で発送）。「Skip」を押すと AI が学習し、明日の案を寄せていきます。</div>
+        <div class="how-step-meta">¥6,800 / Bella+Canvas 5oz / DTG print</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FORM -->
+<section class="form-wrap" id="subscribe-form">
+  <div class="form-inner">
+    <div class="form-eyebrow">⌐◨-◨ Subscribe — Free</div>
+    <h2 class="form-title">あなたの "ほしい" を MU に教える</h2>
+    <p class="form-sub">
+      登録後、明日の朝 9:00 から最初のデザイン案が届きます。<br>
+      解約は <code>STOP</code> 返信で即時。買わない月は完全に無料。
+    </p>
+
+    <form id="taste-form">
+      <div class="field">
+        <div class="label">Email <span class="req">REQUIRED</span></div>
+        <input class="input" type="email" name="email" required placeholder="you@example.com" autocomplete="email">
+      </div>
+
+      <div class="field">
+        <div class="label">気分 / Mood — 何枚でも</div>
+        <div class="chips" data-name="mood" data-multi="1">
+          <span class="chip">静か</span><span class="chip">力強い</span><span class="chip">ノスタルジック</span>
+          <span class="chip">ミニマル</span><span class="chip">遊び</span><span class="chip">深い</span>
+          <span class="chip">朝の光</span><span class="chip">夜の余韻</span>
+          <span class="chip">海</span><span class="chip">山</span><span class="chip">街</span><span class="chip">余白</span>
+          <span class="chip">幾何学</span><span class="chip">手書き</span><span class="chip">写真的</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">色味 / Palette — 何枚でも</div>
+        <div class="chips" data-name="palette" data-multi="1">
+          <span class="chip">モノクロ</span><span class="chip">アースカラー</span>
+          <span class="chip">藍 / インディゴ</span><span class="chip">墨</span>
+          <span class="chip">サンドベージュ</span><span class="chip">セージグリーン</span>
+          <span class="chip">ヴィンテージ赤</span><span class="chip">サーモン</span>
+          <span class="chip">パステル</span><span class="chip">蛍光</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">着るシーン / When — 何枚でも</div>
+        <div class="chips" data-name="scene" data-multi="1">
+          <span class="chip">毎日</span><span class="chip">仕事</span>
+          <span class="chip">休日</span><span class="chip">旅</span>
+          <span class="chip">ジム</span><span class="chip">パートナー</span>
+          <span class="chip">家</span><span class="chip">夜の外出</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="label">あなたを表す一言（任意）</div>
+        <textarea class="input" name="bio" rows="2" maxlength="240"
+          placeholder="例：北海道の朝霧が好き。Tシャツは身体の延長だと思う。"></textarea>
+      </div>
+
+      <button class="submit" type="submit">登録 → 明朝9時に最初のデザインが届く</button>
+      <p class="fine">登録は無料。デザインを気に入った日だけ ¥6,800 で仕立てます。<br>個人情報は MU 内でのみ使用、第三者提供なし。</p>
+    </form>
+  </div>
+</section>
+
+<!-- PREVIEW -->
+<section id="preview">
+  <div class="preview-inner">
+    <div class="preview-eyebrow">Today's design — for you</div>
+    <h2 class="preview-title">あなた専用、本日の一案</h2>
+    <div class="preview-card" id="preview-card">
+      <div class="preview-img" id="pv-img">
+        <div class="preview-img-stamp" id="pv-stamp">MU × YOU · DAY 001</div>
+        <div class="preview-img-loading" id="pv-loading">
+          <div class="ring"></div>
+          <div class="lbl">Generating</div>
+          <div class="sub">Gemini 3 Pro Image があなた専用の一着を描いています — 約 20〜40 秒</div>
+        </div>
+      </div>
+      <div class="preview-meta">
+        <div class="preview-day" id="pv-day"></div>
+        <!-- Subscription progress / loss-aversion countdown.
+             Hidden for lifetime users; visible during trial. -->
+        <div id="pv-progress" style="display:none;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:-4px"></div>
+        <div id="pv-progress-bar" style="display:none;height:3px;background:rgba(255,255,255,0.06);border-radius:2px;overflow:hidden">
+          <div id="pv-progress-fill" style="height:100%;background:linear-gradient(90deg,#e6c449,#C8362C);width:0%;transition:width 0.6s ease"></div>
+        </div>
+        <div id="pv-lifetime" style="display:none;font-size:11px;letter-spacing:0.15em;color:#5a9e6f;background:rgba(90,158,111,0.08);padding:8px 14px;border-left:2px solid #5a9e6f">★ MU 所有者 — PT 残高で生成 (1 SKU = 30 PT)</div>
+        <!-- Paid-plan / portal switch — shows the right button for the user's current state. -->
+        <div id="pv-paid-cta" style="display:none;margin:8px 0">
+          <button id="paid-subscribe-btn" type="button" class="btn btn-secondary" style="font-size:11px;padding:9px 14px">¥980/月で続ける →</button>
+          <button id="paid-3mo-btn" type="button" class="btn btn-ghost" style="font-size:11px;padding:9px 14px;margin-left:6px">3 ヶ月パック ¥2,500 (-15%)</button>
+          <button id="paid-portal-btn" type="button" class="btn btn-ghost" style="display:none;font-size:11px;padding:9px 14px;margin-left:6px">サブスクを管理</button>
+          <span id="paid-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
+        </div>
+        <div class="preview-name" id="pv-name">…</div>
+        <div class="preview-prompt" id="pv-prompt">…</div>
+
+        <!-- Day 7 IKEA-effect: name-your-style inline ritual -->
+        <div id="name-your-style" style="display:none;padding:14px 16px;background:#111;border:1px solid rgba(230,196,73,0.3);border-radius:2px;margin-top:6px">
+          <div style="font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:6px">Day 7 — Your Style Name</div>
+          <div style="font-size:12px;line-height:1.7;opacity:0.78;margin-bottom:10px">
+            7 日間で 7 案。あなただけのフィルターが見えてきました。<br>
+            このフィルターに名前を付けると、Day 14 と Day 30 の特別な一着に折り込まれます。
+          </div>
+          <div style="display:flex;gap:8px">
+            <input id="style-name-input" maxlength="32" placeholder='例: 霧と紙 / 8月の沈黙 / 静かな引き算' style="flex:1;background:#0A0A0A;border:1px solid rgba(255,255,255,0.18);color:#F5F5F0;padding:10px 12px;font-size:12px;letter-spacing:0.05em">
+            <button id="style-name-save" type="button" class="btn btn-primary" style="padding:10px 16px;font-size:10px">名前をつける</button>
+          </div>
+          <div id="style-name-msg" style="font-size:10px;opacity:0.65;margin-top:6px;min-height:14px"></div>
+        </div>
+
+        <div class="preview-row">
+          <span>SIZE <b id="pv-size">S</b></span>
+          <span>PRICE <b id="pv-price">¥6,800</b></span>
+          <span>VALID <b id="pv-valid">24h</b></span>
+        </div>
+        <!-- 4-emoji feedback signal — tomorrow's design bends toward "love" tokens. -->
+        <div id="pv-reactions" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0">
+          <div style="font-size:9px;letter-spacing:0.22em;text-transform:uppercase;opacity:0.55;margin-right:6px">この一着、どう？</div>
+          <button class="rx-btn" data-rx="love" type="button">🔥 大好き</button>
+          <button class="rx-btn" data-rx="ok"   type="button">👍 良い</button>
+          <button class="rx-btn" data-rx="meh"  type="button">😐 微妙</button>
+          <button class="rx-btn" data-rx="skip" type="button">👋 Skip</button>
+          <span id="rx-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
+        </div>
+        <!-- Size picker at PURCHASE time. Default M, sticky to localStorage,
+             shows '前回 X' for returning buyers. -->
+        <div class="field" style="margin:18px 0 12px">
+          <div class="label" style="font-size:11px;letter-spacing:0.2em;opacity:0.75;margin-bottom:8px">サイズ <span style="font-size:9px;opacity:0.55">(仕立てる時に選ぶ)</span> <span id="claim-size-prev" style="font-size:9px;color:#7be57b;margin-left:6px;display:none">前回 <strong id="claim-size-prev-v">—</strong></span></div>
+          <div class="size-row" id="claim-size-row" data-name="claim_size" data-multi="0">
+            <div class="size" data-s="XS">XS</div>
+            <div class="size" data-s="S">S</div>
+            <div class="size on" data-s="M">M</div>
+            <div class="size" data-s="L">L</div>
+            <div class="size" data-s="XL">XL</div>
+            <div class="size" data-s="XXL">XXL</div>
+          </div>
+        </div>
+        <!-- Empty-state reminder: 'this month you have claimed 0 — try one for free' -->
+        <div id="claim-month-reminder" style="display:none;background:rgba(230,196,73,0.06);border:1px solid rgba(230,196,73,0.3);border-radius:5px;padding:10px 14px;margin:8px 0 12px;font-size:12px;color:#e6c449;line-height:1.6">
+          今月 まだ <strong id="claim-month-cnt">0</strong> 着。 sub 価値 を 感じるには 1着 仕立てて みる の が 一番 効率的 です。
+        </div>
+        <div class="preview-actions">
+          <button class="btn btn-primary" id="claim-btn">この一着を仕立てる</button>
+          <button class="btn btn-secondary" id="skip-btn">明日に期待 / Skip</button>
+          <button class="btn btn-ghost" id="refresh-btn" title="再生成（1回まで）">⟳</button>
+        </div>
+        <div class="share-bar" id="share-bar">
+          <div class="h">あなた専用ページ — シェアして friends と作る</div>
+          <div class="share-row">
+            <input class="input" id="share-url" readonly>
+            <button class="btn btn-primary" id="copy-btn" type="button">コピー</button>
+          </div>
+          <div class="share-sns">
+            <a class="sns x" id="share-x" target="_blank" rel="noopener">X / Twitter</a>
+            <a class="sns line" id="share-line" target="_blank" rel="noopener">LINE</a>
+            <a class="sns ig" id="share-ig" href="#" data-action="copy">Instagram (URLコピー)</a>
+            <a class="sns mail" id="share-mail" target="_blank" rel="noopener">Mail</a>
+          </div>
+          <div class="slug-edit">
+            <span class="pre">wearmu.com/</span>
+            <input class="input" id="slug-input" placeholder="お好みのスラッグ（3〜32字）" maxlength="32" autocomplete="off">
+            <button class="btn btn-secondary" id="slug-save" type="button">設定</button>
+          </div>
+          <div class="slug-msg" id="slug-msg">a-z, 0-9, ハイフン (-)、アンダースコア (_) のみ。例: yuki, north-mist, kuroi-mu</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="taste-edit-bar" id="taste-edit-bar">
+  <a id="taste-edit-toggle">プロンプトを書き直す / Edit my taste</a>
+</div>
+
+<form id="taste-edit-form">
+  <div class="h">あなたの好みを更新</div>
+  <p class="sub">明日以降の案からこの内容で生成されます。<br>本日の案も再生成（30〜60秒）。確認メールが届きます。</p>
+
+  <div class="field">
+    <div class="label">気分 / Mood</div>
+    <div class="chips" data-name="te_mood" data-multi="1">
+      <span class="chip">静か</span><span class="chip">力強い</span><span class="chip">ノスタルジック</span>
+      <span class="chip">ミニマル</span><span class="chip">遊び</span><span class="chip">深い</span>
+      <span class="chip">朝の光</span><span class="chip">夜の余韻</span>
+      <span class="chip">海</span><span class="chip">山</span><span class="chip">街</span><span class="chip">余白</span>
+      <span class="chip">幾何学</span><span class="chip">手書き</span><span class="chip">写真的</span>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">色味 / Palette</div>
+    <div class="chips" data-name="te_palette" data-multi="1">
+      <span class="chip">モノクロ</span><span class="chip">アースカラー</span>
+      <span class="chip">藍 / インディゴ</span><span class="chip">墨</span>
+      <span class="chip">サンドベージュ</span><span class="chip">セージグリーン</span>
+      <span class="chip">ヴィンテージ赤</span><span class="chip">サーモン</span>
+      <span class="chip">パステル</span><span class="chip">蛍光</span>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">着るシーン / When</div>
+    <div class="chips" data-name="te_scene" data-multi="1">
+      <span class="chip">毎日</span><span class="chip">仕事</span>
+      <span class="chip">休日</span><span class="chip">旅</span>
+      <span class="chip">ジム</span><span class="chip">パートナー</span>
+      <span class="chip">家</span><span class="chip">夜の外出</span>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">サイズ</div>
+    <div class="size-row" data-name="te_size" data-multi="0">
+      <div class="size">XS</div><div class="size">S</div><div class="size">M</div>
+      <div class="size">L</div><div class="size">XL</div>
+    </div>
+  </div>
+  <div class="field">
+    <div class="label">ひとこと（任意）</div>
+    <textarea class="input" id="te-bio" rows="2" maxlength="240"
+      placeholder="例：藍と灰の中間が好き。詰めない、抜く服。"></textarea>
+  </div>
+  <button class="submit" type="button" id="taste-edit-save">更新 → 本日の案を再生成</button>
+</form>
+
+<!-- HISTORY -->
+<section id="history">
+  <div class="history-inner">
+    <div class="history-title">これまでの案 / History</div>
+    <div class="history-grid" id="hgrid"></div>
+  </div>
+</section>
+
+<!-- SAMPLE GALLERY — 他の MUer が今日もらった案 (購入可) -->
+<section id="sample-gallery" style="padding:80px 32px 60px;max-width:1080px;margin:0 auto">
+  <div style="text-align:center;margin-bottom:36px">
+    <div style="font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:10px">MUer · Gallery</div>
+    <h2 style="font-size:clamp(22px,3.4vw,32px);font-weight:300;letter-spacing:0.04em;line-height:1.4;color:#F5F5F0">他の MUer が今日もらった案</h2>
+    <p style="font-size:12px;opacity:0.6;margin-top:10px;line-height:1.85">
+      架空のサンプル MUer 15 名と、各人が今日 AI からもらった「一案」。<br>
+      画像をクリックすれば、その一着は実際に購入できます。MUer の階層は <a href="/vision" style="color:#e6c449">/vision</a> で。
+    </p>
+  </div>
+  <div id="sample-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:18px;margin-top:20px">
+    <div style="grid-column:1/-1;text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.45;text-transform:uppercase">Loading…</div>
+  </div>
+  <p style="font-size:10px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.45;text-align:center;margin-top:24px">
+    毎日 JST 09:00、各ペルソナに新しい一案が追加されます。
+  </p>
+</section>
+<style>
+.sp-card{background:#111;border:1px solid rgba(255,255,255,0.06);border-radius:2px;overflow:hidden;display:flex;flex-direction:column;transition:transform 0.2s ease,border-color 0.2s ease}
+.sp-card:hover{transform:translateY(-2px);border-color:rgba(230,196,73,0.4)}
+.sp-card a.sp-link{color:inherit;text-decoration:none;display:block}
+.sp-img{width:100%;aspect-ratio:1/1;object-fit:cover;background:#0a0a0a;display:block}
+.sp-img.placeholder{display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:200;color:rgba(230,196,73,0.4);font-family:'Helvetica Neue',Arial,sans-serif}
+.sp-body{padding:14px 16px 16px}
+.sp-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.sp-glyph{width:28px;height:28px;border-radius:50%;background:rgba(230,196,73,0.12);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#e6c449;font-family:'Helvetica Neue',Arial,sans-serif}
+.sp-name{font-size:12px;letter-spacing:0.05em;color:#F5F5F0}
+.sp-bio{font-size:10px;line-height:1.6;opacity:0.55;margin-bottom:10px;min-height:30px}
+.sp-design{font-size:12px;color:#e6c449;letter-spacing:0.02em;margin-bottom:6px}
+.sp-meta{font-size:9px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.5}
+.sp-price{font-size:11px;opacity:0.7;font-variant-numeric:tabular-nums}
+</style>
+
+<!-- AI FEEDBACK (お客様 → MU AI 直通) -->
+<section style="padding:60px 32px 30px;max-width:780px;margin:0 auto">
+  <div style="background:rgba(230,196,73,0.05);border:1px solid rgba(230,196,73,0.18);border-radius:2px;padding:28px 28px 24px">
+    <div style="font-size:10px;letter-spacing:0.35em;text-transform:uppercase;color:#e6c449;opacity:0.85;margin-bottom:8px">Feedback · AI</div>
+    <h3 style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:20px;font-weight:300;letter-spacing:0.02em;margin-bottom:6px">MU AI に直接、要望や違和感を投げる。</h3>
+    <p style="font-size:12px;opacity:0.7;line-height:1.9;margin-bottom:14px">
+      返答は Gemini 2.5 が即時で書きます。<strong>MA Council (MA 落札者)</strong> は優先 / <strong>MU Owner</strong> はそれに次ぐ重み / <strong>MUer</strong> も 24 時間以内に必ず読まれます。<br>
+      全フィードバックは <a href="/api/transparency">/api/transparency</a> の将来項目として件数公開予定。
+    </p>
+    <textarea id="fb-message" placeholder="例: 「もっと暗い色味を増やしてほしい」「Tシャツのサイズ感が大きい」「コラボでこの作家とやってほしい」など、自由に。"
+      style="width:100%;background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.18);font-family:inherit;font-size:14px;padding:14px 16px;border-radius:2px;min-height:120px;line-height:1.7;resize:vertical"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <select id="fb-kind" style="background:#000;color:#F5F5F0;border:1px solid rgba(255,255,255,0.18);font-family:inherit;font-size:12px;padding:8px 10px;border-radius:2px">
+        <option value="request">機能要望</option>
+        <option value="love">気に入ってる</option>
+        <option value="bug">バグ報告</option>
+        <option value="vision">方向性 / vision</option>
+      </select>
+      <button type="button" id="fb-submit" class="btn btn-primary" style="font-size:11px;padding:10px 18px">AI に送る →</button>
+      <span id="fb-tier" style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-left:auto"></span>
+    </div>
+    <div id="fb-reply" style="display:none;margin-top:18px;padding:14px 18px;background:#0c0c0c;border-left:2px solid #5a9e6f;font-size:13px;line-height:1.85;border-radius:2px"></div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq">
+  <div class="faq-inner">
+    <div class="faq-title">FAQ</div>
+    <h3 class="faq-h">よくある質問</h3>
+
+    <details>
+      <summary>毎日デザインが届くの？合わなかったら？</summary>
+      <div class="answer">毎朝 9:00 JST に1案だけお送りします。「Skip」を押すか、メールで <code>SKIP</code> と返信すれば、明日の生成プロンプトが調整されます。要らない日は何もしなくて OK です。</div>
+    </details>
+
+    <details>
+      <summary>料金はどうなってる？</summary>
+      <div class="answer">登録は無料、購入も買いたい日だけ。Tシャツは1着 ¥6,800（送料 ¥700 / ¥5,000以上で送料無料）。同じデザインで色違い・サイズ違いを同時に頼むと 2着目から 15% OFF。</div>
+    </details>
+
+    <details>
+      <summary>納期と発送は？</summary>
+      <div class="answer">受注生産（DTG / 昇華プリント）のため、Claim から 3〜10 営業日で発送。日本国内は宅急便、海外は DHL Express で 5〜10 日着。発送後に追跡番号をメールします。</div>
+    </details>
+
+    <details>
+      <summary>同じデザインは他の人にも届く？</summary>
+      <div class="answer">いいえ。あなたのプロンプト＋日付＋シードから決定的に生成されるため、同じ案は世界に一案しかありません。Claim した時点でそのデザインに <b>シリアル「YOU#0001」</b> が付与され、あなた以外には販売されません。</div>
+    </details>
+
+    <details>
+      <summary>退会したい</summary>
+      <div class="answer">受信メールに <code>STOP</code> と返信、またはこのページの一番下から退会できます。即時に配信停止し、登録情報は 30 日後に削除されます。</div>
+    </details>
+
+    <details>
+      <summary>MUGEN / MUON / MA とどう違う？</summary>
+      <div class="answer">MUGEN・MUON・MA はブランドが「世界全員に対して」毎時・毎日・毎月生成する公開ドロップ。MU × YOU は「あなた1人に対して」毎日生成する個別ドロップです。生成エンジンとプロダクション工場は同じです。</div>
+    </details>
+  </div>
+</section>
+
+<footer>
+  <div>MU × YOU © wearmu.com</div>
+  <div style="display:flex;gap:24px;flex-wrap:wrap">
+    <a href="/">MU</a>
+    <a href="/transparency">Transparency</a>
+    <a href="/tokushoho">特商法</a>
+    <a href="/privacy">プライバシー</a>
+    <a href="/tos">利用規約</a>
+    <a href="/about.html">About</a>
+    <a href="#" id="unsub-link">退会</a>
+  </div>
+  <div style="margin-top:18px;font-size:10px;opacity:0.45;letter-spacing:0.15em;width:100%;text-align:center">
+    株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents
+  </div>
+</footer>
+
+<div id="toast"></div>
+
+<script>
+const $ = q=>document.querySelector(q);
+const $$ = q=>document.querySelectorAll(q);
+
+// chip / size selection
+$$('.chips, .size-row').forEach(group=>{
+  const multi = group.dataset.multi === '1';
+  group.addEventListener('click', e=>{
+    const t = e.target.closest('.chip,.size');
+    if (!t || !group.contains(t)) return;
+    if (multi) {
+      t.classList.toggle('on');
+    } else {
+      group.querySelectorAll('.chip,.size').forEach(c=>c.classList.remove('on'));
+      t.classList.add('on');
+    }
+  });
+});
+
+function selected(name){
+  const g = document.querySelector(`[data-name="${name}"]`);
+  if (!g) return [];
+  return Array.from(g.querySelectorAll('.chip.on,.size.on')).map(e=>e.textContent.trim());
+}
+
+function toast(msg, isErr){
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.toggle('err', !!isErr);
+  t.classList.add('show');
+  clearTimeout(t._tm);
+  t._tm = setTimeout(()=>t.classList.remove('show'), 3200);
+}
+
+// state
+let token = localStorage.getItem('mu_you_token') || '';
+
+// Capture &ref= once and persist for the signup POST. Validated server-side.
+(() => {
+  const r = new URLSearchParams(location.search).get('ref');
+  if (r) {
+    const safe = r.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 32);
+    if (safe) {
+      localStorage.setItem('mu_you_ref', safe);
+      const noticeHost = document.getElementById('ref-notice');
+      if (noticeHost) {
+        noticeHost.textContent = `✓ ${safe} さんの招待で開いています。あなたの初回 MU 購入時に ${safe} さんへ ¥3,400 OFF が届きます。`;
+        noticeHost.style.display = 'block';
+      }
+    }
+  }
+})();
+
+async function api(path, body){
+  const init = {
+    method: body ? 'POST' : 'GET',
+    headers: {'Content-Type': 'application/json'},
+  };
+  if (body) init.body = JSON.stringify(body);
+  const r = await fetch(path, init);
+  if (!r.ok) {
+    let msg = `HTTP ${r.status}`;
+    try { msg = (await r.text()) || msg; } catch(_){}
+    throw new Error(msg.slice(0, 200));
+  }
+  return r.json();
+}
+
+function fmtDay(s){
+  if (!s) return '';
+  const d = new Date(s + 'T00:00:00+09:00');
+  if (isNaN(d)) return s;
+  return d.toLocaleDateString('ja-JP', {timeZone:'Asia/Tokyo', year:'numeric', month:'long', day:'numeric', weekday:'long'});
+}
+
+function placeholderImg(seed){
+  // Deterministic SVG gradient placeholder so the layout never breaks even
+  // before the AI image arrives. Different seed → different gradient.
+  const h = Math.abs(hashCode(seed||'mu')) % 360;
+  const h2 = (h + 60) % 360;
+  return `url("data:image/svg+xml;utf8,${encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 600 600'>
+      <defs><radialGradient id='g' cx='30%' cy='25%' r='80%'>
+        <stop offset='0%' stop-color='hsl(${h},58%,42%)'/>
+        <stop offset='65%' stop-color='hsl(${h2},35%,16%)'/>
+        <stop offset='100%' stop-color='#0A0A0A'/>
+      </radialGradient></defs>
+      <rect width='600' height='600' fill='url(%23g)'/>
+      <text x='50%' y='52%' text-anchor='middle' fill='rgba(255,255,255,0.85)'
+        font-family='Helvetica Neue,Arial' font-size='42' letter-spacing='8' font-weight='200'>MU × YOU</text>
+      <text x='50%' y='60%' text-anchor='middle' fill='rgba(255,255,255,0.4)'
+        font-family='Helvetica Neue,Arial' font-size='13' letter-spacing='6'>${(seed||'').slice(0,16)}</text>
+    </svg>`
+  )}")`;
+}
+function hashCode(s){let h=0;for(let i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;return h;}
+
+let pollTimer = null;
+
+// Apply subscription state to the preview UI: progress bar / lifetime badge
+// / Day-7 naming ritual. Idempotent — safe to call on every fetch.
+function applySubscriptionUI(sub, dayNum, styleName){
+  if (!sub) return;
+  const progressEl = document.getElementById('pv-progress');
+  const barEl = document.getElementById('pv-progress-bar');
+  const fillEl = document.getElementById('pv-progress-fill');
+  const lifetimeEl = document.getElementById('pv-lifetime');
+  const paidCtaEl = document.getElementById('pv-paid-cta');
+  const subBtn  = document.getElementById('paid-subscribe-btn');
+  const portalBtn = document.getElementById('paid-portal-btn');
+  const allHide = () => {
+    if (paidCtaEl) paidCtaEl.style.display = 'none';
+    if (subBtn) subBtn.style.display = 'none';
+    if (portalBtn) portalBtn.style.display = 'none';
+  };
+  if (sub.lifetime_free) {
+    if (progressEl) progressEl.style.display = 'none';
+    if (barEl) barEl.style.display = 'none';
+    if (lifetimeEl) lifetimeEl.style.display = 'block';
+    allHide();
+  } else if (sub.status === 'subscribed') {
+    if (progressEl) {
+      progressEl.style.display = 'block';
+      progressEl.style.color = '#5a9e6f';
+      progressEl.textContent = '✓ ¥980/月 アクティブ — いつでも解約可';
+    }
+    if (barEl) barEl.style.display = 'none';
+    if (lifetimeEl) lifetimeEl.style.display = 'none';
+    if (paidCtaEl) paidCtaEl.style.display = 'block';
+    if (subBtn) subBtn.style.display = 'none';
+    if (portalBtn) portalBtn.style.display = 'inline-block';
+  } else if (sub.status === 'trial') {
+    const days = Math.max(0, sub.days_left || 0);
+    const used = Math.max(0, 30 - days);
+    if (progressEl) {
+      progressEl.style.display = 'block';
+      progressEl.style.color = '#e6c449';
+      progressEl.textContent = `あと ${days} 日 / 30  · 失われる: ${used} 案を超えた経験`;
+    }
+    if (barEl) barEl.style.display = 'block';
+    if (fillEl) fillEl.style.width = `${(used / 30) * 100}%`;
+    if (lifetimeEl) lifetimeEl.style.display = 'none';
+    // Show subscribe CTA from Day 20+ (last 10 days of trial)
+    if (paidCtaEl) {
+      const showCta = days <= 10;
+      paidCtaEl.style.display = showCta ? 'block' : 'none';
+      if (subBtn) subBtn.style.display = showCta ? 'inline-block' : 'none';
+      if (portalBtn) portalBtn.style.display = 'none';
+    }
+  } else {
+    if (progressEl) {
+      progressEl.style.display = 'block';
+      progressEl.style.color = '#C8362C';
+      progressEl.textContent = '無料トライアル終了 — MU 1 着 か ¥980/月 で再開';
+    }
+    if (barEl) barEl.style.display = 'none';
+    if (lifetimeEl) lifetimeEl.style.display = 'none';
+    if (paidCtaEl) paidCtaEl.style.display = 'block';
+    if (subBtn) subBtn.style.display = 'inline-block';
+    if (portalBtn) portalBtn.style.display = 'none';
+  }
+  // Day-7 IKEA-effect ritual surfaces between Day 7 and Day 14 if no style name
+  const nyEl = document.getElementById('name-your-style');
+  if (nyEl) {
+    const showRitual = !sub.lifetime_free
+      && (dayNum||1) >= 7 && (dayNum||1) <= 14
+      && !(styleName && String(styleName).trim());
+    nyEl.style.display = showRitual ? 'block' : 'none';
+  }
+}
+
+function showDesign(d){
+  if (!d) return;
+  $('#preview').classList.add('show');
+  $('#pv-day').textContent = fmtDay(d.day) + ' — Day #' + (d.day_num||1);
+  $('#pv-stamp').textContent = `MU × YOU · DAY ${String(d.day_num||1).padStart(3,'0')}`;
+  $('#pv-name').textContent = d.name || '名前未定';
+  $('#pv-prompt').textContent = d.prompt || '';
+  $('#pv-size').textContent = d.size || 'S';
+  $('#pv-price').textContent = '¥' + (d.price_jpy||6800).toLocaleString();
+  $('#pv-valid').textContent = d.valid_label || '24h';
+  const img = $('#pv-img');
+  // Use cache-busting param when generating so we re-fetch the bytes once ready
+  const isReady = d.gen_status === 'ready' || d.gen_status === 'pending' && d.image_url;
+  const url = d.image_url ? `${d.image_url}${isReady ? '' : '?cb=' + Date.now()}` : null;
+  if (url) {
+    img.style.background = `#000 center/cover no-repeat url("${url}")`;
+  } else {
+    img.style.background = `#000 center/cover no-repeat ${placeholderImg(d.seed||d.name||'')}`;
+  }
+  // Loading overlay
+  const loading = $('#pv-loading');
+  if (d.gen_status === 'generating') {
+    loading.classList.add('show');
+    schedulePoll();
+  } else if (d.gen_status === 'failed') {
+    loading.classList.remove('show');
+    toast('画像生成に失敗。⟳ で再試行してください', true);
+  } else {
+    loading.classList.remove('show');
+    if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+  }
+  $('#preview').dataset.designId = d.id;
+  // Show share bar once we have a token
+  if (token) $('#share-bar').classList.add('show');
+}
+
+function schedulePoll(){
+  if (pollTimer) return;
+  pollTimer = setTimeout(async ()=>{
+    pollTimer = null;
+    if (!token) return;
+    try {
+      const data = await api(`/api/you/daily/${token}`);
+      if (data.today) {
+        showDesign(data.today);
+        if (data.today.gen_status === 'generating') schedulePoll();
+      }
+      if (data.history) showHistory(data.history);
+      if (data.share_url) updateShareBar(data.share_url, data.slug);
+      if (data.subscription) {
+        applySubscriptionUI(data.subscription,
+          (data.today && data.today.day_num) || 1,
+          data.style_name || (data.taste && data.taste.style_name) || '');
+      }
+    } catch(e){ schedulePoll(); }
+  }, 4000);
+}
+
+function updateShareBar(shareUrl, slug){
+  if (!shareUrl) return;
+  $('#share-url').value = shareUrl;
+  if (slug && !$('#slug-input').value) $('#slug-input').value = slug;
+  $('#share-bar').classList.add('show');
+  // Pre-build SNS share links
+  const u = encodeURIComponent(shareUrl);
+  const txt = encodeURIComponent(`私の MU × YOU コラボTシャツ・コレクション。AI が毎朝1案描いてくれる。`);
+  $('#share-x').href = `https://twitter.com/intent/tweet?text=${txt}&url=${u}`;
+  $('#share-line').href = `https://social-plugins.line.me/lineit/share?url=${u}`;
+  $('#share-mail').href = `mailto:?subject=${encodeURIComponent('MU × YOU で作った私のTシャツ案')}&body=${txt}%20${u}`;
+}
+
+let currentTaste = null;
+function applyTasteToEditor(taste){
+  if (!taste) return;
+  currentTaste = taste;
+  const setSelected = (name, vals) => {
+    const g = document.querySelector(`[data-name="${name}"]`);
+    if (!g || !Array.isArray(vals)) return;
+    const setV = new Set(vals);
+    g.querySelectorAll('.chip,.size').forEach(c => {
+      c.classList.toggle('on', setV.has(c.textContent.trim()));
+    });
+  };
+  setSelected('te_mood', taste.mood);
+  setSelected('te_palette', taste.palette);
+  setSelected('te_scene', taste.scene);
+  if (taste.size) setSelected('te_size', [taste.size]);
+  if (taste.bio) $('#te-bio').value = taste.bio;
+}
+
+function showHistory(items){
+  $('#history').classList.add('show');
+  const grid = $('#hgrid');
+  grid.innerHTML = '';
+  if (!items || items.length <= 1) {
+    grid.innerHTML = `<div class="history-empty" style="grid-column:1/-1">
+      <div style="opacity:0.6;margin-bottom:6px">これまで ${items ? items.length : 0} 案</div>
+      明日の朝 9:00、また 1 案届きます。Skip するほど好みに寄っていきます。
+    </div>`;
+    if (!items || !items.length) return;
+  }
+  items.forEach(d=>{
+    const card = document.createElement('div');
+    card.className = 'history-card';
+    // Always use the cached endpoint URL — gen_status='ready' rows have bytes,
+    // 'generating' rows return the placeholder SVG; either way the <div>
+    // background renders correctly.
+    const bg = `#000 center/cover no-repeat url("${d.image_url || '/og.jpg'}")`;
+    card.innerHTML = `
+      <div class="history-img" style="background:${bg}"></div>
+      <div class="history-meta">DAY ${String(d.day_num||1).padStart(3,'0')} · <b>${d.status||'PENDING'}</b></div>`;
+    grid.appendChild(card);
+  });
+}
+
+async function loadDaily(tk){
+  try {
+    const data = await api(`/api/you/daily/${tk}`);
+    if (data.today) showDesign(data.today);
+    if (data.history) showHistory(data.history);
+    if (data.share_url) updateShareBar(data.share_url, data.slug);
+    if (data.taste) applyTasteToEditor(data.taste);
+    if (data.subscription) {
+      applySubscriptionUI(data.subscription,
+        (data.today && data.today.day_num) || 1,
+        data.style_name || (data.taste && data.taste.style_name) || '');
+    }
+    // If the URL has #name-your-style, scroll the inline ritual into view
+    if (location.hash === '#name-your-style') {
+      const ny = document.getElementById('name-your-style');
+      if (ny && ny.style.display !== 'none') ny.scrollIntoView({behavior:'smooth', block:'center'});
+    }
+  } catch(e){
+    toast('読み込みに失敗：' + e.message, true);
+  }
+}
+
+// Wire paid-subscription + portal buttons.
+document.addEventListener('DOMContentLoaded', () => {
+  const sub = document.getElementById('paid-subscribe-btn');
+  if (sub) sub.addEventListener('click', async () => {
+    if (!token) return;
+    sub.disabled = true; sub.textContent = '読み込み中…';
+    try {
+      const r = await fetch('/api/you/subscribe-paid', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+    } catch (e) {
+      sub.disabled = false; sub.textContent = '¥980/月で続ける →';
+      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
+    }
+  });
+  const portal = document.getElementById('paid-portal-btn');
+  if (portal) portal.addEventListener('click', async () => {
+    if (!token) return;
+    portal.disabled = true; portal.textContent = '読み込み中…';
+    try {
+      const r = await fetch('/api/you/portal', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+    } catch (e) {
+      portal.disabled = false; portal.textContent = 'サブスクを管理';
+      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
+    }
+  });
+  // 3-month prepaid pack (¥2,500 one-time, 15% off ¥2,940 list) — Stripe Checkout payment mode.
+  const pack3 = document.getElementById('paid-3mo-btn');
+  if (pack3) pack3.addEventListener('click', async () => {
+    if (!token) return;
+    pack3.disabled = true; pack3.textContent = '読み込み中…';
+    try {
+      const r = await fetch('/api/you/subscribe-3mo', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token}),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      if (d.url) window.location.href = d.url;
+    } catch (e) {
+      pack3.disabled = false; pack3.textContent = '3 ヶ月パック ¥2,500 (-15%)';
+      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
+    }
+  });
+
+  // Auto-trigger subscribe flow when arriving from the trial-end email
+  // (`/you?subscribe=1`). Wait for token to be loaded, then click.
+  if (new URLSearchParams(location.search).get('subscribe') === '1') {
+    const tryClick = () => {
+      if (token && sub) { sub.click(); }
+      else { setTimeout(tryClick, 300); }
+    };
+    setTimeout(tryClick, 600);
+  }
+});
+
+// Wire emoji reaction buttons on /you preview. Records the signal and
+// blinks a confirmation so the user sees the feedback was received.
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#pv-reactions .rx-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const kind = btn.getAttribute('data-rx');
+      const id = ($('#preview').dataset.designId) || '';
+      const msg = document.getElementById('rx-msg');
+      if (!id) return;
+      try {
+        await fetch('/api/you/signal/' + id, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({token: token || '', kind, source: 'page'}),
+        });
+        msg.style.color = '#e6c449';
+        msg.textContent = '受け取った — 明日に反映';
+        btn.style.background = '#e6c449';
+        btn.style.color = '#000';
+        setTimeout(() => { msg.textContent = ''; btn.style.background = ''; btn.style.color = ''; }, 1800);
+      } catch (e) {
+        msg.style.color = '#C8362C';
+        msg.textContent = 'エラー';
+      }
+    });
+  });
+});
+// Add minimal rx-btn styling — fits the surrounding preview card aesthetic.
+(() => {
+  const s = document.createElement('style');
+  s.textContent = `.rx-btn{background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.25);color:#F5F5F0;padding:8px 12px;font-size:11px;letter-spacing:0.04em;cursor:pointer;border-radius:2px;font-family:inherit;transition:transform 0.1s, background 0.1s} .rx-btn:hover{background:rgba(230,196,73,0.18)}`;
+  document.head.appendChild(s);
+})();
+// Wire the Day-7 inline ritual save button.
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('style-name-save');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const input = document.getElementById('style-name-input');
+    const msg = document.getElementById('style-name-msg');
+    if (!token || !input || !msg) return;
+    const name = (input.value || '').trim();
+    if (!name) { msg.textContent = '空白では保存できません'; return; }
+    if (name.length > 32) { msg.textContent = '32 文字以内で'; return; }
+    btn.disabled = true; msg.textContent = '保存中…';
+    try {
+      const r = await api('/api/you/style', {token, style_name: name});
+      msg.style.color = '#5a9e6f';
+      msg.textContent = `保存しました — Day 14 と Day 30 はこの「${r.style_name}」が折り込まれます`;
+      setTimeout(() => {
+        const el = document.getElementById('name-your-style');
+        if (el) el.style.display = 'none';
+      }, 2500);
+    } catch (e) {
+      msg.style.color = '#C8362C';
+      msg.textContent = 'エラー：' + (e.message || '保存できませんでした');
+    } finally { btn.disabled = false; }
+  });
+});
+
+// ── AI Feedback — Gemini が即返答、Telegram に通知 ──
+document.addEventListener('DOMContentLoaded', () => {
+  const btn  = document.getElementById('fb-submit');
+  const txt  = document.getElementById('fb-message');
+  const kind = document.getElementById('fb-kind');
+  const reply= document.getElementById('fb-reply');
+  const tier = document.getElementById('fb-tier');
+  if (!btn || !txt) return;
+  btn.addEventListener('click', async () => {
+    const m = (txt.value || '').trim();
+    if (m.length < 2) { toast('もう少し長く書いてください', true); return; }
+    btn.disabled = true; btn.textContent = '送信中…';
+    try {
+      const r = await fetch('/api/feedback', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          token: token || undefined,
+          message: m,
+          kind: kind ? kind.value : 'request',
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const tierName = {ma_council:'⭐ MA Council', mu_owner:'MU Owner', muer:'MUer'}[d.tier] || 'Visitor';
+      if (tier) tier.textContent = 'tier: ' + tierName;
+      if (reply) {
+        if (d.ai_reply && d.ai_reply.length > 0) {
+          reply.textContent = d.ai_reply;
+        } else {
+          reply.textContent = '届きました。AI 返答は今日中にメールします。';
+        }
+        reply.style.display = 'block';
+      }
+      txt.value = '';
+      toast('AI に届きました');
+    } catch (e) {
+      toast('送信失敗: ' + e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = 'AI に送る →';
+    }
+  });
+});
+
+// ── Referral status — show shareable URL + credit if logged in ──
+document.addEventListener('DOMContentLoaded', async () => {
+  const block = document.getElementById('referral-block');
+  if (!block || !token) return;
+  try {
+    const r = await fetch('/api/you/referral', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token}),
+    });
+    if (!r.ok) return;
+    const d = await r.json();
+    const linkEl   = document.getElementById('ref-link');
+    const countEl  = document.getElementById('ref-count');
+    const creditEl = document.getElementById('ref-credit');
+    const copyBtn  = document.getElementById('ref-copy');
+    if (linkEl)   linkEl.value = d.referral_url || '';
+    if (countEl)  countEl.textContent = (d.count || 0).toString();
+    if (creditEl) creditEl.textContent = '¥' + (d.credit_jpy || 0).toLocaleString('ja-JP');
+    if (copyBtn) copyBtn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(linkEl.value);
+        copyBtn.textContent = 'コピー済';
+        setTimeout(() => copyBtn.textContent = 'コピー', 1800);
+      } catch (e) {
+        linkEl.select();
+      }
+    });
+    block.style.display = 'block';
+  } catch (e) { /* silent */ }
+});
+
+// ── サンプル ペルソナ gallery ──
+// 架空の MUer 15 名が「今日もらった一着」を実在の MUGEN drop と共に表示。
+// 画像クリックで購入動線へ (/mugen?drop=XXX のような従来 URL ではなく、
+// その商品の現在ページにジャンプ — MUGEN は商品ごとに detail ページが
+// あるわけではなく一覧なので、トップに飛ばす + 該当 drop をハイライト)。
+document.addEventListener('DOMContentLoaded', async () => {
+  const grid = document.getElementById('sample-grid');
+  if (!grid) return;
+  try {
+    const r = await fetch('/api/sample_personas');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const list = (data.personas || []).filter(p => p.product_id);
+    if (list.length === 0) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;font-size:11px;opacity:0.45">まだ生成されていません — 今日 9:00 (JST) に表示されます</div>';
+      return;
+    }
+    grid.innerHTML = list.map(p => {
+      const img = p.product_image
+        ? `<img src="${escapeAttr(p.product_image)}" alt="${escapeAttr(p.today_design_name)}" class="sp-img" loading="lazy">`
+        : `<div class="sp-img placeholder">${escapeHTML(p.avatar_glyph||'·')}</div>`;
+      const price = p.product_price_jpy ? `¥${(p.product_price_jpy).toLocaleString('ja-JP')}` : '';
+      const buyHref = p.product_id ? `/mugen` : '#';
+      return `
+        <div class="sp-card">
+          <a class="sp-link" href="${buyHref}" title="この一着を購入する">
+            ${img}
+          </a>
+          <div class="sp-body">
+            <div class="sp-head">
+              <div class="sp-glyph" aria-hidden="true">${escapeHTML(p.avatar_glyph||'·')}</div>
+              <div class="sp-name">${escapeHTML(p.display_name)}</div>
+            </div>
+            <div class="sp-bio">${escapeHTML(p.bio)}</div>
+            <div class="sp-design">${escapeHTML(p.today_design_name||'')}</div>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
+              <span class="sp-meta">Day ${p.day_num||1} · MUGEN</span>
+              <span class="sp-price">${price}</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = `<div style="grid-column:1/-1;text-align:center;font-size:11px;opacity:0.45">読み込みに失敗: ${escapeHTML(e.message)}</div>`;
+  }
+});
+
+function escapeHTML(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escapeAttr(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+$('#taste-form').addEventListener('submit', async e=>{
+  e.preventDefault();
+  const btn = e.target.querySelector('.submit');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '生成中…';
+  const fd = new FormData(e.target);
+  const payload = {
+    email: (fd.get('email')||'').toString().trim(),
+    bio: (fd.get('bio')||'').toString().trim(),
+    mood: selected('mood'),
+    palette: selected('palette'),
+    scene: selected('scene'),
+    size: (selected('size')[0] || 'S'),
+    ref_slug: localStorage.getItem('mu_you_ref') || undefined,
+  };
+  if (!payload.email || !payload.email.includes('@')) {
+    toast('メールアドレスを確認してください', true);
+    btn.disabled = false; btn.textContent = orig; return;
+  }
+  try {
+    const r = await api('/api/you/subscribe', payload);
+    token = r.token;
+    localStorage.setItem('mu_you_token', token);
+    if (window.banto_report_signup) window.banto_report_signup(1.0);
+    if (r.today) showDesign(r.today);
+    if (r.share_url) updateShareBar(r.share_url, r.slug);
+    if (r.subscription) {
+      applySubscriptionUI(r.subscription,
+        (r.today && r.today.day_num) || 1,
+        r.style_name || '');
+    }
+    document.getElementById('preview').scrollIntoView({behavior:'smooth'});
+    toast(r.today && r.today.gen_status === 'generating'
+      ? '登録完了。Gemini が本日の一着を描いています…'
+      : '登録完了。本日の案を生成しました');
+    if (r.history) showHistory(r.history);
+  } catch(e){
+    toast('登録失敗：' + e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+});
+
+$('#skip-btn').addEventListener('click', async ()=>{
+  const id = $('#preview').dataset.designId;
+  if (!token || !id) return;
+  try {
+    await api('/api/you/feedback', {token, design_id: Number(id), action: 'skip'});
+    // Friendlier feedback message (was 'Skip 受付。明日の案に反映します').
+    var msgs = [
+      '✗ ありがとう。 明日は 別系統 試します',
+      '✗ 受付。 違うトーン で 明朝 出します',
+      '✗ OK。 prompt を 調整して 明日 再挑戦',
+      '✗ 反映。 1着 ごと に 好み が 確実 に 寄って いきます'
+    ];
+    toast(msgs[Math.floor(Math.random() * msgs.length)]);
+  } catch(e){ toast(e.message, true); }
+});
+
+$('#refresh-btn').addEventListener('click', async ()=>{
+  const id = $('#preview').dataset.designId;
+  if (!token || !id) return;
+  $('#refresh-btn').disabled = true;
+  try {
+    const r = await api('/api/you/feedback', {token, design_id: Number(id), action: 'refresh'});
+    // Force the loading overlay even before polling kicks in
+    if (r.today) {
+      r.today.gen_status = 'generating';
+      showDesign(r.today);
+    }
+    toast('再生成中…30〜60秒');
+  } catch(e){
+    toast(e.message, true);
+  } finally {
+    $('#refresh-btn').disabled = false;
+  }
+});
+
+// SHARE / SLUG handlers
+async function copyToClipboard(text){
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch(e){
+    const el = $('#share-url');
+    el.select(); document.execCommand('copy');
+    return true;
+  }
+}
+
+$('#copy-btn').addEventListener('click', async ()=>{
+  const url = $('#share-url').value;
+  if (!url) return;
+  if (await copyToClipboard(url)) toast('コピーしました');
+});
+
+$('#share-ig').addEventListener('click', async e=>{
+  e.preventDefault();
+  const url = $('#share-url').value;
+  if (!url) return;
+  if (await copyToClipboard(url)) toast('URLをコピー — Instagram のプロフィール / ストーリーに貼り付けてください');
+});
+
+$('#slug-save').addEventListener('click', async ()=>{
+  const slug = ($('#slug-input').value || '').trim().toLowerCase();
+  const msg = $('#slug-msg');
+  msg.classList.remove('ok','err');
+  if (!/^[a-z0-9][a-z0-9_-]{2,31}$/.test(slug)) {
+    msg.classList.add('err');
+    msg.textContent = '無効：3〜32文字、a-z/0-9/-/_、先頭は英数字';
+    return;
+  }
+  if (!token) { toast('まず登録してください', true); return; }
+  $('#slug-save').disabled = true;
+  try {
+    const r = await api('/api/you/slug', {token, slug});
+    msg.classList.add('ok');
+    msg.textContent = '✓ 設定完了：' + r.share_url;
+    updateShareBar(r.share_url, r.slug);
+    toast('スラッグ設定完了');
+  } catch(e){
+    msg.classList.add('err');
+    msg.textContent = '✗ ' + e.message;
+  } finally {
+    $('#slug-save').disabled = false;
+  }
+});
+
+// Wire size-row picker (sticky to localStorage) and feed it into /api/you/claim.
+(function () {
+  var savedSize = null;
+  try { savedSize = localStorage.getItem('mu_you_size'); } catch (_) {}
+  var row = document.getElementById('claim-size-row');
+  if (row) {
+    if (savedSize) {
+      row.querySelectorAll('.size').forEach(function (s) {
+        s.classList.toggle('on', s.getAttribute('data-s') === savedSize);
+      });
+      // Show 'previously: X' hint for returning buyers
+      var prevEl = document.getElementById('claim-size-prev');
+      var prevV = document.getElementById('claim-size-prev-v');
+      if (prevEl && prevV) {
+        prevEl.style.display = 'inline';
+        prevV.textContent = savedSize;
+      }
+    }
+    row.querySelectorAll('.size').forEach(function (s) {
+      s.addEventListener('click', function () {
+        row.querySelectorAll('.size').forEach(function (x) { x.classList.remove('on'); });
+        s.classList.add('on');
+        var v = s.getAttribute('data-s');
+        try { localStorage.setItem('mu_you_size', v); } catch (_) {}
+      });
+    });
+  }
+  function pickedSize () {
+    var sel = row ? row.querySelector('.size.on') : null;
+    return sel ? sel.getAttribute('data-s') : null;
+  }
+  window.__youPickedSize = pickedSize;
+
+  // Show 'this month you've claimed N' reminder if N == 0.
+  // Uses localStorage as best-effort tracking (server-side count not exposed).
+  try {
+    var monthKey = 'mu_you_claim_' + new Date().toISOString().slice(0, 7);
+    var monthCnt = parseInt(localStorage.getItem(monthKey) || '0', 10);
+    var rem = document.getElementById('claim-month-reminder');
+    var cntEl = document.getElementById('claim-month-cnt');
+    if (rem && cntEl && monthCnt === 0) {
+      rem.style.display = 'block';
+      cntEl.textContent = '0';
+    }
+    // Increment on successful claim — hook into existing claim-btn flow.
+    var origBtn = document.getElementById('claim-btn');
+    if (origBtn) {
+      var orig = origBtn.onclick;
+      // Use addEventListener wrap so existing handler still fires.
+      origBtn.addEventListener('click', function () {
+        try {
+          var n = parseInt(localStorage.getItem(monthKey) || '0', 10) + 1;
+          localStorage.setItem(monthKey, String(n));
+        } catch (_) {}
+      });
+    }
+  } catch (_) {}
+})();
+
+$('#claim-btn').addEventListener('click', async ()=>{
+  const id = $('#preview').dataset.designId;
+  if (!token || !id) {
+    toast('まず登録してください', true); return;
+  }
+  $('#claim-btn').disabled = true;
+  $('#claim-btn').textContent = '決済画面に移動中…';
+  try {
+    const size = (window.__youPickedSize && window.__youPickedSize()) || 'M';
+    const r = await api('/api/you/claim', {token, design_id: Number(id), size});
+    if (r.url) {
+      window.location.href = r.url;
+    } else {
+      toast(r.message || '決済URL取得に失敗', true);
+      $('#claim-btn').disabled = false;
+      $('#claim-btn').textContent = 'この一着を仕立てる';
+    }
+  } catch(e){
+    toast(e.message, true);
+    $('#claim-btn').disabled = false;
+    $('#claim-btn').textContent = 'この一着を仕立てる';
+  }
+});
+
+$('#unsub-link').addEventListener('click', async e=>{
+  e.preventDefault();
+  if (!token) { toast('登録情報がありません', true); return; }
+  if (!confirm('退会します。よろしいですか？')) return;
+  try {
+    await api('/api/you/unsubscribe', {token});
+    localStorage.removeItem('mu_you_token');
+    toast('退会しました');
+    setTimeout(()=>location.reload(), 1500);
+  } catch(e){ toast(e.message, true); }
+});
+
+// TASTE EDIT
+$('#taste-edit-toggle').addEventListener('click', ()=>{
+  const f = $('#taste-edit-form');
+  f.classList.toggle('show');
+  if (f.classList.contains('show')) {
+    f.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+});
+
+$('#taste-edit-save').addEventListener('click', async ()=>{
+  if (!token) { toast('まず登録してください', true); return; }
+  const btn = $('#taste-edit-save');
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = '保存中…';
+  const payload = {
+    token,
+    mood: selected('te_mood'),
+    palette: selected('te_palette'),
+    scene: selected('te_scene'),
+    size: (selected('te_size')[0] || 'S'),
+    bio: ($('#te-bio').value || '').trim(),
+  };
+  try {
+    const r = await api('/api/you/taste', payload);
+    if (r.share_url) updateShareBar(r.share_url, r.slug);
+    toast('プロンプト更新完了。再生成中…');
+    $('#taste-edit-form').classList.remove('show');
+    // Reload to pick up the regenerated design
+    if (token) loadDaily(token);
+    document.getElementById('preview').scrollIntoView({behavior:'smooth'});
+  } catch(e){
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
+
+if (token) {
+  loadDaily(token);
+  $('#taste-edit-bar').classList.add('show');
+}
+</script>
+<script src="/exit-funnel.js" defer></script>
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>

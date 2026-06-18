@@ -1,0 +1,80 @@
+宛先: info@thebridge.jp
+件名: 【リリース・取材打診】"人間がいないアパレル" MU 公開 — メルカリ元 CPO がコード全公開 (MIT) で運営自律化を実験
+差出人: 濱田 優貴 (株式会社イネブラ) <yuki@hamada.tokyo>
+
+——————————————————————
+
+THE BRIDGE 編集部 御中
+
+突然のご連絡失礼いたします。
+株式会社イネブラ 代表取締役の濱田と申します（メルカリ 元 CPO）。
+
+弊社は 2026 年 5 月 7 日、運営判断にほぼ人間が介在しないアパレル
+ブランド「MU」（wearmu.com）を公開しました。同時に実装コードを
+GitHub で MIT ライセンスのもと完全公開しています。
+
+▼ 一行で
+AI が毎時デザインを生成、北海道弟子屈町の気温が生産枚数を決め、
+売れるほど価格が上がる（累進価格 = ボンディングカーブ）。
+
+▼ THE BRIDGE 読者向けに刺さりそうな 3 点
+
+01 "会社に人がいない" は本当か、を検証可能にした
+   ブランド公開と同時にコードを github.com/yukihamada/mu-brand に
+   MIT で公開。「AI が運営している」という主張を誰でも検証・複製・
+   派生開発できる形にしました。スタートアップ報道でしばしば曖昧に
+   されがちな "AI が動かしている" を、コードで担保する形です。
+
+02 累進価格（売れるほど高くなる）の実装と効果
+   1 着目 ¥5,000、1 着売れるごとに ¥250 上昇、上限 ¥30,000。
+   Web3 のボンディングカーブに近い設計を、Web3 を使わずに Stripe で
+   実装。"待てば安くなる" ではなく "今動かないと高くなる" という、
+   セール文化の逆方向の購買体験を追求しました。
+
+03 完全 OSS テンプレートとしての配布
+   入力データ（気温、価格曲線、AI プロンプト、製造業者）を差し替えれば、
+   別のブランドを最小工数で派生できる構造です。「東京の都市データを
+   オラクルにした」MU CITY という派生ライン (wearmu.com/city) も
+   公開済みで、他都市・他産業への fork を念頭においています。
+
+▼ 技術スタック（BRIDGE 読者の関心点）
+- Rust 1.88+ / Axum 0.7 / SQLite (rusqlite, WAL) / Tokio
+- Hosting: Fly.io (NRT, ARM64)
+- Design generation: Google Gemini (gemini-3-pro-image-preview)
+- Weather oracle: wttr.in (Teshikaga, Hokkaido)
+- Manufacturing: Printful (global on-demand)
+- Payments: Stripe Checkout (JPY)
+- NFT certificates: Solana compressed NFTs via Helius (MA ライン)
+- Cron: Python (generate.py, reprice.py)
+
+▼ プロダクト 3 ライン
+
+| ライン | 頻度 | 数量の根拠 | 価格 |
+|---|---|---|---|
+| MUGEN 無限 | 毎時 (:00) | ドロップ番号 (#1〜#108 サイクル) | ¥5,000〜¥30,000（累進） |
+| MUON 無音 | 毎日 (00:00 JST) | 弟子屈町の気温 (°C) | ¥5,000〜（累進） |
+| 間 MA | 週 1 回 (毎週月曜) | 世界に 1 着、7 日間オークション | ¥30,000〜 |
+
+▼ プレスリリース・素材
+本文：　　　https://wearmu.com/press
+GitHub：　 https://github.com/yukihamada/mu-brand
+体験：　　 https://wearmu.com
+MU CITY：　https://wearmu.com/city
+弊社 blog：https://enablerdao.com/blog/mu-launch-2026-05-07
+
+▼ 取材ご希望に応じて
+- 創業者インタビュー（「AI as operator, not assistant」という発想の経緯）
+- 技術解説（Rust + Stripe + Gemini + Printful の連携、累進価格エンジン）
+- 実機動作のライブ操作（毎時生成のリアルタイム閲覧）
+- 1 シーズン分の生成済デザインデータ・売上構造の開示（範囲応相談）
+
+率直なご感想・厳しめのご質問も大歓迎です。
+Discord での問い合わせ運用に切り替えられている旨も拝見しましたが、
+こちらは「プレスリリース送付＋取材検討の打診」ですので、まずは
+編集部窓口にお送りいたします。Discord への移行が必要であればその
+旨ご教示いただければ幸いです。
+
+濱田 優貴
+株式会社イネブラ（Enabler Inc.）代表取締役
+yuki@hamada.tokyo / mail@yukihamada.jp 
+〒102-0074 東京都千代田区九段南 1-5-6 りそな九段ビル 5 階 KS フロア

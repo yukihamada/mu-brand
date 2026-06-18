@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NL → 商品 · admin</title>
+<meta name="robots" content="noindex,nofollow">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;padding:32px 28px 60px;max-width:780px;margin:0 auto;font-feature-settings:"palt"}
+h1{font-size:26px;font-weight:300;letter-spacing:0.06em;color:#fff;margin-bottom:6px}
+h1 b{color:#e6c449;font-weight:700}
+.muted{color:rgba(245,245,240,0.55);font-size:12px;letter-spacing:0.04em;margin-bottom:24px}
+.muted a{color:#e6c449}
+.panel{padding:28px 24px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.3);border-radius:8px;margin-bottom:18px}
+label{display:block;font-size:10.5px;color:#e6c449;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;margin-bottom:7px}
+label .opt{opacity:0.5;letter-spacing:0;font-weight:500;text-transform:none;font-size:10px;margin-left:4px}
+textarea{width:100%;padding:14px 16px;background:rgba(255,255,255,0.06);color:#F5F5F0;border:1px solid rgba(255,255,255,0.14);border-radius:4px;font-size:15px;font-family:inherit;-webkit-appearance:none;resize:vertical;min-height:120px;line-height:1.55}
+textarea:focus{border-color:#e6c449;outline:none}
+button.primary{display:block;width:100%;padding:20px 24px;min-height:60px;background:#e6c449;color:#0A0A0A;border:none;border-radius:6px;font-weight:800;font-size:14px;letter-spacing:0.2em;text-transform:uppercase;cursor:pointer;font-family:inherit;margin-top:18px}
+button.primary:hover{background:#f5d56f}
+button.primary[disabled]{background:#333;color:#888;cursor:not-allowed}
+button.secondary{display:inline-block;padding:14px 20px;background:rgba(255,255,255,0.08);color:#F5F5F0;border:1px solid rgba(230,196,73,0.4);border-radius:5px;font-weight:600;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;font-family:inherit;margin:6px 6px 0 0}
+button.secondary:hover{background:rgba(230,196,73,0.12)}
+button.danger{border-color:rgba(220,80,80,0.5);color:#ffb0b0}
+button.danger:hover{background:rgba(220,80,80,0.12)}
+.hint{font-size:11.5px;color:rgba(245,245,240,0.55);margin-top:6px;line-height:1.6}
+.examples{font-size:11.5px;color:rgba(245,245,240,0.55);margin-top:8px;line-height:1.9}
+.examples b{color:#e6c449;font-weight:700;letter-spacing:0.04em}
+.examples code{background:rgba(255,255,255,0.05);padding:1px 6px;border-radius:3px;color:#ddd;cursor:pointer}
+.examples code:hover{background:rgba(230,196,73,0.15);color:#fff}
+.status{margin-top:14px;padding:14px;background:#000;border:1px solid rgba(230,196,73,0.3);border-radius:4px;font-size:13px;color:#e6c449;display:none}
+.status.error{border-color:rgba(220,80,80,0.5);color:#ff9090}
+.status.success{border-color:rgba(120,220,120,0.5);color:#9bf09b}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(230,196,73,0.3);border-top-color:#e6c449;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:middle;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.preview{display:none;margin-top:16px}
+.preview-card{padding:18px;background:#000;border:1px solid rgba(255,255,255,0.1);border-radius:6px;text-align:center}
+.preview-card img{max-width:300px;max-height:300px;border-radius:4px;margin-bottom:14px}
+.preview-meta{font-size:12px;color:rgba(245,245,240,0.7);margin-bottom:14px;line-height:1.7}
+.preview-meta b{color:#e6c449}
+.actions{display:flex;flex-wrap:wrap;justify-content:center;margin-top:8px}
+.foot{margin-top:30px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;color:rgba(245,245,240,0.45);text-align:center}
+.foot a{color:rgba(245,245,240,0.65)}
+.spec-table{font-family:Menlo,Monaco,monospace;font-size:11.5px;color:rgba(245,245,240,0.85);background:rgba(255,255,255,0.04);padding:10px 14px;border-radius:4px;margin:10px 0;text-align:left;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
+</style>
+</head>
+<body>
+
+<h1>NL → <b>商品</b></h1>
+<p class="muted">/admin/create · admin gated · 関連: <a href="/admin/product/new?token=__TOKEN__">手動 add</a> · <a href="/admin">/admin</a></p>
+
+<div class="panel">
+  <label>どんな 商品 を 作りますか? <span class="opt">自由 記述 · 日本語 / English</span></label>
+  <textarea id="nl-text" placeholder="例: 黒 hoodie に 鯉が登る design / brand=mu_dragon / ¥7800
+
+Claude haiku が 1-2秒 で spec 抽出 → 即 placeholder preview → 背景で Gemini + Printful (30秒〜)。 polling は 1秒 ごと。"></textarea>
+  <p class="examples">
+    <b>例 (クリックで 入力):</b><br>
+    <code class="example">黒 tee に 麻の葉 pattern, minimal black on white</code><br>
+    <code class="example">white ceramic mug, single mu glyph centered</code><br>
+    <code class="example">tote bag with crescent moon line drawing, ¥3500</code><br>
+    <code class="example">kiss-cut sticker, neon koi, brand=mu_dragon</code><br>
+    <code class="example">hoodie navy, asanoha + waves, brand=mu_jp ¥7800</code>
+  </p>
+  <button class="primary" id="submit-btn">作 る</button>
+  <div class="status" id="status"></div>
+</div>
+
+<div class="preview" id="preview">
+  <div class="preview-card">
+    <img id="mockup-img" alt="mockup preview" onerror="this.src='https://mockups.wearmu.com/hero.png';this.onerror=null">
+    <div class="preview-meta" id="preview-meta"></div>
+    <div class="spec-table" id="spec-table"></div>
+    <div class="actions">
+      <button class="secondary" id="publish-btn">公開 する</button>
+      <button class="secondary" id="reroll-btn">微 修正 · 再 生成</button>
+      <button class="secondary danger" id="discard-btn">破 棄</button>
+    </div>
+  </div>
+</div>
+
+<p class="foot">— Enabler Inc. · admin only</p>
+
+<script>
+var ADMIN_TOKEN = __TOKEN_JS__;
+// Instant-preview UX: poll every 1s so placeholder→mockup swap feels live.
+// 5min cap is far more than the 30-40s pipeline normally needs.
+var POLL_INTERVAL_MS = 1000;
+var POLL_TIMEOUT_MS = 5 * 60 * 1000;
+var PREVIEW_HINT_MS = 3000;  // > 3s with no preview → show "parsing 遅延" hint
+
+function tokenQuery() { return 'token=' + encodeURIComponent(ADMIN_TOKEN); }
+
+function setStatus(text, cls) {
+  var s = document.getElementById('status');
+  s.style.display = text ? 'block' : 'none';
+  s.className = 'status' + (cls ? ' ' + cls : '');
+  s.innerHTML = text;
+}
+
+function showPreview(result) {
+  var preview = document.getElementById('preview');
+  document.getElementById('mockup-img').src = result.mockup_url || result.design_url || 'https://mockups.wearmu.com/hero.png';
+  var spec = result.spec || {};
+  document.getElementById('preview-meta').innerHTML =
+    '<b>' + (spec.product_kind || '?') + '</b> · <b>' + (spec.brand || 'mu') + '</b> · ' +
+    (spec.color || 'BLK') + ' · ' + (spec.size_default || 'M') + ' · ¥' +
+    (spec.price_jpy || 0).toLocaleString() + '<br>' +
+    'id=' + result.id + ' · serial=' + (result.serial_code || '?') + '<br>' +
+    'parser=' + (spec._parser || '?') + ' · ' + (result.duration_s || 0) + 's';
+  document.getElementById('spec-table').textContent =
+    'design_concept: ' + (spec.design_concept || '') + '\n' +
+    'tags: ' + JSON.stringify(spec.tags || []) + '\n' +
+    (result.trademark_warn ? 'WARN trademark: ' + JSON.stringify(result.trademark_warn) + '\n' : '') +
+    'design_url: ' + (result.design_url || '') + '\n' +
+    'mockup_url: ' + (result.mockup_url || '(printful pending)');
+  preview.style.display = 'block';
+  preview.dataset.id = result.id;
+  preview.dataset.input = document.getElementById('nl-text').value;
+  preview.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+
+function hidePreview() {
+  document.getElementById('preview').style.display = 'none';
+}
+
+function startJob(text) {
+  setStatus('<span class="spinner"></span>送信 中…', '');
+  var btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  hidePreview();
+
+  fetch('/api/admin/create/start?' + tokenQuery(), {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: text})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(j) {
+    if (!j || !j.ok || !j.job_id) {
+      setStatus('開始 失敗: ' + ((j && j.error) || 'unknown'), 'error');
+      btn.disabled = false;
+      return;
+    }
+    pollJob(j.job_id, Date.now());
+  })
+  .catch(function(e) {
+    setStatus('ネットワーク エラー: ' + (e.message || e), 'error');
+    btn.disabled = false;
+  });
+}
+
+function pollJob(jobId, startedAt) {
+  var elapsedMs = Date.now() - startedAt;
+  var elapsed = Math.round(elapsedMs / 1000);
+  fetch('/api/admin/create/status/' + encodeURIComponent(jobId) + '?' + tokenQuery())
+    .then(function(r) { return r.json(); })
+    .then(function(j) {
+      var btn = document.getElementById('submit-btn');
+      if (!j) { setStatus('status fetch 失敗', 'error'); btn.disabled = false; return; }
+      // Backend status values: parsing | preview_ready | generating | done | error
+      if (j.status === 'done') {
+        btn.disabled = false;
+        var output = {
+          ok: !j.error,
+          id: j.product_id,
+          spec: j.spec || {},
+          mockup_url: j.mockup_url || j.preview_url,
+          design_url: j.design_url,
+          duration_s: elapsed,
+          error: j.error,
+        };
+        if (output.ok) {
+          setStatus('✓ 完了 · id=' + output.id + ' · ' + elapsed + 's', 'success');
+          showPreview(output);
+        } else {
+          setStatus('生成 失敗: ' + (output.error || 'unknown'), 'error');
+        }
+        return;
+      }
+      if (j.status === 'error' || j.status === 'failed') {
+        setStatus('Job 失敗: ' + (j.error || 'unknown'), 'error');
+        btn.disabled = false;
+        // Still show whatever we have so the operator can debug.
+        if (j.preview_url || j.mockup_url || j.spec) {
+          showPreview({
+            ok: false, id: j.product_id || '(preview)', spec: j.spec || {},
+            mockup_url: j.mockup_url || j.preview_url, design_url: j.design_url,
+            duration_s: elapsed,
+          });
+        }
+        return;
+      }
+      // generating: placeholder is already up, just update the status line.
+      if (j.status === 'generating') {
+        setStatus('<span class="spinner"></span>Gemini + Printful 生成 中… ' + elapsed + 's', '');
+        if (j.preview_url) {
+          showPreview({
+            ok: true, id: j.product_id || '(preview)', spec: j.spec || {},
+            mockup_url: j.preview_url, design_url: j.design_url, duration_s: elapsed,
+          });
+        }
+      }
+      // preview_ready: show the placeholder mockup while generation continues
+      else if (j.status === 'preview_ready' && j.preview_url) {
+        setStatus('<span class="spinner"></span>preview OK · Gemini 生成 中… ' + elapsed + 's', '');
+        showPreview({
+          ok: true,
+          id: j.product_id || '(preview)',
+          spec: j.spec || {},
+          mockup_url: j.preview_url,
+          design_url: j.design_url,
+          duration_s: elapsed,
+        });
+      }
+      // parsing: < 3s, show normal spinner; > 3s, show 遅延 hint.
+      else if (elapsedMs > PREVIEW_HINT_MS) {
+        setStatus('<span class="spinner"></span>parsing 遅延、 続行中… ' + elapsed + 's', '');
+      } else {
+        setStatus('<span class="spinner"></span>parsing… (Claude haiku) ' + elapsed + 's', '');
+      }
+      if (elapsedMs > POLL_TIMEOUT_MS) {
+        setStatus('タイムアウト (5分)。 logs を 確認 してください。', 'error');
+        btn.disabled = false;
+        return;
+      }
+      setTimeout(function() { pollJob(jobId, startedAt); }, POLL_INTERVAL_MS);
+    })
+    .catch(function() {
+      // Transient — retry
+      setTimeout(function() { pollJob(jobId, startedAt); }, POLL_INTERVAL_MS);
+    });
+}
+
+function actionOnProduct(id, action) {
+  if (!id) return;
+  if (action === 'discard' && !confirm('破棄 します。 よろしいですか?')) return;
+  setStatus('<span class="spinner"></span>' + action + ' 実行 中…', '');
+  fetch('/api/admin/create/' + encodeURIComponent(id) + '/' + action + '?' + tokenQuery(), {
+    method: 'POST'
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(j) {
+    if (j && j.ok) {
+      setStatus('✓ ' + action + ' OK', 'success');
+      if (action === 'discard') hidePreview();
+    } else {
+      setStatus(action + ' 失敗: ' + ((j && j.error) || 'unknown'), 'error');
+    }
+  })
+  .catch(function(e) { setStatus(action + ' エラー: ' + (e.message || e), 'error'); });
+}
+
+document.getElementById('submit-btn').addEventListener('click', function() {
+  var text = (document.getElementById('nl-text').value || '').trim();
+  if (text.length < 3) { setStatus('もう少し 詳しく 書いて ください', 'error'); return; }
+  startJob(text);
+});
+
+document.querySelectorAll('.example').forEach(function(el) {
+  el.addEventListener('click', function() {
+    document.getElementById('nl-text').value = el.textContent;
+    document.getElementById('nl-text').focus();
+  });
+});
+
+document.getElementById('publish-btn').addEventListener('click', function() {
+  var id = document.getElementById('preview').dataset.id;
+  actionOnProduct(id, 'publish');
+});
+document.getElementById('discard-btn').addEventListener('click', function() {
+  var id = document.getElementById('preview').dataset.id;
+  actionOnProduct(id, 'discard');
+});
+document.getElementById('reroll-btn').addEventListener('click', function() {
+  // Re-roll: discard the current product, then submit the same text again
+  var pv = document.getElementById('preview');
+  var id = pv.dataset.id;
+  var text = pv.dataset.input;
+  if (!id || !text) return;
+  if (!confirm('この 商品 を 破棄 して 同じ 入力 で 再 生成 します。 よろしいですか?')) return;
+  fetch('/api/admin/create/' + encodeURIComponent(id) + '/discard?' + tokenQuery(),
+        {method: 'POST'})
+    .then(function() { hidePreview(); startJob(text); })
+    .catch(function() { startJob(text); });
+});
+</script>
+</body>
+</html>

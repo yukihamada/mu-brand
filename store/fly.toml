@@ -1,0 +1,42 @@
+app = "mu-store"
+primary_region = "nrt"
+
+[build]
+
+[mounts]
+  source = "mu_store_data"
+  destination = "/data"
+
+# SQLite volume = single-writer. We stay on 1 machine but lean hard on
+# auto-restart: Fly's platform reboots the VM on health-check failures or
+# crashes, and we ban auto-stop so it always stays warm.
+[[services]]
+  internal_port = 3000
+  protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  # HTTP liveness check. 3 consecutive failures → Fly restarts the VM.
+  # grace_period is generous (90s) because Rust startup + first agent fire
+  # can take 30-60s and the deep /healthz needs a journal entry to exist.
+  # Combined with the in-process 15min warmup grace, deploys don't bounce.
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "90s"
+    method = "GET"
+    path = "/healthz"
+    protocol = "http"
+    tls_skip_verify = false
+    [services.http_checks.headers]
+
+[env]
+  PORT = "3000"
+  DB_PATH = "/data/products.db"

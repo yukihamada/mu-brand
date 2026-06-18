@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>━◯━ MU × JiuFight 2026 — 印刷用 A4 フライヤー</title>
+<meta name="robots" content="noindex,nofollow">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  /* Print-first design. Open in browser → Cmd/Ctrl+P → A4 portrait → "背景のグラフィック" ON.
+     Layout is locked so what you see on screen is what prints. */
+  @page { size: A4 portrait; margin: 0; }
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { font-family: 'Helvetica Neue', 'Hiragino Sans', Arial, sans-serif; color: #0A0A0A; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .page {
+    width: 210mm; min-height: 297mm; margin: 0 auto;
+    background: #0A0A0A; color: #F5F5F0;
+    padding: 18mm 16mm; box-sizing: border-box;
+    position: relative;
+    display: flex; flex-direction: column;
+    page-break-after: always;
+  }
+  .mark { font-size: 11pt; letter-spacing: 0.45em; font-weight: 700; }
+  .eyebrow { font-size: 8pt; letter-spacing: 0.42em; text-transform: uppercase; color: #e6c449; margin-top: 8mm; }
+  h1 { font-size: 44pt; font-weight: 200; letter-spacing: 0.02em; line-height: 1.05; margin: 4mm 0 6mm; }
+  h1 em { color: #e6c449; font-style: normal; font-weight: 300; }
+  .date { font-size: 22pt; font-weight: 300; letter-spacing: 0.04em; margin-top: 2mm; }
+  .venue { font-size: 11pt; letter-spacing: 0.15em; text-transform: uppercase; color: rgba(245,245,240,0.65); margin-top: 2mm; }
+  .lede { font-size: 11.5pt; line-height: 1.85; color: rgba(245,245,240,0.78); margin-top: 8mm; max-width: 110mm; }
+  .qr-block { display: flex; gap: 10mm; margin-top: auto; padding-top: 12mm; align-items: flex-end; }
+  .qr-img { width: 52mm; height: 52mm; background: #fff; padding: 3mm; box-sizing: border-box; border-radius: 1mm; }
+  .qr-cap { flex: 1; font-size: 9pt; letter-spacing: 0.06em; line-height: 1.7; color: rgba(245,245,240,0.7); padding-bottom: 2mm; }
+  .qr-cap strong { color: #F5F5F0; font-weight: 500; }
+  .qr-cap .url { font-family: 'SF Mono', 'Menlo', monospace; font-size: 11pt; color: #e6c449; letter-spacing: 0.02em; display: block; margin-top: 2mm; }
+  .footer-strip { display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.18); margin-top: 8mm; padding-top: 4mm; font-size: 8pt; letter-spacing: 0.18em; color: rgba(245,245,240,0.5); text-transform: uppercase; }
+  .corner { position: absolute; top: 14mm; right: 16mm; font-size: 8.5pt; letter-spacing: 0.3em; opacity: 0.65; }
+  .skuset { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; margin-top: 8mm; }
+  .sku { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); padding: 5mm 4mm; border-radius: 1mm; }
+  .sku .kind { font-size: 7.5pt; letter-spacing: 0.32em; text-transform: uppercase; color: #e6c449; }
+  .sku .price { font-size: 14pt; font-weight: 300; margin-top: 1mm; font-variant-numeric: tabular-nums; }
+  .sku .note { font-size: 8pt; color: rgba(245,245,240,0.55); margin-top: 1mm; line-height: 1.5; }
+  @media screen {
+    body { background: #ddd; padding: 20px 0; }
+    .page { box-shadow: 0 4px 30px rgba(0,0,0,0.3); margin-bottom: 24px; }
+    .print-hint { max-width: 210mm; margin: 0 auto 16px; font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; color: #555; padding: 14px 18px; background: #fffbea; border: 1px solid #e6c449; border-radius: 4px; }
+  }
+  @media print { .print-hint { display: none; } }
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<div class="print-hint">
+  <strong>印刷手順</strong>: Cmd/Ctrl+P → 用紙 A4 縦 → 背景のグラフィック ON → 余白「なし」。<br>
+  QR は <code>api.qrserver.com</code> 経由で生成しています。 オフラインの場合は QR 画像が空白になるので、 一度オンラインで開いてから印刷してください。
+</div>
+
+<!-- Page 1: hero flyer -->
+<div class="page">
+  <div class="corner">━◯━ MU · YAWARA SWEEP CUP 2026</div>
+
+  <div class="mark">━◯━ MU</div>
+  <div class="eyebrow">JiuFight 2026 · BJJ Tournament Capsule</div>
+  <h1>
+    SUPER<br>
+    <em>YAWARA SWEEP</em><br>
+    CUP 2026
+  </h1>
+  <div class="date">2026.05.24 (土)</div>
+  <div class="venue">Tokyo Tower · 早慶対抗 · 公開トーナメント</div>
+
+  <p class="lede">
+    YAWARA × SWEEP 主催 BJJ 公開試合 — MU 公式 capsule。
+    出場選手 / 観戦者向けの 50 SKU を Printful で当日発送。
+    会場ブースでも QR スキャンで wearmu.com の在庫がそのまま買えます。
+  </p>
+
+  <div class="qr-block">
+    <img class="qr-img" alt="QR → wearmu.com/jiufight"
+         src="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=https%3A%2F%2Fwearmu.com%2Fjiufight&margin=0&format=svg">
+    <div class="qr-cap">
+      <strong>会場ブースで スキャン</strong><br>
+      Tシャツ・ラッシュガード・キャップ・応援グッズ 全 50 SKU。 全国 10-14 日発送 (Printful)。
+      <span class="url">wearmu.com/jiufight</span>
+    </div>
+  </div>
+
+  <div class="footer-strip">
+    <span>━◯━ MU · wearmu.com</span>
+    <span>株式会社イネブラ</span>
+  </div>
+</div>
+
+<!-- Page 2: SKU price card (booth signage / handout) -->
+<div class="page">
+  <div class="corner">━◯━ MU · 価格表</div>
+
+  <div class="mark">━◯━ MU</div>
+  <div class="eyebrow">JiuFight 2026 — 価格表 / Pricing</div>
+  <h1 style="font-size:30pt"><em>当日価格</em> 全 50 SKU</h1>
+  <div class="venue">10-14日で発送 · Printful · 全国対応</div>
+
+  <div class="skuset">
+    <div class="sku">
+      <div class="kind">Tシャツ</div>
+      <div class="price">¥4,500〜</div>
+      <div class="note">8 design × S/M/L/XL</div>
+    </div>
+    <div class="sku">
+      <div class="kind">ロングT</div>
+      <div class="price">¥5,800〜</div>
+      <div class="note">寒い試合場対応</div>
+    </div>
+    <div class="sku">
+      <div class="kind">パーカー</div>
+      <div class="price">¥7,800〜</div>
+      <div class="note">8.5oz heavy</div>
+    </div>
+    <div class="sku">
+      <div class="kind">ラッシュガード</div>
+      <div class="price">¥6,800〜</div>
+      <div class="note">スパー&試合対応</div>
+    </div>
+    <div class="sku">
+      <div class="kind">キャップ</div>
+      <div class="price">¥4,200〜</div>
+      <div class="note">アンパイア & 観戦</div>
+    </div>
+    <div class="sku">
+      <div class="kind">トート</div>
+      <div class="price">¥3,800〜</div>
+      <div class="note">道着・キックバッグ</div>
+    </div>
+    <div class="sku">
+      <div class="kind">タオル</div>
+      <div class="price">¥3,500〜</div>
+      <div class="note">マット脇 / 観戦応援</div>
+    </div>
+    <div class="sku">
+      <div class="kind">ステッカー</div>
+      <div class="price">¥800〜</div>
+      <div class="note">3 種 · MOQ なし</div>
+    </div>
+  </div>
+
+  <div class="qr-block">
+    <img class="qr-img" alt="QR"
+         src="https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=https%3A%2F%2Fwearmu.com%2Fjiufight&margin=0&format=svg">
+    <div class="qr-cap">
+      <strong>スキャン → そのまま 注文</strong><br>
+      会場決済 (現金 / カード / PayPay) または Stripe で WEB 決済。<br>
+      会場割: 当日 19:00 までの注文で <strong>¥500 OFF</strong> (coupon: <code style="color:#e6c449">YS2026</code>)。
+      <span class="url">wearmu.com/jiufight</span>
+    </div>
+  </div>
+
+  <div class="footer-strip">
+    <span>━◯━ MU · 2026.05.24</span>
+    <span>info@wearmu.com</span>
+  </div>
+</div>
+
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>

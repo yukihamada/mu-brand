@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>無音祭 — MU FESTIVAL · HAWAII 10.29–31</title>
+<meta name="description" content="無音祭 (MU FESTIVAL) · 2026.10.29–31 · HAWAII。世界一静かな、音楽フェス、三夜。無 → 月 → 円。日が沈み、月が昇る側で。入場券は売らない — MUGENのTシャツを着てきた人だけが、音の中に入れる。最終夜10.31はハロウィン。">
+<link rel="canonical" href="https://wearmu.com/fest">
+<meta property="og:title" content="無音祭 — MU FESTIVAL · HAWAII 2026.10.29–31">
+<meta property="og:description" content="世界一静かな、音楽フェス、三夜。無→月→円。入場券は、MUGENのTシャツ。着てきた人だけが、音の中に入れる。">
+<meta property="og:url" content="https://wearmu.com/fest">
+<meta property="og:image" content="https://wearmu.com/static/fest-og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://wearmu.com/static/fest-og.png">
+<style>
+  :root {
+    --black:#0A0A0A; --white:#FAFAFA; --red:#C8362C; --gold:#e6c449;
+    --grey:#1a1a1a; --line:rgba(250,250,250,0.10); --muted:rgba(250,250,250,0.45);
+  }
+  *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body { background:var(--black); color:var(--white);
+    font-family:'Helvetica Neue',Arial,'Hiragino Kaku Gothic ProN',sans-serif;
+    font-weight:200; -webkit-font-smoothing:antialiased; line-height:1.7; overflow-x:hidden; }
+  a { color:inherit; text-decoration:none; }
+  ::selection { background:var(--red); color:var(--white); }
+
+  /* ───────── ambient drifting 無 ───────── */
+  .ambient { position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }
+  .ambient span { position:absolute; font-size:clamp(120px,28vw,420px); font-weight:600;
+    color:#fff; opacity:0.018; user-select:none; animation:drift linear infinite; }
+  @keyframes drift {
+    0%   { transform:translateY(110vh) rotate(0deg); }
+    100% { transform:translateY(-60vh) rotate(8deg); }
+  }
+  @media (prefers-reduced-motion:reduce){ .ambient span{ animation:none; } }
+
+  nav { position:fixed; top:0; left:0; right:0; z-index:100; background:rgba(10,10,10,0.55);
+    backdrop-filter:blur(14px); display:flex; align-items:center; justify-content:space-between;
+    padding:18px 40px; border-bottom:1px solid var(--line); }
+  .nav-logo { font-size:13px; font-weight:600; letter-spacing:0.45em; }
+  .nav-right { display:flex; gap:24px; align-items:center; }
+  .nav-link { font-size:9px; letter-spacing:0.28em; text-transform:uppercase; opacity:0.5; }
+  .nav-link:hover { opacity:1; }
+  .nav-cta { font-size:9px; letter-spacing:0.24em; text-transform:uppercase; padding:9px 16px;
+    border:1px solid var(--red); color:var(--red); transition:all .2s; }
+  .nav-cta:hover { background:var(--red); color:var(--white); }
+
+  /* ───────── HERO ───────── */
+  .hero { position:relative; z-index:1; min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:18px; text-align:center; padding:130px 24px 80px; }
+  .hero-kicker { font-size:10px; letter-spacing:0.55em; text-transform:uppercase; opacity:0.5;
+    animation:fadeUp 1s ease both; }
+  .hero-mark { font-size:clamp(88px,21vw,300px); font-weight:600; letter-spacing:0.02em;
+    line-height:0.86; animation:fadeUp 1.1s .05s ease both; }
+  .hero-mark .acc { color:var(--red); display:inline-block; animation:beat 2.6s ease-in-out infinite; }
+  @keyframes beat { 0%,100%{transform:scale(1)} 8%{transform:scale(1.06)} 16%{transform:scale(1)} }
+  .hero-para { font-size:clamp(15px,2.6vw,22px); font-weight:200; letter-spacing:0.08em;
+    opacity:0.85; max-width:680px; animation:fadeUp 1.2s .12s ease both; }
+  .hero-para .q { color:var(--gold); }
+  .hero-meta { display:flex; gap:18px; align-items:center; font-size:clamp(11px,2vw,14px);
+    letter-spacing:0.3em; text-transform:uppercase; opacity:0.7; margin-top:6px;
+    animation:fadeUp 1.3s .18s ease both; flex-wrap:wrap; justify-content:center; }
+  .hero-meta .dot { opacity:0.3; }
+  .hero-where { font-size:10px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.35; }
+  .hero-arc { font-size:clamp(11px,2vw,14px); letter-spacing:0.22em; opacity:0.6; margin-top:2px;
+    animation:fadeUp 1.35s .2s ease both; }
+  .hero-arc b { color:var(--gold); font-weight:600; }
+  .hero-en { font-size:clamp(11px,1.8vw,13px); letter-spacing:0.04em; opacity:0.55; max-width:620px;
+    line-height:1.7; animation:fadeUp 1.25s .15s ease both; }
+  .count-cap { font-size:11px; letter-spacing:0.06em; opacity:0.5; max-width:520px; line-height:1.7;
+    margin-top:18px; animation:fadeUp 1.5s .3s ease both; }
+  .count-cap b { color:var(--gold); opacity:0.95; }
+  .count-cap span { opacity:0.7; }
+  /* honest / trust block */
+  .honest { position:relative; z-index:1; max-width:760px; margin:0 auto; padding:40px 24px; }
+  .honest .row { display:flex; gap:14px; padding:16px 0; border-bottom:1px solid var(--line); }
+  .honest .k { flex:0 0 92px; font-size:10px; letter-spacing:0.2em; text-transform:uppercase;
+    color:var(--gold); opacity:0.8; padding-top:3px; }
+  .honest .v { font-size:14px; font-weight:200; opacity:0.85; }
+  .honest .v .en { display:block; font-size:11px; opacity:0.5; margin-top:4px; letter-spacing:0.02em; }
+  .honest a { color:var(--gold); border-bottom:1px solid rgba(230,196,73,0.4); }
+  /* status / transparency board */
+  .status { max-width:720px; margin:0 auto; }
+  .srow { display:flex; gap:16px; align-items:flex-start; padding:14px 2px; border-bottom:1px solid var(--line); }
+  .sp { flex:0 0 80px; font-size:10px; letter-spacing:0.1em; text-align:center; font-weight:600;
+    padding-top:3px; white-space:nowrap; }
+  .sp.ok { color:#7fd1a8; } .sp.prog { color:#e6c449; } .sp.none { color:var(--muted); } .sp.live { color:#e89a7c; }
+  .sv { font-size:14px; font-weight:200; opacity:0.9; }
+  .sv b { font-weight:600; }
+  .sv .en { display:block; font-size:11px; opacity:0.45; margin-top:3px; letter-spacing:0.02em; }
+  @keyframes fadeUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:none} }
+
+  /* COUNTDOWN */
+  .count { display:flex; gap:clamp(14px,4vw,46px); margin-top:26px; animation:fadeUp 1.4s .24s ease both; }
+  .count .u { display:flex; flex-direction:column; align-items:center; }
+  .count .n { font-size:clamp(38px,8vw,86px); font-weight:600; letter-spacing:0.02em;
+    font-variant-numeric:tabular-nums; line-height:1; }
+  .count .l { font-size:9px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.4; margin-top:10px; }
+  .scroll-hint { margin-top:54px; font-size:9px; letter-spacing:0.3em; text-transform:uppercase;
+    opacity:0.3; animation:bob 2s ease-in-out infinite; }
+  @keyframes bob { 0%,100%{transform:translateY(0);opacity:0.3} 50%{transform:translateY(6px);opacity:0.6} }
+
+  /* ───────── SECTIONS ───────── */
+  section { position:relative; z-index:1; padding:96px 40px; border-top:1px solid var(--line);
+    max-width:1080px; margin:0 auto; }
+  .sec-head { font-size:11px; letter-spacing:0.35em; text-transform:uppercase; opacity:0.5; margin-bottom:30px; }
+  .lead { font-size:clamp(22px,3.4vw,38px); font-weight:200; letter-spacing:0.03em; line-height:1.45; max-width:820px; }
+  .lead .em { color:var(--gold); }
+  .lead .red { color:var(--red); }
+  p.body { font-size:14px; max-width:680px; opacity:0.7; margin-top:22px; }
+
+  /* TODAY'S 号外 (live) */
+  .today { display:grid; grid-template-columns:minmax(0,360px) 1fr; gap:40px; align-items:center;
+    margin-top:8px; }
+  .today-img { position:relative; aspect-ratio:1/1; background:var(--grey); border:1px solid var(--line);
+    overflow:hidden; }
+  .today-img img { width:100%; height:100%; object-fit:cover; display:block; transition:transform .8s ease; }
+  .today-img:hover img { transform:scale(1.04); }
+  .today-badge { position:absolute; top:14px; left:14px; background:var(--red); color:#fff;
+    font-size:9px; letter-spacing:0.22em; text-transform:uppercase; padding:6px 12px; }
+  .today-info .t-name { font-size:20px; font-weight:200; line-height:1.4; }
+  .today-info .t-meta { font-size:13px; opacity:0.55; margin-top:12px; letter-spacing:0.05em; }
+  .today-info .t-days { font-size:13px; color:var(--gold); margin-top:6px; letter-spacing:0.08em; }
+  .today-loading { grid-column:1/-1; font-size:11px; letter-spacing:0.3em; text-transform:uppercase;
+    opacity:0.3; padding:40px 0; animation:pulse 1.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:0.2} 50%{opacity:0.5} }
+
+  /* COLLECT WALL */
+  .collect-head { display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .collect-count { font-size:13px; opacity:0.5; letter-spacing:0.1em; }
+  .collect-count b { color:var(--gold); font-weight:400; }
+  .wall { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:8px; margin-top:24px; }
+  .tile { position:relative; aspect-ratio:1/1; background:var(--grey); overflow:hidden; border:1px solid var(--line);
+    cursor:pointer; }
+  .tile img { width:100%; height:100%; object-fit:cover; transition:transform .6s ease, filter .3s; filter:grayscale(0.2); }
+  .tile:hover img { transform:scale(1.06); filter:grayscale(0); }
+  .tile .tag { position:absolute; bottom:0; left:0; right:0; padding:8px 10px;
+    background:linear-gradient(to top, rgba(0,0,0,.85), transparent); font-size:9px;
+    letter-spacing:0.1em; opacity:0; transition:opacity .3s; }
+  .tile:hover .tag { opacity:1; }
+  .tile .own-chk { position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%;
+    background:var(--gold); color:#0a0a0a; font-size:13px; display:flex; align-items:center;
+    justify-content:center; opacity:0; transform:scale(0.6); transition:opacity .25s, transform .25s; }
+  .tile.owned .own-chk { opacity:1; transform:scale(1); }
+  .tile.owned img { filter:none; }
+  .tile.owned { outline:2px solid var(--gold); outline-offset:-2px; }
+
+  /* ENTRY RITUAL */
+  .ticket { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:2px; margin-top:8px; }
+  .step { background:var(--grey); padding:38px 28px; min-height:210px; display:flex;
+    flex-direction:column; justify-content:space-between; transition:background .3s; }
+  .step:hover { background:#222; }
+  .step .no { font-size:30px; font-weight:600; opacity:0.18; }
+  .step .t { font-size:17px; font-weight:300; margin-top:auto; }
+  .step .d { font-size:12px; opacity:0.5; margin-top:10px; line-height:1.6; }
+
+  /* RESONANCE counter */
+  .res { margin-top:32px; }
+  .res-top { display:flex; align-items:baseline; justify-content:space-between; gap:16px; }
+  .res-now { font-size:clamp(28px,5vw,52px); font-weight:600; font-variant-numeric:tabular-nums; letter-spacing:0.02em; }
+  .res-pct { font-size:13px; opacity:0.5; letter-spacing:0.1em; }
+  .res-bar { height:6px; background:var(--grey); margin-top:18px; overflow:hidden; }
+  .res-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--gold),var(--red));
+    transition:width 1.2s cubic-bezier(.2,.8,.2,1); }
+  .res-hints { display:flex; flex-wrap:wrap; gap:10px; margin-top:24px; }
+  .res-hint { font-size:11px; letter-spacing:0.06em; padding:8px 14px; border:1px solid var(--line);
+    border-radius:999px; opacity:0.3; transition:opacity .4s, color .4s, border-color .4s; }
+  .res-hint.open { opacity:1; color:var(--gold); border-color:rgba(230,196,73,0.4); }
+  .res-hint.locked::before { content:'🔒 '; opacity:0.6; }
+  .res-msg { font-size:13px; opacity:0.6; margin-top:22px; letter-spacing:0.04em; line-height:1.6; }
+  .res-msg .gold { color:var(--gold); }
+
+  /* RSVP */
+  .rsvp { margin-top:8px; background:var(--grey); border:1px solid var(--line); padding:48px 28px; text-align:center; }
+  .rsvp h3 { font-size:clamp(20px,3.4vw,30px); font-weight:200; letter-spacing:0.04em; }
+  .rsvp-sub { font-size:13px; opacity:0.5; margin-top:12px; }
+  .rsvp-form { display:flex; gap:10px; justify-content:center; margin-top:26px; flex-wrap:wrap; }
+  .rsvp-form input { background:#0e0e0e; border:1px solid var(--line); color:var(--white);
+    padding:14px 18px; font-family:inherit; font-size:14px; min-width:240px; letter-spacing:0.02em; }
+  .rsvp-form input::placeholder { color:rgba(250,250,250,0.3); }
+  .rsvp-result { margin-top:26px; min-height:60px; }
+  .rsvp-num { font-size:clamp(34px,7vw,64px); font-weight:600; color:var(--gold); font-variant-numeric:tabular-nums; line-height:1; }
+  .rsvp-label { font-size:12px; letter-spacing:0.25em; text-transform:uppercase; opacity:0.5; margin-top:12px; }
+  .rsvp-tally { font-size:13px; opacity:0.45; margin-top:18px; letter-spacing:0.08em; }
+  .rsvp-tally b { color:var(--gold); font-weight:400; }
+  .rsvp-invite { margin-top:30px; padding-top:26px; border-top:1px solid var(--line); }
+  .inv-line { font-size:15px; opacity:0.85; margin-bottom:16px; letter-spacing:0.03em; }
+  .inv-line .em { color:var(--gold); }
+  .inv-row { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+  .inv-row input { background:#0e0e0e; border:1px solid var(--line); color:var(--gold);
+    padding:13px 16px; font-family:'SF Mono',ui-monospace,monospace; font-size:12px;
+    min-width:300px; letter-spacing:0.02em; text-align:center; }
+  .inv-tree { margin-top:22px; font-size:13px; opacity:0.7; line-height:1.8; }
+  .inv-tree .me { color:var(--gold); font-weight:400; }
+  .inv-tree .branch { color:var(--muted); font-family:'SF Mono',ui-monospace,monospace; font-size:12px; }
+  .inv-tree .count b { color:var(--gold); font-weight:400; }
+
+  /* COLLECTION reward ladder */
+  .ladder { display:flex; flex-direction:column; gap:2px; margin-top:8px; }
+  .rung { display:flex; align-items:center; gap:20px; background:var(--grey); padding:24px 26px;
+    border-left:2px solid transparent; transition:border-color .4s, background .3s; }
+  .rung.reached { border-left-color:var(--gold); background:#1f1c14; }
+  .rung .n { font-size:30px; font-weight:600; min-width:64px; font-variant-numeric:tabular-nums;
+    opacity:0.3; transition:opacity .4s, color .4s; }
+  .rung.reached .n { opacity:1; color:var(--gold); }
+  .rung .txt .r-t { font-size:16px; font-weight:300; }
+  .rung .txt .r-d { font-size:12px; opacity:0.5; margin-top:5px; line-height:1.5; }
+  .rung .chk { margin-left:auto; font-size:18px; opacity:0.2; transition:opacity .4s; }
+  .rung.reached .chk { opacity:1; }
+  .my-collect { display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-top:24px;
+    font-size:13px; opacity:0.7; }
+  .my-collect .mc-n { font-size:28px; font-weight:600; color:var(--gold); }
+  .my-collect button { font-size:10px; letter-spacing:0.15em; text-transform:uppercase;
+    padding:8px 14px; border:1px solid var(--line); background:transparent; color:var(--white);
+    cursor:pointer; font-family:inherit; }
+  .my-collect button:hover { border-color:var(--gold); color:var(--gold); }
+
+  /* the genius interaction */
+  .gate { margin-top:44px; text-align:center; background:var(--grey); border:1px solid var(--line);
+    padding:48px 28px; }
+  .gate h3 { font-size:clamp(18px,3vw,26px); font-weight:200; letter-spacing:0.04em; }
+  .gate-buttons { display:flex; gap:14px; justify-content:center; margin-top:26px; flex-wrap:wrap; }
+  .gate-answer { margin-top:26px; font-size:15px; min-height:48px; letter-spacing:0.04em; line-height:1.6; }
+  .gate-answer.in { color:var(--gold); }
+  .gate-answer.out { color:var(--muted); }
+
+  /* LINEUP */
+  .lineup { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:2px; margin-top:8px; }
+  .act { background:var(--grey); aspect-ratio:3/4; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:14px; position:relative; overflow:hidden; }
+  .act .silh { font-size:60px; font-weight:600; opacity:0.12; transition:opacity .4s; }
+  .act:hover .silh { opacity:0.22; }
+  .act .label { font-size:10px; letter-spacing:0.25em; text-transform:uppercase; opacity:0.4; }
+  .act .sub { font-size:9px; letter-spacing:0.15em; opacity:0.25; }
+
+  /* PARADOX strip */
+  .paradox { text-align:center; padding:120px 24px; }
+  .paradox .big { font-size:clamp(28px,6vw,72px); font-weight:200; letter-spacing:0.04em; line-height:1.3; }
+  .paradox .big .red { color:var(--red); }
+  .paradox .small { font-size:13px; letter-spacing:0.25em; text-transform:uppercase; opacity:0.4; margin-top:24px; }
+
+  /* HAWAII */
+  .hawaii { background:linear-gradient(180deg,#0A0A0A 0%, #1a0f0d 50%, #2a1410 100%);
+    border-radius:0; }
+  .coord { font-family:'SF Mono',ui-monospace,monospace; font-size:13px; letter-spacing:0.1em;
+    opacity:0.55; margin-top:18px; }
+  .coord .hide { color:var(--red); }
+
+  /* FAQ */
+  details { border-top:1px solid var(--line); padding:22px 0; }
+  details:last-of-type { border-bottom:1px solid var(--line); }
+  summary { font-size:15px; cursor:pointer; list-style:none; display:flex; justify-content:space-between;
+    align-items:center; gap:16px; }
+  summary::-webkit-details-marker { display:none; }
+  summary::after { content:'+'; font-size:20px; opacity:0.4; transition:transform .2s; }
+  details[open] summary::after { transform:rotate(45deg); }
+  details p { font-size:13px; opacity:0.65; margin-top:14px; line-height:1.7; max-width:680px; }
+
+  /* CTA buttons */
+  .cta-row { display:flex; gap:14px; flex-wrap:wrap; margin-top:40px; }
+  .btn { display:inline-flex; align-items:center; gap:8px; font-size:11px; letter-spacing:0.25em;
+    text-transform:uppercase; padding:16px 30px; border:1px solid var(--white); transition:all 0.2s; cursor:pointer;
+    background:transparent; color:var(--white); font-family:inherit; }
+  .btn:hover { background:var(--white); color:var(--black); }
+  .btn.red { border-color:var(--red); color:var(--red); }
+  .btn.red:hover { background:var(--red); color:var(--white); }
+  .btn.gold { border-color:var(--gold); color:var(--gold); }
+  .btn.gold:hover { background:var(--gold); color:var(--black); }
+
+  .note { font-size:12px; opacity:0.38; margin-top:24px; max-width:660px; line-height:1.7; }
+
+  footer { position:relative; z-index:1; border-top:1px solid var(--line); padding:64px 40px;
+    text-align:center; font-size:9px; letter-spacing:0.3em; text-transform:uppercase; opacity:0.35; }
+  footer a:hover { opacity:1; color:var(--gold); }
+  footer .big-mu { font-size:48px; font-weight:600; letter-spacing:0.1em; opacity:0.5; margin-bottom:20px; }
+
+  /* reveal on scroll */
+  .reveal { opacity:0; transform:translateY(28px); transition:opacity .7s ease, transform .7s ease; }
+  .reveal.show { opacity:1; transform:none; }
+
+  @media (max-width:680px){
+    nav { padding:16px 22px; } .nav-right { gap:14px; }
+    section { padding:72px 22px; } .paradox{ padding:90px 22px; }
+    .today { grid-template-columns:1fr; } footer{ padding:48px 22px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="ambient" id="ambient"></div>
+
+<nav>
+  <a href="/" class="nav-logo">MU</a>
+  <div class="nav-right">
+    <a href="#arc" class="nav-link">三夜</a>
+    <a href="#status" class="nav-link">現状</a>
+    <a href="#entry" class="nav-link">入場</a>
+    <a href="#collect" class="nav-link">号外</a>
+    <a href="#lineup" class="nav-link">出演</a>
+    <a href="/mugen" class="nav-cta">T を着る</a>
+  </div>
+</nav>
+
+<!-- ───────── HERO ───────── -->
+<header class="hero">
+  <div class="hero-kicker">MU Festival · Hawaii</div>
+  <div class="hero-mark">無<span class="acc">音</span>祭</div>
+  <p class="hero-para">世界一<span class="q">静か</span>な、音楽フェス。<br>音は、あなたが連れてくる。</p>
+  <p class="hero-en">No tickets. Wear the shirt, walk into the sound.<br>You don't buy a ticket — <b style="color:var(--gold)">you wear it into being</b>. · Oʻahu, Hawaiʻi · Oct 29–31, 2026.</p>
+  <div class="hero-meta">
+    <span>2026 · 10.29 – 31</span><span class="dot">—</span><span>OʻAHU · HAWAIʻI</span>
+  </div>
+  <div class="hero-arc">三夜 &nbsp;<b>無</b> → <b>月</b> → <b>円</b>&nbsp; · &nbsp;日が沈み、月が昇る側で</div>
+  <div class="hero-where">📍 オアフ島 / 座標は追って明かす · coordinates TBA</div>
+  <div class="count" id="count">
+    <div class="u"><span class="n" id="cd">—</span><span class="l">days</span></div>
+    <div class="u"><span class="n" id="ch">—</span><span class="l">hrs</span></div>
+    <div class="u"><span class="n" id="cm">—</span><span class="l">min</span></div>
+    <div class="u"><span class="n" id="cs">—</span><span class="l">sec</span></div>
+  </div>
+  <div class="count-cap">あなたが着るほど、<b>この夜は近づく。</b><br>
+    <span>The more of us wear it, the closer this night gets.</span></div>
+  <div class="scroll-hint">↓ scroll</div>
+</header>
+
+<!-- ───────── PARADOX ───────── -->
+<div class="paradox reveal">
+  <div class="big">チケットは、<span class="red">売らない。</span></div>
+  <div class="small">The ticket is not for sale.</div>
+</div>
+
+<!-- ───────── THE ARC — 三夜 無→月→円 ───────── -->
+<section id="arc">
+  <div class="sec-head reveal">Arc — 三夜</div>
+  <p class="lead reveal">三日は、別々の夜じゃない。<span class="em">一本の弧</span>。記号が一夜ずつ、灯っていく。</p>
+  <p class="body reveal">日が沈む側から始め、二夜目に月を見上げ、最終夜で円（縁）が閉じる。
+  最後の夜はハロウィン。<span class="em">世界が一番うるさい夜に、世界一静かに集まる</span> —— 着て参加するのが、世界で一番似合う日。</p>
+  <p class="lead reveal" style="text-align:center;margin-top:6px">ヘッドホンは配らない。日没の合図で、MUGEN を着た者たちが一斉に動き出す。<br>音は、その<span class="em">沈黙と、歓声と、足音</span>。<br>
+  <span class="note" style="display:block;margin-top:8px">No headphones. At the sunset signal, everyone in MUGEN moves as one — the sound is the silence, the cheer, the footsteps.</span></p>
+  <div class="lineup reveal">
+    <div class="act"><div class="silh">無</div><div class="label">10.29 · MU</div><div class="sub">手放す夜 / 日没<br><span style="opacity:.6">Night of letting go · sunset</span></div></div>
+    <div class="act"><div class="silh">月</div><div class="label">10.30 · TSUKI</div><div class="sub">見上げる夜 / 月の出<br><span style="opacity:.6">Night of looking up · moonrise</span></div></div>
+    <div class="act"><div class="silh">円</div><div class="label">10.31 · EN</div><div class="sub">円環する夜 / Silent Halloween<br><span style="opacity:.6">Night the circle closes</span></div></div>
+  </div>
+  <p class="lead reveal" style="text-align:center;margin-top:8px">一夜だけでも、完結する。三夜を通すと、<span class="em">円</span>が閉じる。迷うなら、最終夜 <b style="color:var(--gold)">10.31</b> へ。</p>
+  <p class="note reveal" style="text-align:center">One night is whole · three nights close the circle · if unsure, come on the 31st.<br>※ 三夜の構成・各夜の時間は構想です。確定し次第このページで発表します。</p>
+</section>
+
+<!-- ───────── 共鳴カウンター (resonance / collective unlock) ───────── -->
+<section id="resonance">
+  <div class="sec-head reveal">Resonance — 共鳴</div>
+  <p class="lead reveal">号外が袖を通されるたび、会場の<span class="em">ヒントが一つ</span>開く。</p>
+  <p class="body reveal"><b style="color:var(--gold)">108</b> は、5,000 人の会場を埋める数字じゃない。<b>最初の合図</b>だ。
+  これだけの人が本気で「無」に賭けたという証 —— それが、会場を本気で取りにいく最初の根拠になる。
+  号外が一枚袖を通されるたび、世界はそこへ近づく。<span class="note" style="display:block;margin-top:6px">108 isn't the venue's capacity — it's the first signal. Proof a crowd is real, so we go sign the place for good.</span></p>
+  <p class="note reveal" style="max-width:680px">※ 108 に届かなくても、開催が近づけば座標はこのページで<b style="color:var(--gold)">必ず公開</b>します（集金トリガーではなく、ただの演出です）。号外 T はフェスとは別に、それ自体が一枚の正規アパレル —— 何が起きても、あなたの手元に残ります。<br>
+  <span style="opacity:.7">Even if 108 isn't reached, the coordinates will be revealed here as the date nears. The tee is real apparel you keep — festival or not.</span></p>
+
+  <div class="res reveal">
+    <div class="res-top">
+      <span class="res-now" id="resNow">— / 108</span>
+      <span class="res-pct" id="resPct"></span>
+    </div>
+    <div class="res-bar"><div class="res-fill" id="resFill"></div></div>
+    <div class="res-hints" id="resHints"></div>
+    <div class="res-msg" id="resMsg"></div>
+  </div>
+
+  <div class="cta-row reveal">
+    <a class="btn gold" href="/mugen">号外を一枚、袖に通す →</a>
+  </div>
+</section>
+
+<!-- ───────── ENTRY RITUAL ───────── -->
+<section id="entry">
+  <div class="sec-head reveal">Entry — 入場の儀</div>
+  <p class="lead reveal">入場券は、<span class="em">MUGEN の T シャツ</span>。<br>
+  着てきた人だけが、音の中に入れる。</p>
+  <p class="body reveal">お金では入れない。MU の MUGEN ライン（無限）の T シャツを着て会場に立つ ——
+  それが唯一の鍵だ。どの号でもいい。一着、袖を通したその瞬間から、あなたはもう中にいる。</p>
+
+  <div class="ticket reveal">
+    <div class="step">
+      <div class="no">01</div>
+      <div><div class="t">MUGEN の T を手に入れる</div>
+      <div class="d">どの号でも可。開催まで毎日、新しい号外 T が一枚並ぶ。<br><span style="opacity:.6">Get a MUGEN tee — any edition works.</span></div></div>
+    </div>
+    <div class="step">
+      <div class="no">02</div>
+      <div><div class="t">三夜のどれかに、それを着て会場へ</div>
+      <div class="d">オアフ島某所。場所は近づいたらこのページで明かす。<br><span style="opacity:.6">Wear it to any of the three nights, on Oʻahu.</span></div></div>
+    </div>
+    <div class="step">
+      <div class="no">03</div>
+      <div><div class="t">音の中へ歩いていく</div>
+      <div class="d">MUGEN を着ていること = 入場。提示も、行列もない。<br><span style="opacity:.6">Wearing MUGEN is your entry. No line, no scan.</span></div></div>
+    </div>
+  </div>
+  <p class="note reveal" style="text-align:center">入場にかかるのは <b style="color:var(--gold)">T シャツ代だけ</b>。航空券・滞在はご自身で。<br>
+  <span style="opacity:.7">The shirt is the only entry cost — flights & stay are your own.</span></p>
+
+  <!-- the genius interaction -->
+  <div class="gate reveal">
+    <h3>あなたは、入れる？</h3>
+    <div class="gate-buttons">
+      <button class="btn gold" onclick="gate(true)">MUGEN を持ってる</button>
+      <button class="btn" onclick="gate(false)">まだ持ってない</button>
+    </div>
+    <div class="gate-answer" id="gateAns"></div>
+  </div>
+</section>
+
+<!-- ───────── RSVP (silent, numbered) ───────── -->
+<section id="rsvp-sec">
+  <div class="sec-head reveal">RSVP — 無音の表明</div>
+  <p class="lead reveal">声は出さない。ただ、<span class="em">行く</span>と決める。</p>
+  <div class="rsvp reveal">
+    <h3>私は、10.29–31 ハワイへ行く。</h3>
+    <div class="rsvp-sub">押した瞬間、あなたは「無音の参加者」の一人になる。番号が刻まれる。<br><span style="opacity:.6">Press to become one of the silent. You get a number. · free</span></div>
+    <div class="rsvp-form">
+      <input id="rsvpEmail" type="email" placeholder="email（任意 — 番号を覚えておくため / optional）" />
+      <button class="btn gold" onclick="doRsvp()">私は行く / I'm going →</button>
+    </div>
+    <div class="rsvp-result" id="rsvpResult"></div>
+    <div class="rsvp-tally" id="rsvpTally"></div>
+    <div style="margin-top:18px;font-size:12px;letter-spacing:0.06em;opacity:0.7">
+      <a href="https://calendar.google.com/calendar/render?action=TEMPLATE&text=MU%20FESTIVAL%20%E7%84%A1%E9%9F%B3%E7%A5%AD%20%C2%B7%20Hawai%CA%BBi&dates=20261029/20261101&location=O%CA%BBahu%2C%20Hawai%CA%BBi&details=No%20tickets%20%E2%80%94%20wear%20a%20MUGEN%20tee.%20wearmu.com%2Ffest"
+         target="_blank" rel="noopener" style="color:var(--gold);border-bottom:1px solid rgba(230,196,73,0.4)">📅 10.29–31 を予定に入れる / Save the dates →</a>
+    </div>
+    <div class="rsvp-invite" id="rsvpInvite" style="display:none">
+      <div class="inv-line">無音の者を、<span class="em">1人だけ</span>連れて入れる。</div>
+      <div class="inv-row">
+        <input id="invLink" readonly />
+        <button class="btn gold" onclick="copyInvite()">リンクをコピー</button>
+      </div>
+      <div class="inv-tree" id="invTree"></div>
+    </div>
+  </div>
+  <p class="note reveal">※ email は任意です。入れた場合は番号の重複防止にのみ使い、公開・第三者提供はしません。招待リンクは1人につき1本、誰が連なったかの匿名カウントのみ記録します。</p>
+</section>
+
+<!-- ───────── TODAY'S 号外 (live) ───────── -->
+<section id="today">
+  <div class="sec-head reveal">Today — 今日の号外</div>
+  <p class="lead reveal">毎朝、その日のテーマを<span class="em">一語</span>に込めた号外が出る。</p>
+  <div class="today reveal" id="todayWrap">
+    <div class="today-loading">最新の号外を読み込み中…</div>
+  </div>
+  <p class="note reveal">※ 号外 T のデザインは「その日のテーマ」を抽象化したもので、実在の報道見出しは使いません。
+  価格は MUGEN の動的価格（自然条件で変動）です。</p>
+</section>
+
+<!-- ───────── COLLECT WALL ───────── -->
+<section id="collect">
+  <div class="collect-head reveal">
+    <div class="sec-head" style="margin-bottom:0">Collect — 号外を集める</div>
+    <div class="collect-count" id="collectCount"></div>
+  </div>
+  <p class="lead reveal" style="margin-top:24px">集めるほど、当日のあなたは<span class="em">強くなる</span>。</p>
+  <p class="body reveal">逃した号は、二度と戻らない。並んだ号外は、その日その日の証だ。
+  10.29、何枚の証を連れてくる？</p>
+  <div class="wall reveal" id="wall"></div>
+
+  <!-- reward ladder + self-tracked collection -->
+  <div class="my-collect reveal" id="myCollect" style="display:none">
+    <span>あなたのコレクション：<span class="mc-n" id="mcN">0</span> 号</span>
+    <button onclick="resetCollect()">リセット</button>
+    <span style="opacity:0.4">↑ 下のwallのタイルをタップで「持ってる」登録</span>
+  </div>
+
+  <div class="ladder reveal" id="ladder"></div>
+  <p class="note reveal">※ 特典の具体的な内容は開催が近づき次第このページで確定・発表します（現時点では予定）。
+  「持ってる」登録はこの端末内だけに保存され、サーバーには送られません。</p>
+
+  <div class="cta-row reveal">
+    <a class="btn red" href="/mugen">今日の号外を見る →</a>
+  </div>
+</section>
+
+<!-- ───────── LINEUP ───────── -->
+<section id="lineup">
+  <div class="sec-head reveal">Lineup — 出演</div>
+  <p class="lead reveal">出演者は、当日まで<span class="red">沈黙</span>する。</p>
+  <p class="body reveal">無音祭に、事前のラインナップはない。誰が音を鳴らすかは、その場に立った者だけが知る。
+  沈黙が破られる瞬間を、会場で。</p>
+  <div class="lineup reveal">
+    <div class="act"><div class="silh">無</div><div class="label">??? </div><div class="sub">silence until 10.29</div></div>
+    <div class="act"><div class="silh">音</div><div class="label">??? </div><div class="sub">silence until 10.29</div></div>
+    <div class="act"><div class="silh">祭</div><div class="label">??? </div><div class="sub">silence until 10.29</div></div>
+  </div>
+  <p class="note reveal">※ 出演・タイムテーブルは確定し次第このページで発表します（現時点で未確定）。</p>
+</section>
+
+<!-- ───────── HAWAII ───────── -->
+<section class="hawaii reveal">
+  <div class="sec-head">Where — 場所</div>
+  <p class="lead">オアフ島、<span class="em">日が沈み、月が昇る側</span>。</p>
+  <p class="body">オアフ島某所。海と空のあいだ、地図には載らない三夜だけの会場。
+  座標は、開催が近づいたらここで明かす。<br>
+  <span style="opacity:.6">Somewhere on Oʻahu, on the side where the sun sets and the moon rises. Coordinates revealed as the date nears.</span></p>
+  <div class="coord">21.<span class="hide">██</span>°N, 157.<span class="hide">██</span>°W &nbsp;·&nbsp; HST (UTC−10)</div>
+</section>
+
+<!-- ───────── STATUS — radical transparency ───────── -->
+<section id="status">
+  <div class="sec-head reveal" style="text-align:center">Status — どこまで本物か</div>
+  <p class="lead reveal" style="text-align:center">夢は大きく語った。<span class="em">その上で</span>、いま何が本当で何がまだかを、全部ここに出す。<br>
+  <span class="note" style="display:block;margin-top:6px">We dreamed out loud. Now — here's exactly what's real and what isn't, right now.</span></p>
+  <div class="status reveal">
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">日程：<b>2026.10.29 – 31</b><span class="en">Dates — locked intent</span></div></div>
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">島：<b>オアフ島 / Oʻahu</b><span class="en">Island — Oʻahu, Hawaiʻi</span></div></div>
+    <div class="srow"><span class="sp prog">交渉中 ⟳</span><div class="sv">会場：候補と<b>調整中</b>。座標は決まり次第このページで公開<span class="en">Venue — in talks; coordinates drop here</span></div></div>
+    <div class="srow"><span class="sp none">わざと ∅</span><div class="sv">出演：<b>当日まで沈黙</b>（隠してるのではなく、それが流儀）<span class="en">Lineup — silent by design, until the day</span></div></div>
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">主催：<b>MU / 株式会社イネブラ</b>（濱田優貴）<span class="en">Organizer — MU / Enabler Inc.</span></div></div>
+    <div class="srow"><span class="sp ok">確定 ✓</span><div class="sv">入場：<b>MUGEN の T を着ること</b>。チケットは無い<span class="en">Entry — wear MUGEN. No ticket.</span></div></div>
+    <div class="srow"><span class="sp live">いま ◷</span><div class="sv">あなた：<b id="statusYou">— 人</b>が、もう「行く」と決めている<span class="en">You — people already willing it into being</span></div></div>
+  </div>
+  <p class="note reveal" style="text-align:center;max-width:680px">確定が増えるたび、この表が緑になっていく。<b style="color:var(--gold)">嘘の「確定」は1つも置かない。</b><br>
+  <span style="opacity:.7">As things lock, this board turns green. We will never fake a “confirmed.”</span></p>
+</section>
+
+<!-- ───────── HONEST / TRUST ───────── -->
+<section id="honest">
+  <div class="sec-head reveal" style="text-align:center">正直に — Honest</div>
+  <p class="lead reveal" style="text-align:center">隠すのは場所と出演だけ。<span class="em">それ以外は、全部ここに書く。</span></p>
+  <div class="honest reveal">
+    <div class="row"><div class="k">主催 / Who</div><div class="v">MU（<b>株式会社イネブラ</b>・代表 濱田優貴）。無在庫アパレルを世界へ出荷してきたブランドが主催。
+      <span class="en">Run by MU / Enabler Inc. — a brand that already ships apparel worldwide. <a href="/brand">about MU →</a></span></div></div>
+    <div class="row"><div class="k">T の価値</div><div class="v">号外 T はフェスのチケットではなく、<b>それ単体で価値のある正規アパレル</b>。万一フェスが変更・中止でも、T はあなたの手元に残る。
+      <span class="en">The tee is real apparel, not a ticket. Whatever happens to the festival, you keep the shirt.</span></div></div>
+    <div class="row"><div class="k">会場公開</div><div class="v">座標は売上枚数に関係なく、<b>開催が近づけばこのページで必ず公開</b>する。「売れなければ消える」設計ではない。
+      <span class="en">Coordinates are revealed here as the date nears — regardless of how many tees sell.</span></div></div>
+    <div class="row"><div class="k">寄付 / Give</div><div class="v">MU は利益の <b>50% を寄付</b>に回す（ブランドの約束）。フェスも同じ思想で、<b>ハワイの海と、音楽を続ける人たち</b>へ還すことを目指す（寄付先は決まり次第ここで公表）。
+      <span class="en">MU gives 50% of profit — back to Hawaiʻi's ocean and its musicians. <a href="/profit-split">how the money splits →</a></span></div></div>
+    <div class="row"><div class="k">問い合わせ</div><div class="v">特商法表記・連絡先はこちら。気になることは直接どうぞ。
+      <span class="en">Legal & contact: <a href="/legal">/legal</a></span></div></div>
+  </div>
+</section>
+
+<!-- ───────── FAQ ───────── -->
+<section id="faq">
+  <div class="sec-head reveal">FAQ</div>
+  <div class="reveal">
+    <details>
+      <summary>本当にチケットを買わなくていいの？</summary>
+      <p>はい。入場券は販売しません。MUGEN ラインの T シャツを着て会場に来ること、それが入場の条件です。
+      服そのものがチケットです。</p>
+    </details>
+    <details>
+      <summary>どの MUGEN の T でもいいの？</summary>
+      <p>どの号でも大丈夫です。毎日出る号外も、過去の通常ドロップも、すべて有効。一着あれば入れます。</p>
+    </details>
+    <details>
+      <summary>「号外」って何？</summary>
+      <p>開催 10.29 までの毎日、その日のテーマを一語に込めて MUGEN に出る一枚限りの T シャツです。
+      毎朝ちがうデザイン。集めるほど、当日が特別になります。</p>
+    </details>
+    <details>
+      <summary>三夜（10.29–31）って、毎晩あるの？</summary>
+      <p>構想は三夜です。無（10.29・手放す夜）→ 月（10.30・見上げる夜）→ 円（10.31・円環する夜）。
+      最終夜10.31はハロウィン、着て参加するのが一番似合う日です。各夜の時間や内容は確定し次第このページで発表します（現時点では予定）。</p>
+    </details>
+    <details>
+      <summary>場所と出演者はいつわかる？</summary>
+      <p>どちらも開催が近づいたらこのページで発表します。無音祭は、当日まで沈黙を守るのが流儀です。</p>
+    </details>
+    <details>
+      <summary>結局いくらかかるの？</summary>
+      <p>入場にかかるのは MUGEN の T シャツ代だけです（号外は動的価格、過去の通常ドロップでも可）。航空券・滞在・現地の飲食はご自身でご手配ください。会場での入場料・チケット代は一切ありません。</p>
+    </details>
+    <details>
+      <summary>もし中止・変更になったら？ T 代は無駄になる？</summary>
+      <p>いいえ。号外 T は「フェスのチケット」ではなく、それ単体で価値のある正規アパレル（実物・受注生産）です。フェスが変更・中止になっても、T はあなたの手元に残ります。座標は売上枚数に関係なく、開催が近づけばこのページで必ず公開します。</p>
+    </details>
+    <details>
+      <summary>ハワイまで行けない。オンラインは？</summary>
+      <p>会場は 10.29 ハワイの一日だけ。でも号外 T は世界中どこからでも MUGEN で手に入ります。
+      着ること自体が、無音祭への参加です。</p>
+    </details>
+  </div>
+  <div class="cta-row reveal">
+    <a class="btn red" href="/mugen">MUGEN を見る</a>
+    <a class="btn" href="/brand">ブランドを知る</a>
+    <button class="btn gold" onclick="shareFest()">フェスを広める ↗</button>
+  </div>
+</section>
+
+<footer>
+  <div class="big-mu">無音祭</div>
+  MU FESTIVAL · HAWAII · 2026.10.29 – 31 · HST<br><br>
+  <a href="/">wearmu.com</a> &nbsp;·&nbsp;
+  <a href="/mugen">mugen</a> &nbsp;·&nbsp;
+  <a href="/brand">brand</a>
+</footer>
+
+<script>
+  // ── ambient drifting 無 ──
+  (function(){
+    const wrap = document.getElementById('ambient');
+    const chars = ['無','音','祭','月','円','間','∞'];
+    const N = window.innerWidth < 680 ? 5 : 9;
+    for(let i=0;i<N;i++){
+      const s = document.createElement('span');
+      s.textContent = chars[i % chars.length];
+      s.style.left = (Math.random()*100) + 'vw';
+      s.style.animationDuration = (22 + Math.random()*26) + 's';
+      s.style.animationDelay = (-Math.random()*30) + 's';
+      wrap.appendChild(s);
+    }
+  })();
+
+  // ── countdown to 2026-10-29 00:00 HST (UTC-10) ──
+  const TARGET = Date.parse('2026-10-29T00:00:00-10:00');
+  function tick(){
+    let diff = Math.max(0, TARGET - Date.now());
+    const d = Math.floor(diff/86400000); diff -= d*86400000;
+    const h = Math.floor(diff/3600000);  diff -= h*3600000;
+    const m = Math.floor(diff/60000);    diff -= m*60000;
+    const s = Math.floor(diff/1000);
+    cd.textContent = d; ch.textContent = String(h).padStart(2,'0');
+    cm.textContent = String(m).padStart(2,'0'); cs.textContent = String(s).padStart(2,'0');
+  }
+  tick(); setInterval(tick, 1000);
+  const daysLeft = Math.max(0, Math.ceil((TARGET - Date.now())/86400000));
+
+  // ── entry gate interaction ──
+  function gate(has){
+    const el = document.getElementById('gateAns');
+    if(has){
+      el.className = 'gate-answer in';
+      el.innerHTML = '✓ あなたは、もう中にいる。<br>10.29、その一着で会いましょう。';
+    } else {
+      el.className = 'gate-answer out';
+      el.innerHTML = 'まだ間に合う。今日の号外が、あなたの鍵になる。<br>' +
+        '<a href="/mugen" style="color:var(--gold);border-bottom:1px solid var(--gold)">→ MUGEN で T を手に入れる</a>';
+    }
+  }
+
+  // ── live: today's 号外 + collectible wall (from /api/products/mugen) ──
+  (async function(){
+    const wrap = document.getElementById('todayWrap');
+    try {
+      const r = await fetch('/api/products/mugen', {cache:'no-store'});
+      const data = await r.json();
+      const list = Array.isArray(data) ? data : (data.products || data.drops || []);
+      list.sort((a,b)=> (b.drop_num||0) - (a.drop_num||0));
+      const gogai = list.filter(p => (p.name||'').includes('号外'));
+      const today = gogai[0] || list[0];
+
+      if(today){
+        const img = today.mockup_url || today.design_url || '';
+        const price = today.price_jpy ? ('¥' + Number(today.price_jpy).toLocaleString()) : '';
+        const qty = today.inventory != null ? (today.inventory + '枚限定') : '';
+        wrap.innerHTML =
+          '<a class="today-img" href="/mugen">' +
+            (img ? '<img src="'+img+'" alt="今日の号外">' : '') +
+            '<span class="today-badge">本日号外</span>' +
+          '</a>' +
+          '<div class="today-info">' +
+            '<div class="t-name">'+ esc(today.name || '今日の号外') +'</div>' +
+            '<div class="t-meta">'+ [price, qty].filter(Boolean).join(' · ') +'</div>' +
+            '<div class="t-days">無音祭まで あと '+ daysLeft +' 日</div>' +
+            '<div class="cta-row"><a class="btn red" href="/mugen">これを着て入場する →</a></div>' +
+          '</div>';
+      } else {
+        wrap.innerHTML = '<div class="today-loading">号外はまもなく。</div>';
+      }
+
+      // collectible wall — recent 号外 first, fall back to recent mugen.
+      // Tapping a tile toggles "I own this" (localStorage only, no server).
+      const pool = (gogai.length ? gogai : list).slice(0, 12);
+      const wall = document.getElementById('wall');
+      wall.innerHTML = pool.map(p => {
+        const im = p.mockup_url || p.design_url || '';
+        const lbl = (p.name||'').replace(/^MUGEN\s*/,'').slice(0,22);
+        const owned = MINE.has(String(p.id));
+        return '<div class="tile'+(owned?' owned':'')+'" data-id="'+p.id+'">' +
+               (im ? '<img src="'+im+'" alt="">':'') +
+               '<span class="tag">'+ esc(lbl) +'</span>' +
+               '<span class="own-chk">✓</span></div>';
+      }).join('');
+      wall.querySelectorAll('.tile').forEach(t=>{
+        t.addEventListener('click', ()=>toggleOwn(t.dataset.id, t));
+      });
+      const cc = document.getElementById('collectCount');
+      cc.innerHTML = '号外 <b>' + gogai.length + '</b> 号 出ました · ∞ 集めよう';
+      refreshCollect();
+    } catch(e){
+      wrap.innerHTML = '<div class="today-loading">読み込めませんでした。<a href="/mugen" style="color:var(--gold)">MUGEN を直接見る →</a></div>';
+    }
+  })();
+
+  // ── self-tracked collection (localStorage; never sent to server) ──
+  const MINE = new Set(JSON.parse(localStorage.getItem('mu_fest_mine') || '[]'));
+  const TIERS = [
+    {n:1,  t:'入場の資格',       d:'一着で、あなたは中にいる。'},
+    {n:3,  t:'三号の証',         d:'三つの朝を集めた者の印。'},
+    {n:7,  t:'最前列の沈黙',     d:'七号集めた者に、最前列を。（特典は確定し次第）'},
+    {n:14, t:'二週間の連なり',   d:'半月ぶんの号外を連ねた者へ。'},
+    {n:29, t:'10.29 の完走',     d:'フェス日と同じ数。完走者だけの何か。'},
+  ];
+  function toggleOwn(id, el){
+    id = String(id);
+    if(MINE.has(id)){ MINE.delete(id); el && el.classList.remove('owned'); }
+    else { MINE.add(id); el && el.classList.add('owned'); }
+    localStorage.setItem('mu_fest_mine', JSON.stringify([...MINE]));
+    refreshCollect();
+  }
+  function resetCollect(){
+    MINE.clear(); localStorage.removeItem('mu_fest_mine');
+    document.querySelectorAll('.tile.owned').forEach(t=>t.classList.remove('owned'));
+    refreshCollect();
+  }
+  function refreshCollect(){
+    const n = MINE.size;
+    const mc = document.getElementById('myCollect');
+    mc.style.display = 'flex';
+    document.getElementById('mcN').textContent = n;
+    const ladder = document.getElementById('ladder');
+    ladder.innerHTML = TIERS.map(tier => {
+      const reached = n >= tier.n;
+      return '<div class="rung'+(reached?' reached':'')+'">' +
+        '<span class="n">'+tier.n+'</span>' +
+        '<span class="txt"><span class="r-t">'+esc(tier.t)+'</span>' +
+        '<span class="r-d">'+esc(tier.d)+'</span></span>' +
+        '<span class="chk">'+(reached?'★':'☆')+'</span></div>';
+    }).join('');
+  }
+  refreshCollect();
+
+  function esc(s){ return (s||'').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+  // ── 共鳴カウンター: live 号外-sold toward 108, staged venue hints ──
+  const HINTS = [
+    {at:1,   txt:'陽が沈む側'},
+    {at:14,  txt:'海の音が聞こえる'},
+    {at:36,  txt:'地図に載らない場所'},
+    {at:72,  txt:'夜が始まる時刻'},
+    {at:108, txt:'最初の合図、点灯 — 会場交渉へ'},
+  ];
+  (async function(){
+    try {
+      const r = await fetch('/api/fest/state', {cache:'no-store'});
+      const s = await r.json();
+      const sold = s.gogai_sold || 0, target = s.target || 108;
+      const pct = Math.min(100, Math.round(sold/target*100));
+      document.getElementById('resNow').textContent = sold + ' / ' + target;
+      document.getElementById('resPct').textContent = pct + '%';
+      requestAnimationFrame(()=>{ document.getElementById('resFill').style.width = pct + '%'; });
+      const hd = document.getElementById('resHints');
+      hd.innerHTML = HINTS.map(h => {
+        const open = sold >= h.at;
+        return '<span class="res-hint '+(open?'open':'locked')+'">'+
+               (open ? esc(h.txt) : 'あと'+(h.at-sold)+'枚で開く')+'</span>';
+      }).join('');
+      const msg = document.getElementById('resMsg');
+      if(sold === 0){
+        msg.innerHTML = 'まだ誰も袖を通していない。<span class="gold">最初の一枚</span>が、最初のヒントを開く。';
+      } else if(sold >= target){
+        msg.innerHTML = '<span class="gold">最初の合図、点灯。</span>会場交渉を本気で進める段階に入った。';
+      } else {
+        const nextH = HINTS.find(h => sold < h.at);
+        msg.innerHTML = '世界はあと <span class="gold">'+(nextH ? (nextH.at - sold) : 0)+'</span> 枚で、次のヒントを開く。';
+      }
+      // RSVP running tally (shown even before user RSVPs)
+      if(typeof s.rsvp_count === 'number'){
+        document.getElementById('rsvpTally').innerHTML =
+          'いま <b>'+s.rsvp_count+'</b> 人が、無音で行くと決めている。'
+          + '<br><span style="opacity:.55;font-size:.85em">'+s.rsvp_count+' people have already decided to go, in silence.</span>';
+        const sy = document.getElementById('statusYou');
+        if(sy) sy.textContent = s.rsvp_count + ' 人';
+      }
+    } catch(e){ /* counter stays dashed; non-fatal */ }
+  })();
+
+  // ── RSVP submit ──
+  // +1 invite: who invited me (from ?inv=), and my own token once I RSVP.
+  const INV_FROM = new URLSearchParams(location.search).get('inv') || '';
+  let MY_TOKEN = localStorage.getItem('mu_fest_token') || '';
+
+  async function doRsvp(){
+    const result = document.getElementById('rsvpResult');
+    const email = (document.getElementById('rsvpEmail').value || '').trim();
+    result.innerHTML = '<span style="opacity:.5">刻んでいます…</span>';
+    const payload = {};
+    if(email) payload.email = email;
+    if(INV_FROM) payload.inv = INV_FROM;
+    try {
+      const r = await fetch('/api/fest/rsvp', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(payload)
+      });
+      const j = await r.json();
+      if(j.ok){
+        result.innerHTML = '<div class="rsvp-num">第 '+j.number+' 番</div>' +
+          '<div class="rsvp-label">'+(j.returning?'おかえり · あなたの番号':'無音の参加者')+'</div>';
+        const tally = document.getElementById('rsvpTally');
+        if(j.total!=null) tally.innerHTML = 'いま <b>'+j.total+'</b> 人が、無音で行くと決めている。';
+        if(j.token){ MY_TOKEN = j.token; localStorage.setItem('mu_fest_token', j.token); }
+        showInvite();
+      } else {
+        result.innerHTML = '<span style="opacity:.6">もう一度お試しください。</span>';
+      }
+    } catch(e){
+      result.innerHTML = '<span style="opacity:.6">通信に失敗しました。</span>';
+    }
+  }
+
+  function inviteUrl(){ return 'https://wearmu.com/fest?inv=' + MY_TOKEN; }
+
+  function showInvite(){
+    if(!MY_TOKEN) return;
+    const box = document.getElementById('rsvpInvite');
+    box.style.display = 'block';
+    document.getElementById('invLink').value = inviteUrl();
+    renderInviteTree();
+  }
+
+  function copyInvite(){
+    const inp = document.getElementById('invLink');
+    inp.select();
+    navigator.clipboard.writeText(inp.value).then(()=>{
+      const b = inp.nextElementSibling;
+      const t = b.textContent; b.textContent = '✓ コピー済';
+      setTimeout(()=>{ b.textContent = t; }, 1800);
+    }).catch(()=>{});
+  }
+
+  async function renderInviteTree(){
+    if(!MY_TOKEN) return;
+    const el = document.getElementById('invTree');
+    try {
+      const r = await fetch('/api/fest/invites/' + MY_TOKEN, {cache:'no-store'});
+      const j = await r.json();
+      if(!j.ok){ el.innerHTML = ''; return; }
+      let html = '<div class="count">あなたの招待で <b>'+ j.direct +'</b> 人が連なった。</div>';
+      html += '<div class="me">●  第 '+ j.number +' 番（あなた）</div>';
+      (j.children||[]).forEach((c, i, arr)=>{
+        const last = i === arr.length - 1;
+        html += '<div class="branch">'+ (last?'└─':'├─') +' 無音の者 #'+(i+1)+'</div>';
+      });
+      if(!(j.children||[]).length){
+        html += '<div class="branch">└─ まだ誰も。リンクを渡せば、ここに連なる。</div>';
+      }
+      el.innerHTML = html;
+    } catch(e){ el.innerHTML = ''; }
+  }
+
+  // Returning visitor who already RSVP'd on this device: show their invite box.
+  if(MY_TOKEN){ window.addEventListener('DOMContentLoaded', showInvite); }
+
+  // ── share ──
+  function shareFest(){
+    const text = '無音祭 — MU FESTIVAL · HAWAII 2026.10.29\n世界一静かな、音楽フェス。入場券は、MUGENのTシャツ。';
+    const url = 'https://wearmu.com/fest';
+    if(navigator.share){ navigator.share({title:'無音祭', text, url}).catch(()=>{}); }
+    else { window.open('https://twitter.com/intent/tweet?text='+encodeURIComponent(text)+'&url='+encodeURIComponent(url), '_blank'); }
+  }
+
+  // ── reveal on scroll ──
+  const io = new IntersectionObserver((es)=>{
+    es.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('show'); io.unobserve(e.target); } });
+  }, {threshold:0.12});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+
+</body>
+</html>

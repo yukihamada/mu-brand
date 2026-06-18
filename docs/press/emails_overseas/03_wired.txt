@@ -1,0 +1,55 @@
+To:      press@wired.com
+Subject: What does an AI-run fashion brand look like? A real-world test, live now.
+From:    Yuki Hamada <yuki@hamada.tokyo>
+
+——————————————————————
+
+Hello WIRED team,
+
+I'm writing because this is the kind of story WIRED is built for, and I
+want to give you the first look at the data.
+
+I'm Yuki Hamada — ex-CPO of Mercari, ex-co-founder of NOT A HOTEL — and
+I launched a clothing brand whose entire operation runs without humans.
+It's called **MU** (https://wearmu.com), and it's been live since
+2026-05-07. Every hour, an AI generates a new T-shirt design. Every day,
+the temperature in a small Hokkaido town decides how many pieces will be
+made. Prices rise as units sell. The brand has no creative director, no
+buyer, no copywriter, no merchandiser. The cron job is the brand.
+
+The whole pipeline is open-sourced (MIT, https://github.com/yukihamada/
+mu-brand) on the principle that "AI is running this" can't be a marketing
+claim — it has to be a verifiable property of the code.
+
+I think there's a feature here, not a news brief. Three angles:
+
+**1. The thesis.** After AI-as-assistant comes AI-as-operator. Fashion is
+the smallest legible test because it has irreducible physical artefacts —
+T-shirts that arrive in a box. You can't fake the shipment.
+
+**2. The oracle.** The weather in Teshikaga, Hokkaido, decides production
+volume. A natural-world signal — uncorrelated with demand — sets supply.
+Inverts the entire trend-prediction industry. We can talk about why we
+chose weather (not foot traffic, not crypto prices) and what it means
+to give up forecasting.
+
+**3. The bonding curve.** Prices go *up* as items sell. First buyer ¥5,000
+(~$33), each subsequent +¥250 (~$1.70), capped at ¥30,000 (~$200).
+Inverted Dutch auction. We're a few weeks in and can share the actual
+purchase-time distribution data — when in a drop's life do buyers commit?
+
+For the access:
+- I can put a reporter on a call with the running pipeline visible — see
+  designs being generated and orders being placed in real time.
+- I can release one full week of data (designs + weather + sales) under
+  embargo.
+- I'll fly to NYC or SF for an in-person if it helps.
+
+Live press kit: https://wearmu.com/press
+Founder background: ex-Mercari CPO, ex-NOT A HOTEL co-founder, currently
+CEO of Enabler Inc. in Tokyo.
+
+Best,
+Yuki Hamada
+mail@yukihamada.jp
++81-90-7409-0407

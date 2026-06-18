@@ -1,0 +1,393 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wear your Noun ⌐◨-◨ × MU — あなたのNounを、着る。</title>
+<meta name="description" content="Enter your Noun ID, get it printed on a tee or hoodie. CC0 on-chain art, on demand. Card / USDC / SOL / ETH. Bulk orders welcome. 10% of every sale set aside for the Nouns Treasury.">
+<meta property="og:title" content="Wear your Noun ⌐◨-◨ × MU">
+<meta property="og:description" content="Your Noun, pixel-perfect on a black tee or hoodie. Card or crypto. 10% set aside for the Nouns Treasury.">
+<meta property="og:image" content="https://noun.pics/0.png">
+<meta property="og:url" content="https://wearmu.com/nouns">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<script src="/qr.js"></script>
+<style>
+:root{--bg:#0a0a0a;--fg:#f4f1ea;--mut:#7c8088;--gold:#e6c449;--red:#d53c5e;--line:#26262a}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Hiragino Mincho ProN','Noto Serif JP',serif;min-height:100vh}
+button,input,select{font-family:'Hiragino Sans','Noto Sans JP',-apple-system,sans-serif}
+.sans{font-family:'Hiragino Sans','Noto Sans JP',-apple-system,sans-serif}
+.wrap{max-width:880px;margin:0 auto;padding:clamp(28px,6vw,48px) 20px 96px}
+.kick{font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:.4em;color:var(--mut);text-align:center}
+h1{font-size:clamp(30px,7vw,52px);font-weight:600;text-align:center;margin:16px 0 6px;letter-spacing:.04em}
+.sub{font-family:'Hiragino Sans',sans-serif;font-size:13px;letter-spacing:.18em;color:var(--mut);text-align:center;margin-bottom:26px}
+.noggles{color:var(--red)}
+.hero{display:flex;justify-content:center;margin:0 0 26px}
+.hero img{width:clamp(220px,46vw,320px);height:auto;aspect-ratio:1;border-radius:12px;image-rendering:pixelated;border:1px solid var(--line);background:#121214;transition:opacity .2s}
+.panel{border:1px solid var(--line);border-radius:14px;padding:24px;margin:0 auto 22px;max-width:560px}
+label{display:block;font-family:'Hiragino Sans',sans-serif;font-size:11px;letter-spacing:.25em;color:var(--mut);margin:0 0 8px}
+input,select{width:100%;background:#121214;border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:16px;padding:12px 14px}
+input:focus,select:focus{outline:none;border-color:var(--fg)}
+.idrow{display:flex;gap:10px}
+.idrow input{flex:1}
+.idrow .dice{flex:0 0 auto;width:auto;padding:12px 16px;background:#121214;border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:15px;cursor:pointer}
+.idrow .dice:hover{border-color:var(--fg)}
+.hint{font-family:'Hiragino Sans',sans-serif;font-size:11.5px;line-height:1.8;color:var(--mut);margin:8px 0 0}
+.hint a{color:var(--fg)}
+.row{display:flex;gap:12px}.row>div{flex:1}
+.kinds,.styles{display:flex;gap:12px;margin-top:6px}
+.kind,.style{flex:1;border:1px solid var(--line);border-radius:10px;padding:13px;text-align:center;cursor:pointer;transition:border-color .15s}
+.kind.sel,.style.sel{border-color:var(--gold)}
+.kind .nm{font-family:'Hiragino Sans',sans-serif;font-size:15px;font-weight:600}
+.kind .pr,.style .ds{font-family:'Hiragino Sans',sans-serif;font-size:11.5px;color:var(--mut);margin-top:4px;font-variant-numeric:tabular-nums}
+.kind.sel .pr{color:var(--gold)}
+.btn{display:block;width:100%;border:none;border-radius:10px;padding:15px;font-size:14px;letter-spacing:.1em;cursor:pointer;margin-top:12px;transition:opacity .15s}
+.btn:disabled{opacity:.35;cursor:default}
+.btn-card{background:var(--fg);color:#0a0a0a;font-weight:700}
+.btn-line{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.btn-line:hover:not(:disabled){border-color:var(--fg)}
+.note{font-family:'Hiragino Sans',sans-serif;font-size:11px;line-height:1.9;color:var(--mut);text-align:center;margin-top:26px}
+.note a{color:var(--fg)}
+.trust{font-family:'Hiragino Sans',sans-serif;font-size:11px;line-height:2;color:var(--mut);text-align:center;border-top:1px solid var(--line);margin-top:30px;padding-top:18px}
+.trust a{color:var(--mut);text-decoration:underline}
+.err{font-family:'Hiragino Sans',sans-serif;font-size:12px;color:var(--red);text-align:center;margin-top:10px;min-height:16px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.78);display:none;align-items:flex-start;justify-content:center;overflow-y:auto;padding:32px 16px;z-index:50}
+.modal.open{display:flex}
+.mbox{background:#101012;border:1px solid var(--line);border-radius:14px;max-width:480px;width:100%;padding:26px}
+.mbox h2{font-size:19px;font-weight:500;margin-bottom:6px}
+.mbox .fld{margin-bottom:12px}
+.feenote{font-family:'Hiragino Sans',sans-serif;font-size:11.5px;line-height:1.8;color:var(--mut);margin:0 0 12px}
+.est{font-family:'Hiragino Sans',sans-serif;font-size:13px;color:var(--gold);margin:0 0 14px;font-variant-numeric:tabular-nums}
+.assets{display:flex;gap:10px;margin:10px 0 6px}
+.asset{flex:1;border:1px solid var(--line);border-radius:8px;padding:10px;text-align:center;font-family:'Hiragino Sans',sans-serif;font-size:13px;cursor:pointer}
+.asset .fee{display:block;font-size:10px;color:var(--mut);margin-top:2px}
+.asset.sel{border-color:var(--gold);color:var(--gold)}
+.asset.off{opacity:.3;cursor:default}
+.payinfo{display:none;background:#121214;border-radius:10px;padding:16px;margin-top:14px;font-family:'Hiragino Sans',sans-serif;font-size:12px;line-height:2}
+.payinfo .addr{font-family:monospace;word-break:break-all}
+.payinfo a{color:var(--gold)}
+.qrbox{display:flex;justify-content:center;background:#fff;border-radius:10px;padding:12px;margin:10px 0}
+.qrbox img{image-rendering:pixelated}
+.timer{font-variant-numeric:tabular-nums;font-weight:700}
+.timer.low{color:var(--red)}
+.close{float:right;background:none;border:none;color:var(--mut);font-size:20px;cursor:pointer}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--mut);border-top-color:var(--gold);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:560px){.kinds,.styles{flex-direction:column}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kick">⌐◨-◨ × MU — CC0 · ON DEMAND</div>
+  <h1>Wear your <span class="noggles">Noun</span>.</h1>
+  <div class="sub">あなたのNounを、着る。 On-chain art, printed on demand.</div>
+
+  <div class="hero"><img id="pv" src="https://noun.pics/0.png" alt="Noun preview" loading="lazy"></div>
+
+  <div class="panel">
+    <label for="nid">NOUN ID</label>
+    <div class="idrow">
+      <input id="nid" type="number" min="0" max="999999" inputmode="numeric" placeholder="e.g. 372" autocomplete="off">
+      <button class="dice" id="dice" type="button" title="Random Noun">🎲</button>
+    </div>
+    <p class="hint">
+      Nouns = one CC0 pixel character born every day at <a href="https://nouns.wtf" rel="noopener">nouns.wtf</a>, numbered from 0.
+      Don't own one? Any number works — the art is public domain.<br>
+      Nounは毎日1体生まれるCC0ピクセルアート。持っていなくても、好きな番号でOK。
+    </p>
+
+    <div class="kinds" id="kinds" style="margin-top:16px">
+      <div class="kind sel" data-kind="tee"><div class="nm">Tee</div><div class="pr">¥4,900 · Bella+Canvas 3001 · black</div></div>
+      <div class="kind" data-kind="hoodie"><div class="nm">Hoodie</div><div class="pr">¥8,800 · Gildan 18500 · black</div></div>
+    </div>
+
+    <div class="styles" id="styles" style="margin-top:12px">
+      <div class="style sel" data-t="0"><div class="nm sans">Square</div><div class="ds">背景ごと · classic</div></div>
+      <div class="style" data-t="1"><div class="nm sans">Floating</div><div class="ds">背景を抜いて黒に浮かす</div></div>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div>
+        <label for="qty">QUANTITY — まとめ買いOK (1–50)</label>
+        <select id="qty">
+          <option>1</option><option>2</option><option>3</option><option>5</option>
+          <option>10</option><option>20</option><option>30</option><option>50</option>
+        </select>
+      </div>
+    </div>
+    <p class="hint">Size (S–XL) is chosen at checkout · サイズは決済画面で選択（サイズ表は<a href="/shop/NOUNS-TEE-0" rel="noopener">商品ページ</a>）</p>
+
+    <button class="btn btn-card" id="buyCard">Buy with card — カードで購入</button>
+    <button class="btn btn-line" id="buyCrypto">Pay with crypto — USDC / SOL / ETH</button>
+    <button class="btn btn-line" id="mkSample" style="font-size:12.5px">See a real sample first — 実物プレビュー（無料・〜60秒）</button>
+    <div id="mockWrap" style="display:none;text-align:center;margin-top:14px">
+      <img id="mockImg" style="max-width:100%;border-radius:10px;border:1px solid var(--line);background:#121214" alt="Real on-body sample">
+      <div class="hint" style="text-align:center">Real print preview by the printer (Printful) — 実際に印刷されるサンプル画像</div>
+    </div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <p class="note">
+    Nouns artwork is <a href="https://nouns.wtf" rel="noopener">CC0 — public domain</a>; anyone may print any Noun. Pixel-perfect upscale, no smoothing.<br>
+    <b>10% of every sale is set aside for the Nouns Treasury.</b>
+    No settlement has been made yet — the first one will be published here with its Etherscan link.
+    Our Nouns DAO proposal is in preparation (<a href="/nouns-proposal.html">read the draft</a>).<br>
+    売上の10%をNouns Treasury向けに積み立て中。初回送金時にEtherscanリンクをここで公開します。
+  </p>
+
+  <p class="trust">
+    Built by a Nouner — <a href="https://nouns.wtf/noun/312" rel="noopener">Noun 312</a> ⌐◨-◨ · Operated by <b>Enabler Inc.（株式会社イネブラ）</b>, Tokyo · printed &amp; shipped worldwide by Printful (7–14 days)<br>
+    <b>30-day returns</b> — applies to card &amp; crypto orders alike; crypto refunds are settled by reshipment or equivalent refund within 30 days · contact <a href="mailto:info@enablerdao.com">info@enablerdao.com</a><br>
+    <a href="/tos">Terms</a> · <a href="/transparency">Transparency (all real numbers)</a>
+  </p>
+</div>
+
+<div class="modal" id="cm">
+  <div class="mbox">
+    <button class="close" id="cmClose">×</button>
+    <h2 class="sans">Crypto checkout</h2>
+    <p class="feenote">Crypto price = card price + network processing fee: <b>USDC / SOL +3%</b> · <b>ETH +5%</b>. Shown below before you pay. — 仮想通貨は決済手数料込み（下に総額を表示）。</p>
+    <div class="assets" id="assets">
+      <div class="asset sel" data-a="usdc" data-fee="3">USDC<span class="fee">+3%</span></div>
+      <div class="asset" data-a="sol" data-fee="3">SOL<span class="fee">+3%</span></div>
+      <div class="asset" data-a="eth" data-fee="5">ETH<span class="fee">+5%</span></div>
+    </div>
+    <div class="est" id="est"></div>
+    <div class="fld"><label>EMAIL（確認メール送付先）</label><input id="cEmail" type="email" placeholder="you@example.com"></div>
+    <div class="fld"><label>SIZE</label><select id="cSize"><option>S</option><option selected>M</option><option>L</option><option>XL</option></select></div>
+    <div class="fld"><label>FULL NAME — 氏名</label><input id="cName"></div>
+    <div class="fld"><label>ADDRESS LINE 1 — 番地・建物</label><input id="cL1"></div>
+    <div class="fld"><label>ADDRESS LINE 2 (OPT)</label><input id="cL2"></div>
+    <div class="row">
+      <div class="fld"><label>CITY — 市区町村</label><input id="cCity"></div>
+      <div class="fld"><label>STATE / 都道府県</label><input id="cState"></div>
+    </div>
+    <div class="row">
+      <div class="fld"><label>ZIP — 郵便番号</label><input id="cZip"></div>
+      <div class="fld"><label>COUNTRY</label>
+        <select id="cCountry">
+          <option value="JP" selected>Japan 🇯🇵</option>
+          <option value="US">United States</option>
+          <option value="GB">United Kingdom</option>
+          <option value="CA">Canada</option>
+          <option value="AU">Australia</option>
+          <option value="DE">Germany</option>
+          <option value="FR">France</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn btn-card" id="cGo">Generate payment — 支払いを生成</button>
+    <div class="err" id="cErr"></div>
+    <div class="payinfo" id="pay">
+      <div>Send <b id="payAmt"></b></div>
+      <div class="qrbox" id="qr"></div>
+      <div>to: <span class="addr" id="payTo"></span></div>
+      <div><a id="payLink" href="#">Open in wallet →</a></div>
+      <div>Expires in <span class="timer" id="timer">15:00</span> — 期限内に送金してください</div>
+      <div style="color:#7c8088">Status: <span id="payStatus">waiting for payment <span class="spin"></span></span></div>
+      <div style="color:#7c8088;font-size:11px;margin-top:4px">Order ref: <span class="addr" id="payRef" style="font-size:10px"></span><br>確認後すぐにメールが届きます。このウィンドウは閉じても大丈夫です。</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var kind='tee', asset='usdc', transparent=false;
+  var PRICES={tee:4900,hoodie:8800}, FEES={usdc:3,sol:3,eth:5};
+  var methods={usdc:false,sol:false,eth:false}, poll=null, cdTimer=null;
+  var $=function(id){return document.getElementById(id)};
+  function jp(n){return '¥'+n.toLocaleString('ja-JP')}
+
+  // Which crypto rails are live (server gates on settlement detection).
+  fetch('/api/payment_methods').then(function(r){return r.json()}).then(function(m){
+    methods={usdc:!!m.usdc,sol:!!m.sol,eth:!!m.eth};
+    if(!methods.usdc&&!methods.sol&&!methods.eth){
+      $('buyCrypto').disabled=true;
+      $('buyCrypto').textContent='Crypto — coming online soon';
+    }
+    document.querySelectorAll('.asset').forEach(function(el){
+      if(!methods[el.dataset.a]) el.classList.add('off');
+    });
+    var first=['usdc','sol','eth'].find(function(a){return methods[a]});
+    if(first){asset=first;document.querySelectorAll('.asset').forEach(function(el){
+      el.classList.toggle('sel',el.dataset.a===asset)});updateEst()}
+  }).catch(function(){});
+
+  function updateEst(){
+    var unit=Math.round(PRICES[kind]*(100+FEES[asset])/100);
+    var q=+($('qty').value||1);
+    $('est').textContent='Total: '+jp(unit*q)+' ('+jp(PRICES[kind])+' +'+FEES[asset]+'% × '+q+'点) — 送金額のcrypto換算は生成時に確定';
+  }
+  $('qty').addEventListener('change',updateEst);
+
+  // ── Real sample preview (pre-purchase) ──────────────────────────────
+  var SAMPLE_LABEL='See a real sample first — 実物プレビュー（無料・〜60秒）';
+  var samplePoll=null;
+  function resetSample(){
+    if(samplePoll){clearInterval(samplePoll);samplePoll=null;}
+    $('mockWrap').style.display='none';$('mockImg').src='';
+    $('mkSample').disabled=false;$('mkSample').textContent=SAMPLE_LABEL;
+  }
+  function mockReady(j){return j.mockup_url && j.mockup_url!==j.design_url;}
+  function showSample(url){
+    if(samplePoll){clearInterval(samplePoll);samplePoll=null;}
+    $('mockImg').src=url;$('mockWrap').style.display='block';
+    $('mkSample').disabled=false;
+    $('mkSample').textContent='Sample ready ✓ — kind/styleを切り替えると他も見られます';
+  }
+  $('mkSample').addEventListener('click',function(){
+    var b=this;
+    createSku().then(function(j){
+      if(mockReady(j)){showSample(j.mockup_url);return;}
+      b.disabled=true;
+      b.innerHTML='Printing your sample… プレビュー生成中 <span class="spin"></span>';
+      var tries=0;
+      samplePoll=setInterval(function(){
+        tries++;
+        createSku().then(function(k){
+          if(mockReady(k)){showSample(k.mockup_url);}
+          else if(tries>=30){
+            resetSample();
+            $('err').textContent='Taking longer than usual — try again shortly · 生成に時間がかかっています。少し待って再試行してください';
+          }
+        }).catch(function(){});
+      },5000);
+    }).catch(function(e){ if(e&&e.message)$('err').textContent=e.message; });
+  });
+
+  // Noun ID input + 🎲 + ?noun= prefill
+  var pvT=null;
+  function setNoun(v){
+    $('nid').value=v;
+    $('pv').src='https://noun.pics/'+(+v)+'.png';
+    resetSample();
+  }
+  $('nid').addEventListener('input',function(){
+    clearTimeout(pvT);var v=this.value;
+    resetSample();
+    pvT=setTimeout(function(){
+      if(v!==''&&+v>=0) $('pv').src='https://noun.pics/'+(+v)+'.png';
+    },350);
+  });
+  $('dice').addEventListener('click',function(){ setNoun(Math.floor(Math.random()*1000)); });
+  if(typeof window.__noun==='number') setNoun(window.__noun);
+
+  document.querySelectorAll('.kind').forEach(function(el){
+    el.addEventListener('click',function(){
+      kind=el.dataset.kind; resetSample(); updateEst();
+      document.querySelectorAll('.kind').forEach(function(k){k.classList.toggle('sel',k===el)});
+    });
+  });
+  document.querySelectorAll('.style').forEach(function(el){
+    el.addEventListener('click',function(){
+      transparent=el.dataset.t==='1'; resetSample();
+      document.querySelectorAll('.style').forEach(function(s){s.classList.toggle('sel',s===el)});
+    });
+  });
+  document.querySelectorAll('.asset').forEach(function(el){
+    el.addEventListener('click',function(){
+      if(el.classList.contains('off'))return;
+      asset=el.dataset.a; updateEst();
+      document.querySelectorAll('.asset').forEach(function(a){a.classList.toggle('sel',a===el)});
+    });
+  });
+
+  function createSku(){
+    var id=$('nid').value;
+    if(id===''||+id<0){$('err').textContent='Noun ID を入力してください · Enter a Noun ID (or hit 🎲)';return Promise.reject()}
+    $('err').textContent='';
+    return fetch('/api/nouns/create',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({noun_id:+id,kind:kind,transparent:transparent})})
+      .then(function(r){if(!r.ok)return r.text().then(function(t){throw new Error(t)});return r.json()});
+  }
+
+  $('buyCard').addEventListener('click',function(){
+    var b=this;b.disabled=true;b.innerHTML='注文を準備中… <span class="spin"></span>';
+    createSku().then(function(j){
+      location.href='/api/shop/checkout?sku='+encodeURIComponent(j.sku)+'&qty='+$('qty').value;
+    }).catch(function(e){
+      if(e&&e.message)$('err').textContent=e.message;
+      b.disabled=false;b.textContent='Buy with card — カードで購入';
+    });
+  });
+
+  $('buyCrypto').addEventListener('click',function(){
+    var id=$('nid').value;
+    if(id===''||+id<0){$('err').textContent='Noun ID を入力してください · Enter a Noun ID (or hit 🎲)';return}
+    updateEst();
+    $('cm').classList.add('open');
+  });
+  $('cmClose').addEventListener('click',function(){
+    $('cm').classList.remove('open');
+    if(poll){clearInterval(poll);poll=null}
+    if(cdTimer){clearInterval(cdTimer);cdTimer=null}
+  });
+
+  function startCountdown(min){
+    var end=Date.now()+min*60*1000;
+    if(cdTimer)clearInterval(cdTimer);
+    cdTimer=setInterval(function(){
+      var s=Math.max(0,Math.floor((end-Date.now())/1000));
+      var t=Math.floor(s/60)+':'+('0'+s%60).slice(-2);
+      var el=$('timer');el.textContent=t;
+      if(s<120)el.classList.add('low');
+      if(s<=0){clearInterval(cdTimer);cdTimer=null;
+        $('payStatus').textContent='expired — 再生成してください';
+        $('cGo').disabled=false;$('cGo').textContent='Generate payment — 支払いを生成';}
+    },1000);
+  }
+
+  $('cGo').addEventListener('click',function(){
+    var b=this,e=$('cErr');e.textContent='';
+    var email=$('cEmail').value.trim();
+    if(!email||email.indexOf('@')<0){e.textContent='メールアドレスを入力してください · Email required';return}
+    if(!$('cName').value.trim()||!$('cL1').value.trim()||!$('cCity').value.trim()||!$('cZip').value.trim()){
+      e.textContent='配送先（氏名・住所1・市区町村・郵便番号）をすべて入力してください · Complete the shipping fields';return}
+    b.disabled=true;b.textContent='Creating…';
+    createSku().then(function(j){
+      return fetch('/api/checkout/crypto',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          catalog_sku:j.sku, quantity:+$('qty').value, email:email,
+          size:$('cSize').value, payment_method:asset,
+          shipping:{name:$('cName').value.trim(),line1:$('cL1').value.trim(),
+            line2:$('cL2').value.trim(),city:$('cCity').value.trim(),
+            state:$('cState').value.trim(),zip:$('cZip').value.trim(),
+            country:$('cCountry').value,phone:''}
+        })});
+    }).then(function(r){
+      if(!r.ok)return r.text().then(function(t){throw new Error(t)});return r.json();
+    }).then(function(p){
+      $('payAmt').textContent=p.amount_crypto+' '+p.asset+' ('+jp(p.amount_jpy)+' incl. '+(p.surcharge_bps/100)+'% fee)';
+      $('payTo').textContent=p.recipient;
+      $('payLink').href=p.pay_url;
+      $('payRef').textContent=p.reference;
+      try{
+        var q=qrcode(0,'M');q.addData(p.pay_url);q.make();
+        $('qr').innerHTML=q.createImgTag(4,8);
+      }catch(_){ $('qr').style.display='none'; }
+      $('pay').style.display='block';
+      b.textContent='Payment generated';
+      startCountdown(p.expires_in_min||15);
+      poll=setInterval(function(){
+        fetch(p.status_url).then(function(r){return r.json()}).then(function(s){
+          if(s.status==='confirmed'){
+            clearInterval(poll);poll=null;
+            if(cdTimer){clearInterval(cdTimer);cdTimer=null}
+            $('payStatus').innerHTML='<b style="color:#7ddc8f">CONFIRMED ✓ 発送手配を開始しました — 確認メールをお送りします</b>';
+          } else if(s.status==='expired'){
+            clearInterval(poll);poll=null;
+            if(cdTimer){clearInterval(cdTimer);cdTimer=null}
+            $('payStatus').textContent='expired — 再生成してください';
+            b.disabled=false;b.textContent='Generate payment — 支払いを生成';
+          }
+        }).catch(function(){});
+      },5000);
+    }).catch(function(ex){
+      e.textContent=(ex&&ex.message)||'failed — もう一度お試しください';
+      b.disabled=false;b.textContent='Generate payment — 支払いを生成';
+    });
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>「お前のサービスは cron に毛が生えてるだけ」と Elon に言われたので 1 日でやり切った件 — そして明日から AI がブログを書きます | MU</title>
+<meta name="description" content="ペルソナ Elon Musk と Jeff Bezos に MU を見せたら 16 点指摘された。1 日でやり切った 9 つの実装と、ここから先は AI が Field log を書く話。">
+<meta property="og:type" content="article">
+<meta property="og:title" content="「cron に毛が生えてるだけ」と言われたので 1 日でやり切った件">
+<meta property="og:description" content="ペルソナ Elon / Bezos に殴られた 16 点を 1 日で全部実装。明日から MU の運営ノートは AI が書く。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:url" content="https://wearmu.com/blog/elon-cron-with-fur">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="「cron に毛が生えてるだけ」と言われた件 — 1 日でやり切ったログ">
+<meta name="twitter:description" content="ペルソナ Elon Musk + Bezos に MU を見せて 16 点指摘。9 件を 1 日で実装。明日から AI が運営ノートを書く。">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111;--red:#C8362C;--green:#5a9e6f}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.95;font-size:16px;-webkit-font-smoothing:antialiased}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.85);backdrop-filter:blur(12px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}
+nav a{color:var(--fg);text-decoration:none;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.85}
+nav a:hover{opacity:1}
+nav .logo{font-weight:700;letter-spacing:0.45em}
+article{max-width:720px;margin:0 auto;padding:60px 32px 120px}
+.eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.4em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:18px}
+h1{font-size:clamp(26px,4.2vw,40px);font-weight:300;letter-spacing:0.02em;line-height:1.35;margin-bottom:18px}
+.lede{font-size:15px;color:var(--mute);font-style:italic;border-left:2px solid rgba(230,196,73,0.45);padding:10px 0 10px 18px;margin:22px 0 40px;font-family:'Helvetica Neue',Arial,sans-serif}
+h2{font-size:22px;font-weight:300;letter-spacing:0.02em;margin:56px 0 16px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08);font-family:'Helvetica Neue',Arial,sans-serif;color:var(--y)}
+h3{font-size:16px;font-weight:500;letter-spacing:0.04em;margin:30px 0 12px;font-family:'Helvetica Neue',Arial,sans-serif;opacity:0.95}
+p{margin:0 0 18px}
+em{color:var(--y);font-style:normal}
+strong{color:var(--fg);font-weight:500}
+a{color:var(--y);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
+ul,ol{margin:0 0 22px 24px;color:var(--mute)}
+ul li,ol li{margin-bottom:8px}
+code{font-family:'Menlo','SF Mono',monospace;font-size:13px;background:rgba(230,196,73,0.08);padding:1px 6px;border-radius:2px;color:var(--y)}
+blockquote{margin:24px 0;padding:14px 22px;border-left:3px solid var(--red);background:rgba(200,54,44,0.07);font-family:'Helvetica Neue',Arial,sans-serif;font-size:14px;font-style:italic;color:rgba(245,245,240,0.85);border-radius:2px}
+.quote-author{display:block;margin-top:10px;font-size:11px;letter-spacing:0.2em;text-transform:uppercase;opacity:0.65;font-style:normal}
+.tag{display:inline-block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;padding:3px 10px;border-radius:2px;font-family:'Helvetica Neue',Arial,sans-serif;margin-right:6px;margin-bottom:4px}
+.tag.green{background:rgba(90,158,111,0.18);color:var(--green)}
+.tag.red{background:rgba(200,54,44,0.18);color:var(--red)}
+.tag.y{background:rgba(230,196,73,0.18);color:var(--y)}
+table{width:100%;border-collapse:collapse;margin:18px 0;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid rgba(255,255,255,0.08);vertical-align:top}
+th{font-size:11px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;font-weight:500}
+td:last-child{font-family:'Helvetica Neue',Arial,sans-serif}
+footer{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5;font-family:'Helvetica Neue',Arial,sans-serif}
+.meta{display:flex;gap:24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.55;margin-top:14px;flex-wrap:wrap}
+.box{background:var(--card);padding:18px 22px;margin:22px 0;border-left:2px solid var(--y);border-radius:2px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;line-height:1.85}
+.box .label{font-size:9px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.85;margin-bottom:8px}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">MU</a>
+  <a href="/blog/">/ Notes</a>
+</nav>
+
+<article>
+  <div class="eyebrow">2026.05.11 · 公開ノート #002</div>
+  <h1>「お前のサービスは cron に毛が生えてるだけ」と Elon に言われたので 1 日でやり切った件 — そして明日から AI がブログを書きます。</h1>
+  <div class="meta">
+    <span>Enabler Inc.</span>
+    <span>読了 7 分</span>
+    <span>tag: ops, autonomous, AI</span>
+  </div>
+
+  <p class="lede">
+    今朝、自分のサービスを <strong>Elon Musk と Jeff Bezos のペルソナ</strong>に見せて厳しい FB をもらった。<br>
+    合計 16 点指摘された。そのうち 9 点を <em>今日 1 日</em> で実装してデプロイした。<br>
+    そして明日から、この Field log は <strong>AI が自動で書く</strong>。本記事が、僕の手で書く最後の運営ノートになる予定。
+  </p>
+
+  <h2>1. 言われたこと</h2>
+
+  <blockquote>
+    "You're celebrating that your cron runs. That's not a brand, that's a hobby."
+    <span class="quote-author">— Elon (persona)</span>
+  </blockquote>
+
+  <p>これは効いた。<strong>cron が毎時間 Tシャツのデザインを生成して Printful に投げてる</strong>のを「自動運営」と呼んできたけど、確かに <em>cron に毛が生えただけ</em> だ。AI が <em>判断</em> していない。値段も、コピーも、広告予算も、ブログも、全部僕が手動で決めている。</p>
+
+  <blockquote>
+    "9 subscribers. Do you know their names? If not, you don't have a business, you have a vanity project."
+    <span class="quote-author">— Bezos (persona)</span>
+  </blockquote>
+
+  <p>もう 1 つ刺さった。<strong>customer obsession</strong>。/you 登録者 9 人の名前を全員言えるか？言える。でもこの 1 週間で誰にも個別連絡してない。<em>scale before love is the kiss of death</em>。</p>
+
+  <h2>2. 1 日でやり切ったもの (9 件)</h2>
+
+  <table>
+    <thead><tr><th>#</th><th>FB 由来</th><th>実装</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td><span class="tag y">Bezos</span> 着画ゼロは罪</td>
+        <td><strong>着画自動生成</strong>: <code>generate_lifestyle.py</code> が Gemini 3 Pro Image (image-to-image) で MUGEN design を着てる人物画像を 15 シーン (札幌 / 福岡 / 鎌倉 / Berlin / 那覇 …) で生成 → R2 → <code>products.lifestyle_url</code>。6 時間ごとに cron で増殖。<a href="/">TOP hero</a> に live grid 表示。</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td><span class="tag y">Elon</span> "cron に毛"</td>
+        <td><strong>AI が Field log を毎朝書く</strong>: <code>/api/admin/blog_compose</code> が <code>/api/transparency</code> JSON を Gemini 2.5 Flash に渡して、その日の運営ノートを Markdown で生成。<code>/blog/auto/auto-YYYY-MM-DD</code> でレンダリング。明日から自動。本記事 #002 が人手最後。</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td><span class="tag y">Bezos</span> referral 無し</td>
+        <td><strong>招待 URL + ¥3,400 クレジット</strong>: <code>?ref=&lt;slug&gt;</code> を localStorage 保存 → サインアップで <code>referred_by_slug</code> に紐付け → 招待された人が初回 MU を買うと招待者に <strong>¥3,400 OFF</strong> 自動付与。<a href="/you">/you</a> に招待 URL コピーボタン + 累計クレジット表示。</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td><span class="tag y">Bezos</span> 価格 anchoring 逆効果</td>
+        <td><strong>¥980/月 → ¥1,480/月、3 ヶ月パック ¥2,500</strong>。anchor を組み直して 3 ヶ月パックが <em>44% OFF</em> に見えるように。Spotify 同等価格。</td>
+      </tr>
+      <tr>
+        <td>5</td>
+        <td><span class="tag y">Elon</span> 数字を盛るな</td>
+        <td><strong>本物の数字を分離</strong>: <code>/api/transparency</code> に <code>real.revenue_jpy</code> / <code>real.purchases</code> を追加。<code>session_id LIKE 'cs_live_%'</code> でフィルタ。テスト購入や inflated counter は <em>別フィールド</em> に隔離。今日時点 real <strong>¥145,000 / 5 件</strong>、display は ¥888,000 (テスト・在庫増分を含む)。差分そのまま晒す。</td>
+      </tr>
+      <tr>
+        <td>6</td>
+        <td><span class="tag y">Bezos</span> 自動の信頼性</td>
+        <td><strong>欠番の自動可視化</strong>: <code>/api/transparency.missing_drops</code> が MUGEN <code>drop_num</code> の整数穴 + MUON 直近 14 日の日付穴を JSON で返す。今日 MUGEN <strong>#0095 が欠番</strong>、MUON は <strong>9 日抜け</strong>と判明。隠さず晒す。</td>
+      </tr>
+      <tr>
+        <td>7</td>
+        <td><span class="tag y">Elon</span> ロゴ ego sized</td>
+        <td><strong>TOP コピー再設計</strong>: 巨大 "MU" は維持しつつ、平易な日本語タグライン「<em>AI が毎時間 T シャツをデザインして売る、無人ブランドです。</em>」+ 英語 "Autonomous fashion — designed by weather, made by AI." を追加。64 歳と LA 在住記者の両方が読める粒度に。</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td><span class="tag y">Bezos</span> a11y</td>
+        <td><strong>アクセシビリティ底上げ</strong>: <code>hero-mu</code> に aria-label、loading 数字に aria-live、loading-shimmer に意味付け。スクリーンリーダーで読める。</td>
+      </tr>
+      <tr>
+        <td>9</td>
+        <td><span class="tag y">両者</span> Soulbound 誇張</td>
+        <td><strong>表記を弱化</strong>: NFT mint 0 件の状態で「Soulbound NFT になる」と書いていたコピーを「<em>Soulbound NFT (近日 / Q3 ローンチ予定)</em>」に。誇張やめる、約束だけ残す。</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. 残ってる宿題 (正直に書く)</h2>
+
+  <p>1 日では終わらなかった。Elon と Bezos の指摘のうち、まだ未着手:</p>
+
+  <ul>
+    <li><span class="tag red">残</span> <strong>X (Twitter) 自動 post</strong> — 毎ドロップ + 毎日サマリーを X に自動 post すべきだが、今日は手が回らなかった。明日。</li>
+    <li><span class="tag red">残</span> <strong>配送 9 日問題</strong> — 国内 Printful パートナーへの切替交渉が必要。1 日では無理。</li>
+    <li><span class="tag red">残</span> <strong>9 人 subscriber に手紙</strong> — 今夜書く (これは人間の仕事として)。</li>
+    <li><span class="tag red">残</span> <strong>Generation rate 1 案/分</strong> — Stable Diffusion XL turbo を m5 Mac で動かす検討中。Gemini レート依存からの脱出。</li>
+    <li><span class="tag red">残</span> <strong>MUON cron が 9 日抜け</strong> — m5 Mac の cron が壊れている。今夜直す。<a href="/blog/field-log-001.html">Field log #001</a> でも書いた。</li>
+    <li><span class="tag red">残</span> <strong>MUGEN #95 欠番をどうするか</strong> — "二度と復刻しない" 原則を守るなら永遠の汚点として残す。これは決断。</li>
+  </ul>
+
+  <h2>4. なぜ「明日から AI がブログ」なのか</h2>
+
+  <p>これは挑発じゃない。<em>自律</em>の意味を厳密に詰めるための、唯一の方法だから。</p>
+
+  <p>"無人運営" を語るなら、<strong>運営ノート自体も無人</strong>でないと整合性がない。今までは僕が <code>git commit</code> で blog を書いてきた。それは <em>cron に毛</em> だ。だから明日から、毎朝 9:10 JST に Gemini 2.5 Flash が、その日の <code>/api/transparency</code> + <code>/api/health/cron</code> の生データを読んで、Field log を自分で書く。文体は AI、事実は数字。捏造禁止のプロンプトを与えてある。</p>
+
+  <p>初稿は <a href="/blog/auto/auto-2026-05-12">明日 (2026-05-12) の auto-blog</a> として読めるはず。</p>
+
+  <div class="box">
+    <div class="label">AI が書くブログのルール</div>
+    <ul style="margin-top:6px">
+      <li>毎朝 9:10 JST に <code>/api/admin/blog_compose</code> が cron で叩かれる</li>
+      <li>Gemini に渡す数字は <code>/api/transparency</code> の生データのみ。**人間が手を加えない**</li>
+      <li>記事は <code>/blog/auto/auto-YYYY-MM-DD</code> に永久保存。<a href="/api/blog/auto">JSON で取得</a>もできる</li>
+      <li>もし AI が嘘を書いたら、それは Gemini ではなく <strong>僕のプロンプト設計</strong>の問題。プロンプトを公開する</li>
+      <li>記事末尾には必ず「— 自動生成 by Gemini 2.5 Flash」と明記</li>
+    </ul>
+  </div>
+
+  <h2>5. 今この瞬間のライブ数字</h2>
+  <p style="margin-bottom:14px;font-size:13px;opacity:0.7">↓ <a href="/api/transparency">/api/transparency</a> から直接 fetch。リロードで最新。</p>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin:10px 0 30px">
+    <div class="box" style="margin:0;padding:14px 16px"><div class="label">total drops</div><div style="font-size:22px;color:var(--y);font-weight:200" data-stat="total_drops">…</div></div>
+    <div class="box" style="margin:0;padding:14px 16px"><div class="label">subscribers</div><div style="font-size:22px;color:var(--y);font-weight:200" data-stat="subs">…</div></div>
+    <div class="box" style="margin:0;padding:14px 16px"><div class="label">real revenue</div><div style="font-size:22px;color:var(--y);font-weight:200" data-stat="real_rev">…</div></div>
+    <div class="box" style="margin:0;padding:14px 16px"><div class="label">missing drops</div><div style="font-size:22px;color:var(--y);font-weight:200" data-stat="missing">…</div></div>
+  </div>
+
+  <h2>6. お願い</h2>
+  <p>Elon と Bezos に向けて書いたペルソナ FB の <em>ある一点</em> だけは、僕の力じゃ越えられない。<strong>customer obsession</strong>。1 人の subscriber に深く愛されること。9 人の名前は知っているけど、まだ友達ではない。</p>
+  <p>このブログを読んでいるあなたが MU の <a href="/you">/you</a> に登録してくれたら、僕は今夜中に直接連絡します。AI に書かせるのはノートだけ、人間の仕事は残します。</p>
+
+  <p style="font-size:12px;opacity:0.6;margin-top:32px">— 株式会社イネブラ (Enabler Inc.) · <a href="mailto:info@enablerdao.com">info@enablerdao.com</a></p>
+
+  <p style="font-size:11px;opacity:0.45;margin-top:8px">本記事は <a href="https://github.com/yukihamada/mu-brand">GitHub</a> に CC0 / MIT で置いてあります。Fork して自分のブランドを立てられます。</p>
+</article>
+
+<footer>MU — wearmu.com / 次のノートは AI が書きます: <a href="/blog/auto/auto-2026-05-12" style="color:inherit">2026-05-12 auto</a></footer>
+
+<script>
+(async () => {
+  const setStat = (key, val) => {
+    const el = document.querySelector('[data-stat="'+key+'"]');
+    if (el) el.textContent = val;
+  };
+  try {
+    const [t, brands] = await Promise.all([
+      fetch('/api/transparency').then(r => r.json()),
+      fetch('/api/products').then(r => r.json()),
+    ]);
+    const totalDrops = (brands.brands || []).reduce((s, b) => s + (b.active_drops || 0), 0);
+    const you = t.you || {};
+    const subs = (you.subscribers_free || 0) + (you.subscribers_paid || 0) + (you.lifetime_members || 0);
+    const realRev = (t.real && t.real.revenue_jpy) || 0;
+    const missing = ((t.missing_drops && t.missing_drops.mugen_missing_drops) || []).length +
+                    ((t.missing_drops && t.missing_drops.muon_missing_dates)  || []).length;
+    setStat('total_drops', totalDrops);
+    setStat('subs', subs);
+    setStat('real_rev', '¥' + realRev.toLocaleString('ja-JP'));
+    setStat('missing', missing);
+  } catch (e) {
+    document.querySelectorAll('[data-stat]').forEach(el => el.textContent = '—');
+  }
+})();
+</script>
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>

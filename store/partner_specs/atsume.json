@@ -1,0 +1,64 @@
+{
+  "slug": "atsume",
+  "name": "ATSUME / Kentaroh Awata",
+  "ip_owner": "株式会社アツメ (Atsume Inc.) / Kentaroh Awata",
+  "design": {
+    "monogram": "AT",
+    "accent": "#ff5a36"
+  },
+  "meta": {
+    "display_name": "ATSUME",
+    "tagline": "HR × Tech × 柔術",
+    "h1": "採用は、<br>試合に似ている。",
+    "subtitle": "ATSUME × MU — HR Tech founder collab pitch",
+    "accent_hex": "#ff5a36",
+    "lede": "採用とスパーリングは、同じ構造を持つ。読み合い、間合い、見極め、覚悟。Kentaroh Awata — 株式会社アツメ CEO・柔術プラクティショナー — と MU が共同で立ち上げる、HR × Tech × 柔術 の 30 SKU キャプセル。",
+    "hero_kv": [
+      ["カテゴリ", "HR Tech founder collab"],
+      ["商品数", "30 SKU"],
+      ["パートナー", "株式会社アツメ"],
+      ["プラクティス", "柔術"]
+    ],
+    "why_md": "Kentaroh Awata は HR Tech スタートアップの CEO であり、同時に柔術プラクティショナー。<br>採用も柔術も、「焦らず、しかし瞬間に動く」という同じ身体感覚が要る。<br>このキャプセルは、その身体感覚を着られる・使える・配れる形にしたもの。HR Tech founder のための uniform — 採用イベントから道場、ノベルティから welcome kit まで、同じ世界観で揃う 30 SKU。",
+    "use_cases": [
+      "採用イベントでのノベルティ配布",
+      "社員 onboarding welcome kit (1セット)",
+      "柔術アカデミーとの cross-collab gift",
+      "HR Tech founder の毎日のユニフォーム",
+      "社外 1on1・名刺交換シーンでの会話のフック",
+      "投資家・顧客へのギフト (postcard / sticker / mug)"
+    ]
+  },
+  "skus": [
+    { "letter": "a",  "drop_num": 1,  "price_jpy": 5400,  "label": "採用は試合に似ている wordmark tee",   "kind": "tee",         "design_slug": "wordmark" },
+    { "letter": "b",  "drop_num": 2,  "price_jpy": 5400,  "label": "HR × TECH × 柔術 stacked tee",      "kind": "tee",         "design_slug": "stacked"  },
+    { "letter": "c",  "drop_num": 3,  "price_jpy": 5400,  "label": "AT monogram back-print tee",         "kind": "tee",         "design_slug": "monogram" },
+    { "letter": "d",  "drop_num": 4,  "price_jpy": 5400,  "label": "AT stripe vertical tee",             "kind": "tee",         "design_slug": "stripe"   },
+    { "letter": "e",  "drop_num": 5,  "price_jpy": 5400,  "label": "ATSUME pocket-print tee",            "kind": "tee",         "design_slug": "wordmark" },
+    { "letter": "f",  "drop_num": 6,  "price_jpy": 9800,  "label": "ATSUME wordmark heavy hoodie",       "kind": "hoodie",      "design_slug": "wordmark" },
+    { "letter": "g",  "drop_num": 7,  "price_jpy": 8400,  "label": "HR × TECH × 柔術 crewneck sweat",   "kind": "crewneck",    "design_slug": "stacked"  },
+    { "letter": "h",  "drop_num": 8,  "price_jpy": 10800, "label": "AT zip-up hoodie",                   "kind": "zip_hoodie",  "design_slug": "monogram" },
+    { "letter": "i",  "drop_num": 9,  "price_jpy": 6400,  "label": "AT stripe long-sleeve tee",          "kind": "longsleeve",  "design_slug": "stripe"   },
+    { "letter": "j",  "drop_num": 10, "price_jpy": 4800,  "label": "AT tank top",                        "kind": "tank_top",    "design_slug": "monogram" },
+    { "letter": "k",  "drop_num": 11, "price_jpy": 5800,  "label": "AT monogram snapback cap",           "kind": "cap",         "design_slug": "monogram" },
+    { "letter": "l",  "drop_num": 12, "price_jpy": 3800,  "label": "AT cuffed beanie",                   "kind": "beanie",      "design_slug": "monogram" },
+    { "letter": "m",  "drop_num": 13, "price_jpy": 4200,  "label": "ATSUME stacked canvas tote",         "kind": "tote",        "design_slug": "stacked"  },
+    { "letter": "n",  "drop_num": 14, "price_jpy": 2800,  "label": "ATSUME drawstring sport bag",        "kind": "drawstring",  "design_slug": "stacked"  },
+    { "letter": "o",  "drop_num": 15, "price_jpy": 2400,  "label": "AT ceramic mug 11oz",                "kind": "mug",         "design_slug": "monogram" },
+    { "letter": "p",  "drop_num": 16, "price_jpy": 1800,  "label": "AT crew socks",                      "kind": "socks",       "design_slug": "monogram" },
+    { "letter": "q",  "drop_num": 17, "price_jpy": 2200,  "label": "AT cotton bandana",                  "kind": "bandana",     "design_slug": "monogram" },
+    { "letter": "r",  "drop_num": 18, "price_jpy": 980,   "label": "AT die-cut vinyl sticker",           "kind": "sticker",     "design_slug": "monogram" },
+    { "letter": "s",  "drop_num": 19, "price_jpy": 880,   "label": "AT 38mm pin badge",                  "kind": "pin",         "design_slug": "monogram" },
+    { "letter": "t",  "drop_num": 20, "price_jpy": 980,   "label": "AT square magnet",                   "kind": "magnet",      "design_slug": "monogram" },
+    { "letter": "u",  "drop_num": 21, "price_jpy": 480,   "label": "AT postcard",                        "kind": "postcard",    "design_slug": "monogram" },
+    { "letter": "v",  "drop_num": 22, "price_jpy": 2800,  "label": "ATSUME hardcover notebook",          "kind": "notebook",    "design_slug": "wordmark" },
+    { "letter": "w",  "drop_num": 23, "price_jpy": 2400,  "label": "AT mousepad",                        "kind": "mousepad",    "design_slug": "monogram" },
+    { "letter": "x",  "drop_num": 24, "price_jpy": 3400,  "label": "AT iPhone case",                     "kind": "phonecase",   "design_slug": "monogram" },
+    { "letter": "y",  "drop_num": 25, "price_jpy": 3400,  "label": "ATSUME 30×45cm poster",              "kind": "poster",      "design_slug": "wordmark" },
+    { "letter": "z",  "drop_num": 26, "price_jpy": 5800,  "label": "ATSUME 30×30cm canvas",              "kind": "canvas",      "design_slug": "stripe"   },
+    { "letter": "aa", "drop_num": 27, "price_jpy": 4400,  "label": "ATSUME throw pillow 40cm",           "kind": "pillow",      "design_slug": "stacked"  },
+    { "letter": "ab", "drop_num": 28, "price_jpy": 6800,  "label": "ATSUME sherpa blanket",              "kind": "blanket",     "design_slug": "stripe"   },
+    { "letter": "ac", "drop_num": 29, "price_jpy": 4200,  "label": "AT kids' tee",                       "kind": "kids_tee",    "design_slug": "monogram" },
+    { "letter": "ad", "drop_num": 30, "price_jpy": 6800,  "label": "AT kids' hoodie",                    "kind": "kids_hoodie", "design_slug": "monogram" }
+  ]
+}

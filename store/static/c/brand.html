@@ -1,0 +1,457 @@
+<!DOCTYPE html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MU — Brand</title>
+<meta name="description" content="MU 傘下ブランド。在庫レス・透明な利益分配 (§28) で運営。">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{
+  --bg:#0a0a0a;--fg:#e8dcc8;--accent:#dc2626;--gold:#e6c449;--card:#0d0d0d;--border:#222;
+  --mono:'SF Mono','JetBrains Mono',ui-monospace,monospace;
+  --sans:-apple-system,'SF Pro Display',system-ui,sans-serif;
+  --c:#e6c449;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);min-height:100vh;overflow-x:hidden;}
+a{color:inherit;text-decoration:none}
+
+.hero{position:relative;min-height:80vh;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:60px 24px 40px;text-align:center;overflow:hidden;}
+.hero::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 50% 40%, color-mix(in srgb, var(--c) 12%, transparent), transparent 60%),radial-gradient(circle at 80% 70%, rgba(220,38,38,0.05), transparent 50%);z-index:0;pointer-events:none;}
+.hero > *{position:relative;z-index:1}
+.hero-tag{font-family:var(--mono);font-size:12px;letter-spacing:0.35em;text-transform:uppercase;opacity:0.55;margin-bottom:30px;}
+.hero-tag .dot{color:var(--c)}
+.hero-mark{font-size:clamp(120px, 22vw, 220px);line-height:0.85;color:var(--c);text-shadow:0 0 80px color-mix(in srgb, var(--c) 25%, transparent);margin-bottom:20px;}
+.hero-mark .moon{display:inline-block;animation:spin 28s linear infinite;}
+@keyframes spin { from{transform:rotate(0)} to{transform:rotate(360deg)} }
+.hero-title{font-size:clamp(48px, 10vw, 130px);font-weight:900;letter-spacing:-0.03em;line-height:0.9;color:#fff;}
+.hero-title .accent{color:var(--c)}
+.hero-by{font-family:var(--mono);font-size:11px;color:var(--c);opacity:0.7;letter-spacing:0.3em;margin-top:8px;}
+.hero-tag-line{font-family:var(--mono);font-size:clamp(13px,2.2vw,20px);letter-spacing:0.25em;margin:30px 0 6px;color:var(--fg);text-transform:uppercase}
+.hero-tag-line strong{color:var(--c);font-weight:400}
+.hero-jp{font-size:13px;opacity:0.65;letter-spacing:0.15em;}
+.hero-cta{margin-top:40px;display:flex;gap:14px;flex-wrap:wrap;justify-content:center;}
+.btn{display:inline-block;padding:14px 30px;border-radius:6px;font-weight:700;font-size:13px;letter-spacing:0.15em;text-transform:uppercase;font-family:var(--sans);transition:all .2s;border:2px solid transparent;cursor:pointer;}
+.btn-primary{background:var(--c);color:#0a0a0a;border-color:var(--c);}
+.btn-primary:hover{transform:translateY(-2px);}
+.btn-ghost{background:transparent;border-color:var(--fg);color:var(--fg);}
+.btn-ghost:hover{border-color:var(--c);color:var(--c)}
+
+.manifesto{padding:80px 24px;max-width:780px;margin:0 auto;text-align:center;}
+.manifesto .section-tag{font-family:var(--mono);font-size:11px;letter-spacing:0.4em;color:var(--c);opacity:0.7;margin-bottom:24px;}
+.manifesto p{font-size:clamp(17px,2.4vw,22px);line-height:1.7;font-weight:300;margin-bottom:16px;}
+.manifesto p.lead{font-size:clamp(19px,2.8vw,26px);font-weight:400;}
+.manifesto strong{color:var(--c);font-weight:500}
+.manifesto .closer{margin-top:30px;font-family:var(--mono);font-size:14px;letter-spacing:0.3em;color:var(--c);text-transform:uppercase;}
+
+.section{padding:60px 16px;max-width:1480px;margin:0 auto;}
+.section-head{text-align:center;margin-bottom:40px;}
+.section-head h2{font-size:clamp(26px,3.6vw,36px);font-weight:900;letter-spacing:-0.01em;}
+.section-head .sub{font-family:var(--mono);font-size:12px;color:var(--c);letter-spacing:0.3em;text-transform:uppercase;margin-bottom:12px;}
+.section-head .blurb{margin-top:10px;font-size:13px;opacity:0.6;max-width:540px;margin-left:auto;margin-right:auto;line-height:1.7;}
+
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));min-height:120px;}
+.grid.loading::before{content:"loading from DB…";display:block;text-align:center;width:100%;grid-column:1/-1;font-family:var(--mono);font-size:11px;letter-spacing:0.3em;color:var(--c);opacity:0.4;padding:80px 0;}
+.card{background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;transition:transform .25s,border-color .25s;display:block;cursor:pointer;}
+.card:hover{transform:translateY(-5px);border-color:var(--c);}
+.card .preview{aspect-ratio:1/1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 30%, #1a1a1a, #050505 75%);}
+.card.color-white .preview{background:radial-gradient(circle at 50% 30%, #fafafa, #e8e8e0 75%);}
+.card.kind-rashguard .preview{background:linear-gradient(135deg, #0a0a0a 0%, #1a1500 100%);}
+.card .preview img.mockup-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:1;z-index:1;}
+.card .preview img.mockup-img.failed{display:none;}
+.card .preview::before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.05), transparent 40%),radial-gradient(ellipse at 50% 100%, rgba(0,0,0,0.4), transparent 50%);pointer-events:none;z-index:1;}
+.card.color-white .preview::before{background:radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.4), transparent 40%);}
+.card .design-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:22px;pointer-events:none;z-index:2;}
+.card .preview:has(img.mockup-img:not(.failed)) .design-overlay{display:none;}
+.card .design-overlay .label-jp{font-size:clamp(18px,2vw,28px);font-weight:900;letter-spacing:-0.02em;line-height:1.1;color:#fff;text-shadow:0 2px 14px rgba(0,0,0,0.6);}
+.card.color-white .design-overlay .label-jp{color:#0a0a0a;text-shadow:none;}
+.card .design-overlay .label-sub{margin-top:10px;font-family:var(--mono);font-size:10px;letter-spacing:0.25em;opacity:0.7;color:var(--c);}
+.kind-tag{position:absolute;top:9px;left:11px;font-family:var(--mono);font-size:9px;letter-spacing:0.25em;opacity:0.5;z-index:3;text-transform:uppercase;color:#fff;pointer-events:none;}
+.card.color-white .kind-tag{color:#333;}
+.card .meta{padding:14px 16px 16px;}
+.card .meta .num{font-family:var(--mono);font-size:11px;color:var(--c);letter-spacing:0.2em;}
+.card .meta .name{font-size:14px;font-weight:700;margin:3px 0;line-height:1.3;}
+.card .meta .type{font-size:11px;opacity:0.55;letter-spacing:0.1em;text-transform:uppercase;}
+.card .meta .price{margin-top:6px;font-size:13px;font-weight:700;color:var(--c);}
+.card .ribbon{position:absolute;top:0;right:0;background:var(--accent);color:#fff;font-family:var(--mono);font-size:9px;letter-spacing:0.2em;padding:4px 10px;border-bottom-left-radius:8px;text-transform:uppercase;}
+
+.profit{background:#111;padding:70px 24px;border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.profit-wrap{max-width:780px;margin:0 auto;text-align:center;}
+.profit h3{font-size:clamp(22px,3vw,32px);font-weight:900;letter-spacing:-0.01em;margin-bottom:20px;}
+.profit h3 strong{color:var(--c)}
+.profit p{opacity:0.7;line-height:1.7;font-size:13px;}
+.profit .splits{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin:30px 0;}
+.split{padding:16px 10px;border:1px solid var(--border);border-radius:8px;background:#0a0a0a;}
+.split .pct{font-family:var(--mono);font-size:26px;font-weight:700;color:var(--c);}
+.split .who{margin-top:3px;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;opacity:0.7;}
+.profit .fine{font-size:11px;opacity:0.55;line-height:1.7;margin-top:14px;}
+.profit a{color:var(--c);}
+
+.bigcta{padding:80px 24px;text-align:center;}
+.bigcta h3{font-size:clamp(32px,5vw,60px);font-weight:900;letter-spacing:-0.03em;margin-bottom:16px;}
+.bigcta h3 .gold{color:var(--c)}
+.bigcta p{opacity:0.7;margin-bottom:28px;font-size:13px;letter-spacing:0.05em;}
+
+.brands-section{padding-top:60px;}
+.brand-grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));min-height:120px;}
+.brand-grid.loading::before{content:"loading brands…";display:block;text-align:center;width:100%;grid-column:1/-1;font-family:var(--mono);font-size:11px;letter-spacing:0.3em;color:var(--c);opacity:0.4;padding:60px 0;}
+.brand-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px 16px 16px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;text-decoration:none;color:inherit;transition:all .25s;position:relative;overflow:hidden;}
+.brand-card::before{content:"";position:absolute;inset:0;background:linear-gradient(135deg, var(--bc, var(--c)) 0%, transparent 60%);opacity:0.06;pointer-events:none;}
+.brand-card:hover{transform:translateY(-3px);border-color:var(--bc, var(--c));}
+.brand-card .b-emoji{font-size:26px;line-height:1;color:var(--bc, var(--c));}
+.brand-card .b-name{font-size:15px;font-weight:800;letter-spacing:-0.01em;}
+.brand-card .b-tagline{font-size:11px;opacity:0.55;line-height:1.4;}
+.brand-card .b-meta{margin-top:auto;padding-top:8px;display:flex;gap:8px;flex-wrap:wrap;font-family:var(--mono);font-size:9px;letter-spacing:0.18em;opacity:0.5;text-transform:uppercase;}
+.brand-card .b-meta .pill{padding:3px 7px;border:1px solid var(--border);border-radius:24px;}
+.brand-card.is-current{border-color:var(--bc, var(--c));}
+.brand-card.is-current .b-meta .pill.current{color:var(--bc, var(--c));border-color:var(--bc, var(--c));}
+
+footer{padding:48px 24px 60px;text-align:center;border-top:1px solid var(--border);font-size:12px;opacity:0.55;line-height:1.8;}
+footer .legal{margin-top:20px;padding-top:16px;border-top:1px solid #222;font-size:11px;line-height:1.8;opacity:0.7;}
+footer a{color:var(--c);}
+
+@media(max-width:600px){
+  .grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .card .meta{padding:10px 12px 12px}
+  .card .meta .name{font-size:12px}
+  .hero{min-height:70vh;padding:40px 16px 30px}
+  .profit .splits{grid-template-columns:repeat(2,1fr)}
+  .brand-grid{grid-template-columns:repeat(2,1fr)}
+}
+</style>
+</head><body>
+
+<section class="hero">
+  <div class="hero-tag">— <span class="dot" id="hero-emoji">◯</span> <span id="hero-badge">…</span> —</div>
+  <div class="hero-mark"><span class="moon" id="hero-mark">◯</span></div>
+  <h1 class="hero-title" id="hero-title">…</h1>
+  <div class="hero-by" id="hero-subtitle">…</div>
+  <div class="hero-tag-line" id="hero-tagline-en">…</div>
+  <div class="hero-jp" id="hero-tagline-jp">…</div>
+  <div class="hero-cta">
+    <a href="#products" class="btn btn-primary">商品を見る</a>
+    <a href="#brands" class="btn btn-ghost">他のブランド</a>
+  </div>
+</section>
+
+<section class="manifesto" id="manifesto" style="display:none">
+  <div class="section-tag">— MANIFESTO —</div>
+  <div id="manifesto-body"></div>
+</section>
+
+<section class="section" id="products">
+  <div class="section-head">
+    <div class="sub">— DROPS —</div>
+    <h2><span id="total-count">—</span> SKUs</h2>
+    <p class="blurb" id="products-blurb">在庫レス POD · 7–14日配送 · 不良品全額返金</p>
+  </div>
+  <div class="grid loading" id="product-grid"></div>
+</section>
+
+<section class="profit" id="profit-section" style="display:none">
+  <div class="profit-wrap">
+    <h3><strong>利益の <span id="donation-pct">—</span>%</strong> は寄付されます。</h3>
+    <p>MU §28 利益分配ルール (POD 原価・決済手数料・送料を引いた純利益が対象) に従い、四半期ごとに透明に分配します。</p>
+    <div class="splits" id="splits"></div>
+    <div class="fine">分配は四半期ごとに <a href="/profit-split">/profit-split</a> で公開。</div>
+  </div>
+</section>
+
+<section class="bigcta">
+  <a href="#" class="btn btn-primary" id="shop-all-cta">SHOP ALL · <span id="shop-count">—</span> SKUs</a>
+</section>
+
+<section class="section brands-section" id="brands">
+  <div class="section-head">
+    <div class="sub">— OTHER MU BRANDS —</div>
+    <h2>ブランド一覧</h2>
+    <p class="blurb">MU 傘下ブランド。すべて在庫レス・透明な利益分配で運営。</p>
+  </div>
+  <div class="brand-grid loading" id="brand-grid"></div>
+</section>
+
+<footer>
+  <div id="footer-tagline">— MU —</div>
+  <div style="margin-top:8px"><a href="/">← wearmu.com</a> · <a href="/profit-split">/profit-split</a> · <a href="/constitution.html">/constitution</a></div>
+  <div class="legal">
+    <strong style="color:var(--c);">株式会社イネブラ</strong> (Enabler Inc.) · 〒102-0074 東京都千代田区九段南1-5-6 りそな九段ビル5階 KSフロア<br>
+    代表 濱田優貴 · ✉ <a href="mailto:mail@yukihamada.jp">mail@yukihamada.jp</a> · <br>
+    <a href="/tokushoho.html">特定商取引法表記</a> · <a href="/faq.html">FAQ · 配送 · 返品</a>
+  </div>
+</footer>
+
+<script>
+// ─── Slug-agnostic brand LP ──────────────────────────────────────────
+// Reads the slug from window.location.pathname (/c/<slug>) and renders
+// the entire LP from /api/brand/<slug> + /api/brands. Zero hardcoded
+// product data — works for any catalog_brands row.
+
+const slugFromPath = () => {
+  const m = window.location.pathname.match(/^\/c\/([^/?#]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
+};
+const SLUG = slugFromPath();
+
+const yen = n => '¥' + (n|0).toLocaleString('ja-JP');
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function parseDesc(desc){
+  const s = String(desc||'');
+  const nMatch = /#(\d+)/.exec(s);
+  const n = nMatch ? nMatch[1] : '';
+  const catMatch = /·\s*([^—·]+?)\s*(?:—|·|$)/.exec(s);
+  const category = catMatch ? catMatch[1].trim() : '';
+  const colorMatch = /·\s*(BLACK|WHITE|NAVY|GRAY|GREY|HEATHER)\s*$/i.exec(s);
+  const color = colorMatch ? colorMatch[1].toUpperCase() : '';
+  return { n, category, color };
+}
+
+function kindOf(route){
+  if (!route) return 'item';
+  if (route === 'printful_aop') return 'rashguard';
+  if (route === 'printful_embroidery') return 'embroidery';
+  return 'tee';
+}
+
+function cardHtml(p, idx){
+  const { n, category, color } = parseDesc(p.description);
+  const num = n || String(idx+1).padStart(2,'0');
+  const isWhite = color === 'WHITE';
+  const k = p.kind || kindOf(p.fulfillment_route);
+  const kindLabel = k === 'rashguard' ? 'RASHGUARD · AOP'
+                  : k === 'embroidery' ? 'EMBROIDERY'
+                  : 'TEE' + (color ? ' · ' + color : '');
+  const ribbon = num === '01' ? '<div class="ribbon">HERO</div>'
+                : num === '05' ? '<div class="ribbon">LIMITED</div>'
+                : '';
+  const buyUrl = '/api/shop/checkout?sku=' + encodeURIComponent(p.sku);
+  return `
+  <a class="card color-${isWhite?'white':'black'} kind-${k}" href="${esc(buyUrl)}" data-sku="${esc(p.sku)}">
+    <div class="preview">
+      <div class="kind-tag">${esc(kindLabel)}</div>
+      ${p.mockup_url ? `<img src="${esc(p.mockup_url)}" alt="${esc(p.label)}" loading="lazy" class="mockup-img" onerror="this.classList.add('failed')">` : ''}
+      <div class="design-overlay">
+        <div class="label-jp">${esc(p.label)}</div>
+        ${category ? `<div class="label-sub">${esc(category)}</div>` : ''}
+      </div>
+    </div>
+    <div class="meta">
+      <div class="num">— ${k === 'rashguard' ? 'RASH' : k.toUpperCase()} / ${num} —</div>
+      <div class="name">${esc(p.label)}</div>
+      <div class="type">${esc(kindLabel)}</div>
+      <div class="price">${yen(p.price_jpy)}</div>
+    </div>
+    ${ribbon}
+  </a>`;
+}
+
+function brandCardHtml(b, currentSlug){
+  const isCurrent = b.slug === currentSlug;
+  return `
+  <a class="brand-card ${isCurrent ? 'is-current' : ''}" href="${esc(b.lp_url || ('/c/' + b.slug))}" style="--bc:${esc(b.color_primary || '#e6c449')}">
+    <div class="b-emoji">${esc(b.emoji || '◯')}</div>
+    <div class="b-name">${esc(b.name)}</div>
+    <div class="b-tagline">${esc(b.tagline || '')}</div>
+    <div class="b-meta">
+      <span class="pill">${b.product_count} SKU${b.product_count === 1 ? '' : 's'}</span>
+      ${b.revenue_share_pct > 0 ? `<span class="pill">利益 ${b.revenue_share_pct}% 寄付</span>` : ''}
+      ${isCurrent ? '<span class="pill current">NOW VIEWING</span>' : ''}
+    </div>
+  </a>`;
+}
+
+// Brand theme songs. Plays cfg.audio_url when set; falls back to a per-slug
+// map for brands whose config_json can't yet carry an audio_url.
+const BRAND_SONGS = { tatami: 'https://files.catbox.moe/u61ek7.mp3' };
+function mountBrandPlayer(brand, cfg){
+  const url = (cfg && cfg.audio_url) || BRAND_SONGS[SLUG];
+  if (!url || document.getElementById('brand-player')) return;
+  const wrap = document.createElement('div');
+  wrap.id = 'brand-player';
+  wrap.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:60;display:flex;align-items:center;gap:10px;background:rgba(10,10,10,.82);backdrop-filter:blur(12px);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:999px;padding:8px 14px 8px 10px;font-family:var(--mono),monospace;font-size:11px;letter-spacing:.08em;color:var(--fg,#f5f5f0);box-shadow:0 8px 30px rgba(0,0,0,.4)';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.style.cssText = 'all:unset;cursor:pointer;width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--c,#e6c449);border-radius:50%;color:var(--c,#e6c449);font-size:13px';
+  btn.textContent = '▶';
+  const label = document.createElement('span');
+  label.textContent = (cfg && cfg.audio_label) || '畳のうた';
+  label.style.opacity = '.85';
+  const audio = new Audio(url);
+  audio.loop = true; audio.preload = 'none';
+  btn.addEventListener('click', () => {
+    if (audio.paused) { audio.play().then(()=>{btn.textContent='⏸';}).catch(()=>{}); }
+    else { audio.pause(); btn.textContent='▶'; }
+  });
+  audio.addEventListener('ended', ()=>{ btn.textContent='▶'; });
+  wrap.appendChild(btn); wrap.appendChild(label);
+  document.body.appendChild(wrap);
+}
+
+function renderHero(brand){
+  const cfg = brand.config || {};
+  const hero = cfg.hero || {};
+  const emoji = brand.emoji || '◯';
+  const color = brand.color_primary || '#e6c449';
+  document.documentElement.style.setProperty('--c', color);
+  mountBrandPlayer(brand, cfg);
+  document.getElementById('hero-emoji').textContent = emoji;
+  document.getElementById('hero-mark').textContent = emoji;
+  document.getElementById('hero-badge').textContent = hero.badge || brand.name || '';
+  document.getElementById('hero-subtitle').textContent = hero.subtitle || '';
+
+  const title = hero.title || brand.name || SLUG.toUpperCase();
+  const accent = hero.title_accent_letter || '';
+  const titleEl = document.getElementById('hero-title');
+  if (accent && title.includes(accent)) {
+    const i = title.indexOf(accent);
+    titleEl.innerHTML =
+      esc(title.slice(0, i)) +
+      `<span class="accent">${esc(accent)}</span>` +
+      esc(title.slice(i + accent.length));
+  } else {
+    titleEl.textContent = title;
+  }
+
+  const tagEn = hero.tagline_en || (brand.tagline || '').split('·')[0].trim();
+  const tagAccent = hero.tagline_en_accent || '';
+  const tagEnEl = document.getElementById('hero-tagline-en');
+  if (tagAccent && tagEn.includes(tagAccent)) {
+    tagEnEl.innerHTML = esc(tagEn).replace(esc(tagAccent), `<strong>${esc(tagAccent)}</strong>`);
+  } else {
+    tagEnEl.textContent = tagEn;
+  }
+  document.getElementById('hero-tagline-jp').textContent =
+    hero.tagline_jp || (brand.tagline || '').split('·').slice(1).join('·').trim();
+
+  const blurbs = cfg.product_blurbs || {};
+  const firstBlurb = blurbs.default || blurbs.tee || blurbs.rashguard;
+  if (firstBlurb) document.getElementById('products-blurb').textContent = firstBlurb;
+
+  document.title = (brand.name || SLUG) + (hero.tagline_en ? ' — ' + hero.tagline_en : '');
+  document.getElementById('footer-tagline').textContent =
+    `— ${brand.name || SLUG.toUpperCase()} · ${hero.tagline_en || (brand.tagline || '').split('·')[0].trim() || 'MU'} —`;
+
+  // Manifesto: only show if config.manifesto array provided
+  if (Array.isArray(cfg.manifesto) && cfg.manifesto.length) {
+    document.getElementById('manifesto').style.display = '';
+    document.getElementById('manifesto-body').innerHTML = cfg.manifesto
+      .map((line, i) => `<p class="${i === 0 ? 'lead' : ''}">${esc(line)}</p>`).join('') +
+      (cfg.manifesto_closer ? `<div class="closer">— ${esc(cfg.manifesto_closer)} —</div>` : '');
+  }
+}
+
+function renderSplits(donationPct){
+  const others = Math.max(0, 100 - donationPct);
+  const each = Math.round(others / 5);
+  const splits = [
+    { pct: donationPct, who: '寄付' },
+    { pct: each, who: '創業者' },
+    { pct: each, who: '株主' },
+    { pct: each, who: 'MA Token' },
+    { pct: each, who: 'コミュニティ' },
+    { pct: each, who: '予備' },
+  ];
+  document.getElementById('splits').innerHTML = splits.map(s =>
+    `<div class="split"><div class="pct">${s.pct}%</div><div class="who">${esc(s.who)}</div></div>`
+  ).join('');
+}
+
+async function loadBrand(){
+  if (!SLUG) {
+    document.body.innerHTML = '<div style="padding:80px 20px;text-align:center;font-family:var(--mono);opacity:0.5">no brand slug in URL — use /c/&lt;slug&gt;</div>';
+    return;
+  }
+  try {
+    const [brandRes, brandsRes] = await Promise.all([
+      fetch('/api/brand/' + SLUG, { headers: { accept: 'application/json' }}),
+      fetch('/api/brands', { headers: { accept: 'application/json' }}),
+    ]);
+    if (!brandRes.ok) {
+      document.body.innerHTML = `<div style="padding:80px 20px;text-align:center;font-family:var(--mono);opacity:0.5">brand "${esc(SLUG)}" not found</div>`;
+      return;
+    }
+    const data = await brandRes.json();
+    renderHero(data);
+
+    // Products: render flat (any product, any kind)
+    const grid = document.getElementById('product-grid');
+    grid.classList.remove('loading');
+    const products = data.products || [];
+    grid.innerHTML = products.map(cardHtml).join('') ||
+      '<div style="grid-column:1/-1;text-align:center;padding:60px;opacity:0.5;font-family:var(--mono);font-size:12px;">商品準備中</div>';
+    document.getElementById('total-count').textContent = products.length;
+    document.getElementById('shop-count').textContent = products.length;
+    document.getElementById('shop-all-cta').href = '/shop?brand=' + encodeURIComponent(SLUG);
+
+    // Profit section (only show if revenue_share_pct > 0)
+    if ((data.revenue_share_pct || 0) > 0) {
+      document.getElementById('profit-section').style.display = '';
+      document.getElementById('donation-pct').textContent = data.revenue_share_pct;
+      renderSplits(data.revenue_share_pct);
+    }
+
+    // Brand list
+    const brandGrid = document.getElementById('brand-grid');
+    brandGrid.classList.remove('loading');
+    if (brandsRes.ok) {
+      const bd = await brandsRes.json();
+      // Hide tiny/test brands (≤3 SKUs) from the list — keep the brand being viewed.
+      brandGrid.innerHTML = (bd.brands || [])
+        .filter(b => (b.product_count || 0) > 3 || b.slug === SLUG)
+        .map(b => brandCardHtml(b, SLUG)).join('');
+    }
+
+    // ── Telemetry: impression ping + click beacon ─────────────────────
+    // Fire impression once per SKU when its card scrolls into view.
+    // Sends a batched POST every 800ms so we don't hammer the API.
+    const seen = new Set();
+    const pending = new Set();
+    let flushTimer = null;
+    const flush = () => {
+      flushTimer = null;
+      if (!pending.size) return;
+      const batch = Array.from(pending);
+      pending.clear();
+      try {
+        navigator.sendBeacon
+          ? navigator.sendBeacon('/api/track/impressions',
+              new Blob([JSON.stringify({skus: batch})], {type: 'application/json'}))
+          : fetch('/api/track/impressions', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({skus: batch}), keepalive: true});
+      } catch(e){}
+    };
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const sku = e.target.dataset.sku;
+        if (!sku || seen.has(sku)) continue;
+        seen.add(sku);
+        pending.add(sku);
+        if (!flushTimer) flushTimer = setTimeout(flush, 800);
+        io.unobserve(e.target);
+      }
+    }, { rootMargin: '50px', threshold: 0.3 });
+    document.querySelectorAll('.card[data-sku]').forEach(c => io.observe(c));
+
+    // Click tracking: intercept card clicks, fire beacon, then navigate.
+    document.querySelectorAll('.card[data-sku]').forEach(c => {
+      c.addEventListener('click', () => {
+        const sku = c.dataset.sku;
+        if (!sku) return;
+        try {
+          navigator.sendBeacon
+            ? navigator.sendBeacon('/api/track/click?sku=' + encodeURIComponent(sku))
+            : fetch('/api/track/click?sku=' + encodeURIComponent(sku), { keepalive: true });
+        } catch(e){}
+      }, { passive: true });
+    });
+  } catch (e) {
+    console.error('[brand] load failed', e);
+    document.querySelectorAll('.grid.loading, .brand-grid.loading').forEach(g => {
+      g.classList.remove('loading');
+      g.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:60px 20px;opacity:0.5;font-family:var(--mono);font-size:12px;">読み込みに失敗しました</div>';
+    });
+  }
+}
+
+loadBrand();
+</script>
+</body></html>

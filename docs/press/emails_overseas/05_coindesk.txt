@@ -1,0 +1,50 @@
+To:      news@coindesk.com
+Subject: Bonding-curve apparel (no token): prices rise as it sells, 10% to Nouns
+From:    Yuki Hamada <yuki@hamada.tokyo>
+
+——————————————————————
+
+Hi CoinDesk news desk,
+
+Mercari ex-CPO here — Yuki Hamada. I want to flag a brand that uses
+Web3-native pricing mechanics with **no token issuance**, plus a Nouns
+DAO proposal in flight that commits 10% of co-branded revenue to the
+Nouns Treasury in perpetuity. Worth a paragraph or a profile.
+
+**MU** (https://wearmu.com) — live since 2026-05-07. Three things make
+this CoinDesk-shaped:
+
+**1. Pricing as a bonding curve, but for physical goods.**
+First buyer pays ¥5,000 (~$33). Each subsequent pays ¥250 (~$1.70) more.
+Cap ¥30,000 (~$200). This is the same shape as a Bancor-style invariant,
+but settled in JPY on Stripe — no token, no liquidity pool. "Web3
+mechanics off-chain" makes a clean explainer.
+
+**2. Solana cNFT certificate per piece.**
+Solana Pay (USDC/SOL) is wired in alongside JPY. Each garment ships with
+a compressed NFT via Helius. The "間 MA" weekly 7-day auction line uses a
+mechanism lifted directly from the Nouns auction house.
+
+**3. Nouns DAO candidate proposal.**
+Draft is at github.com/yukihamada/mu-brand/blob/main/NOUNS_PROPOSAL.md.
+Three concurrent collab tracks (MUGEN × NOUNS weekly, MUON × NOUNS daily
+climate-gated, MA × NOUNS weekly 7-day auction). Funding requested from the
+DAO: **0 ETH.** Just a cosign on the `× NOUNS` framing, and 10% of all
+co-branded gross revenue to the treasury in perpetuity. We're about to
+post the candidate to nouns.camp and discourse.nouns.wtf.
+
+Full operational pipeline (Rust + Solana + Gemini + Printful + Stripe)
+is MIT open-source: https://github.com/yukihamada/mu-brand
+
+Press kit: https://wearmu.com/press
+Operating company: Enabler Inc., Tokyo. Founder track record: Mercari CPO,
+NOT A HOTEL co-founder.
+
+If you want a clean angle, the Nouns proposal is the most newsworthy beat
+of the next 30 days. Happy to give CoinDesk an exclusive on the candidate
+submission timing (currently slated this week pending discourse pre-discussion).
+
+Best,
+Yuki Hamada
+mail@yukihamada.jp | +81-90-7409-0407
+ENS: yuki.eth (pending claim verification)

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU × QUIET — First the word · Introvert / deep-work culture.</title>
+<meta name="description" content="MU × QUIET · Introvert / deep-work culture. · 声で世界を書く">
+<meta property="og:title" content="MU × QUIET">
+<meta property="og:description" content="First the word · Introvert / deep-work culture.">
+<meta property="og:image" content="https://wearmu.com/quiet/lifestyle/perfect_QUIET-TEE-01.jpg">
+<meta property="og:url" content="https://wearmu.com/quiet">
+<link rel="canonical" href="https://wearmu.com/quiet">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+:root{--bg:#0a0a0a;--fg:#e8dcc8;--accent:#374151;--gold:#c9a96e;--card:#0d0a07;--border:#2a2218;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,'SF Pro Display',system-ui,sans-serif;min-height:100vh;}
+header{padding:48px 24px 36px;text-align:center;border-bottom:1px solid var(--border);}
+.tag{font-size:11px;opacity:0.6;letter-spacing:0.3em;text-transform:uppercase;color:var(--accent);}
+h1{font-size:clamp(36px,7vw,64px);font-weight:900;letter-spacing:-0.02em;margin:12px 0 14px;line-height:1.1;}
+h1 .x{color:var(--accent);font-style:italic;margin:0 10px;}
+h1 .emoji{font-size:0.7em;vertical-align:0.1em;}
+.lede{max-width:600px;margin:0 auto;font-size:14px;opacity:0.78;line-height:1.7;}
+.hero{aspect-ratio:1/1;max-width:520px;margin:30px auto 0;border-radius:10px;overflow:hidden;background:#f5f5f0;}
+.hero img{width:100%;height:100%;object-fit:cover;}
+main{padding:40px 16px 80px;max-width:1480px;margin:0 auto;}
+.grid{display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));}
+.card{background:#0d0a07;border:1px solid var(--border);border-radius:8px;overflow:hidden;text-decoration:none;color:inherit;transition:transform .2s,border-color .2s;display:block;}
+.card:hover{transform:translateY(-4px);border-color:var(--accent);}
+.card .img{aspect-ratio:1/1;background:#f5f5f0;overflow:hidden;}
+.card img{width:100%;height:100%;object-fit:cover;display:block;transition:transform .35s;}
+.card:hover img{transform:scale(1.04);}
+.card .meta{padding:14px 16px 18px;}
+.card .sku{font-family:'SF Mono',monospace;font-size:10px;color:var(--accent);letter-spacing:0.18em;}
+.card .name{font-size:15px;font-weight:700;margin:4px 0;line-height:1.3;}
+.card .price{font-size:13px;opacity:0.7;letter-spacing:0.05em;margin-top:8px;}
+.loading{text-align:center;padding:80px 20px;opacity:0.5;font-size:12px;letter-spacing:0.2em;}
+footer{padding:40px 24px;text-align:center;border-top:1px solid var(--border);font-size:12px;opacity:0.55;line-height:1.8;}
+footer a{color:var(--gold);text-decoration:none;}
+</style>
+</head><body>
+<header>
+  <div class="tag">MU × QUIET — KOE-FIRST APPAREL</div>
+  <h1><span class="emoji">🤫</span> DO NOT <span class="x">×</span> DISTURB</h1>
+  <p class="lede">Introvert / deep-work culture.<br>音の不在. Off the grid.</p>
+  <div class="hero"><img src="/quiet/lifestyle/perfect_QUIET-TEE-01.jpg" alt="MU × QUIET hero" loading="eager"></div>
+</header>
+<main>
+  <div id="grid" class="grid"><div class="loading">LOADING PRODUCTS…</div></div>
+</main>
+<footer>
+  <p><a href="/">MU</a> · <a href="/c/voice">PRODUCTS API</a> · 在庫レス DTG · 7-14日配送</p>
+</footer>
+<script>
+(async () => {
+  const grid = document.getElementById('grid');
+  const slug = window.location.pathname.replace(/^\//, '').replace(/\/$/, '');
+  try {
+    const r = await fetch(`/api/brand/${slug}?_=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const d = await r.json();
+    const prods = (d.products || []).sort((a,b) => a.sort_order - b.sort_order || a.sku.localeCompare(b.sku));
+    grid.innerHTML = '';
+    if (!prods.length) { grid.innerHTML = '<div class="loading">商品準備中</div>'; return; }
+    for (const p of prods) {
+      const a = document.createElement('a');
+      a.className = 'card';
+      a.href = `/api/shop/checkout?sku=${encodeURIComponent(p.sku)}`;
+      const mockup = `/${slug}/m/perfect_${p.sku}.jpg`;
+      a.innerHTML = `
+        <div class="img"><img src="${mockup}" alt="${p.label}" loading="lazy" onerror="this.style.opacity=0.2"></div>
+        <div class="meta">
+          <div class="sku">${p.sku}</div>
+          <div class="name">${p.label}</div>
+          <div class="price">¥${p.price_jpy.toLocaleString()}</div>
+        </div>`;
+      grid.appendChild(a);
+    }
+  } catch(e) {
+    grid.innerHTML = `<div class="loading" style="color:#f87171">読み込みエラー: ${e.message} — リロードしてみて</div>`;
+    console.error('brand LP fetch error:', e);
+  }
+})();
+</script>
+</body></html>

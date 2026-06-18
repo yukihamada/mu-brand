@@ -8,14 +8,6 @@ on:
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
-# デプロイは 1 本ずつ完走させる。新しい push は実行中をキャンセルせず後ろに並ぶ
-# (cancel-in-progress: false)。並走する自走セッションの高頻度 push でデプロイが
-# 互いをキャンセルし、マージ済みコードが本番に出ない問題への対策。実行中の run は
-# 必ず最後まで走り、最新の main は次の枠で確実に出る。
-concurrency:
-  group: deploy-mu-store
-  cancel-in-progress: false
-
 jobs:
   # Pre-deploy gate: build the release binary AND actually start it briefly.
   # cargo check alone misses runtime panics like axum router conflicts
@@ -123,7 +115,7 @@ jobs:
     # hard gate: if it fails, `needs` short-circuits and deploy is skipped.
     if: ${{ always() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
-    # concurrency はワークフロー単位(上部)に移設。ここで重ねるとグループ二重化になる。
+    concurrency: deploy-mu-store
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
@@ -134,11 +126,8 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           # The current (about to become previous) version number.
-          # `// empty` so a missing field yields "" (not the string "null"),
-          # otherwise the rollback step's `tonumber` chokes ("null" cannot be
-          # parsed as a number) and the gate `previous_version != ''` is fooled.
           ver=$(flyctl releases -a mu-store --json 2>/dev/null \
-            | jq -r '.[0].version // empty' 2>/dev/null || echo "")
+            | jq -r '.[0].version' 2>/dev/null || echo "")
           echo "previous_version=${ver}" >> "$GITHUB_OUTPUT"
           echo "previous=v${ver}"
 

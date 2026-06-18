@@ -1,0 +1,143 @@
+{
+  "slug": "newt",
+  "name": "NEWT (令和トラベル) × MU — 旅を、着る。 身軽に、遠くへ。",
+  "ip_owner": "令和トラベル株式会社 / NEWT (newt.net)",
+  "design": {
+    "monogram": "NW",
+    "accent": "#0ec1a0"
+  },
+  "meta": {
+    "display_name": "NEWT (令和トラベル)",
+    "live": false,
+    "partner_url": "newt.net",
+    "tagline": "旅を、着る。 身軽に、遠くへ。",
+    "h1": "<em>旅</em>を、 着る。 <em>身軽</em>に、 遠くへ。",
+    "subtitle": "MU × NEWT — 海外旅行アプリ / 次世代 OTA (令和トラベル) × 無在庫 POD の旅装ライン【構想・提案 / 未承認】",
+    "accent_hex": "#0ec1a0",
+    "hero_image": "/static/newt/hero-airport-to-beach.jpg",
+    "og_image": "/static/newt/og.jpg",
+    "lede": "本資料は MU (株式会社イネブラ) から <strong>NEWT / 令和トラベル株式会社 (newt.net)</strong> 様への、 <strong>未承認・許諾請求中の collab 提案</strong>です。<br><br>NEWT 様の核心事業は <strong>海外旅行をアプリで簡単に予約できる体験 (次世代 OTA)</strong>。 MU が担うのは<strong>旅そのものではなく、 旅に持っていく装備 (アパレル / goods)</strong> です。 NEWT が「身軽に海外へ」を作るなら、 MU は <strong>「在庫を持たない = 身軽」</strong>という同じ思想で、 <strong>空港からビーチまで動ける旅装を 12 SKU の 無在庫 POD で展開</strong>する設計。 旅行(体験)を売る NEWT と、 旅装(物)を売る MU は<strong>構造的に重なりません</strong>。",
+    "honesty_box": "<b>本資料の誠実性について</b>: これは MU 側からの<b>一方的な提案 (unsolicited proposal)</b> であり、 <b>NEWT / 令和トラベル株式会社の許諾は未取得</b>です。 当 LP のロゴ・ビジュアル・配色は MU が想定で作成した<b>仮モック</b>で、 NEWT 様の実ロゴ・実ブランドアセットは一切使用していません。 掲載する SKU は<b>全て Printful EU / Gelato JP の実 POD 媒体で確実に印刷できる商品に限定</b>し、 <b>在庫リスク ¥0</b>。 ツアー名・行き先・役員名・社内数値など NEWT 様の具体的な事業情報は<b>一切捏造していません</b>。 「行き先 (destination) テーマ」 は実在の特定ツアー名を使わず<b>抽象的な月相連動 drop</b> として構想するに留めます。 本提案の全条件は NEWT 様との協議で変更可能 (negotiable)。",
+    "hero_kv": [
+      ["ステータス", "DRAFT 提案 · NEWT / 令和トラベル 許諾 未取得"],
+      ["寄付 (MU §28)", "売上 50% を MU 標準寄付プールへ"],
+      ["パートナー取分", "売上 25% (POD 原価控除後) · 月締 Wise / 振込"],
+      ["在庫リスク", "¥0 (Printful EU / Gelato JP)"],
+      ["SKU 数", "12 SKU · 旅装 (空港→ビーチ) 軽量・パッカブル重視"]
+    ],
+    "why_md": "NEWT 様のプロダクトが体現するのは<br><br><b>「海外旅行を、 アプリで、 身軽に」</b><br><br>という体験。 重い旅行代理店のカウンターを、 手のひらの数タップに変えた。<br><br>MU の思想はこう重なります:<br><br><b>NEWT は『身軽に海外へ』を作る。 MU は『在庫を持たない = 身軽』で旅装を作る。</b><br><br>───<br><br><b>旅装の 3 軸 (空港 → 移動 → ビーチ)</b><br><br><b>① 着るもの (¥4,800-¥9,800) · 5 SKU</b> — Tee / Long Sleeve / Hoodie / Crewneck。 機内で羽織れる軽量・しわになりにくい・パッカブル前提。 「身軽に、遠くへ」のワードマークと NW モノグラム。<br><br><b>② 運ぶもの (¥800-¥3,800) · 4 SKU</b> — パッカブル Tote / Cap / Pouch (化粧ポーチ相当) / Luggage-tag 風 Sticker。 機内持ち込みに収まる軽量装備。<br><br><b>③ 旅のお守り (¥800-¥3,800) · 3 SKU</b> — Mug (朝のホテルで一杯) / Phone Case (旅の相棒) / Sticker (スーツケースに貼る目印)。 QR / NFC で NEWT の旅程・行き先にリンクする<b>「旅のお守り」構想</b>。<br><br>───<br><br><b>無在庫 POD</b> なので NEWT 様側に在庫・出荷義務は一切なし。 売上の <b>50% は MU §28 の標準寄付プール</b>に回ります (NEWT 様限定の特定寄付先を勝手に紐づけることはしません — 寄付先は協議で決定可能)。 残り <b>25% が NEWT / 令和トラベル様、 25% が MU 運営</b>。 月 1 回締めで Wise / 銀行振込。 配分は MU のデフォルト提案であり、 全て交渉可能です。",
+    "use_cases": [
+      "NEWT アプリ利用者への旅装ノベルティ / プレミアム (空港→ビーチで動ける軽量装備)",
+      "「身軽に、遠くへ」を体現する旅好きコミュニティのデイリーウェア",
+      "QR / NFC で NEWT の旅程・行き先にリンクする『旅のお守り』としての goods",
+      "行き先 (destination) テーマの月相連動 drop (抽象テーマ・実ツアー名は不使用)",
+      "海外配送に強い Printful EU 直送で旅先の現地受け取りも視野",
+      "旅行(体験)を売る NEWT と、 旅装(物)を売る MU の非競合 cross-sell"
+    ],
+    "mu_intro": {
+      "brand": "MU (━◯━)",
+      "operator": "株式会社イネブラ (Enabler Inc.)",
+      "founder": "濱田 優貴 (代表取締役 · ex-Mercari US CEO · 柔術 青帯)",
+      "philosophy": "速く、 ノイズなく。 月相 で drop し、 在庫を持たない。 売上 50% を寄付に回し、 残りを 作る人 ・ 翻訳する人 ・ 配る人 で薄く分ける。",
+      "proof_points": [
+        "wearmu.com 稼働中 · 月相連動 drop · §28 利益分配 (寄付 50 / Yuki 10 / 株主 10 / MA 10 / Community 10 / Reserve 10) 公開",
+        "Printful (EU/US) + Gelato (JP/SG/AU) の dual channel POD で 在庫リスクなし",
+        "JiuFight / ATSUME / kokon / CHAR / ELSOUL / SIIIEEP 等 既存 collab 多数",
+        "GitHub Actions hourly heal + Fly watchdog + Telegram alert の 4 層 自己修復"
+      ]
+    },
+    "mechanism": [
+      {
+        "no": 1,
+        "title": "旅行(体験)と旅装(物)は構造的に非競合",
+        "body": "NEWT / 令和トラベル様が売るのは<b>海外旅行という体験 (次世代 OTA・アプリ予約)</b>。 MU が売るのは<b>旅に持っていくアパレル・goods (物)</b>。 顧客は同じ「旅好き」でも、 買うものが体験 vs 物で完全に別カテゴリ。 値下げ競争・市場食い合いは構造的に発生しない。 むしろ旅装が旅行体験への期待を高める cross-sell 関係。"
+      },
+      {
+        "no": 2,
+        "title": "『身軽』思想の一致 — 在庫を持たない = 旅も身軽",
+        "body": "NEWT のコアバリューは<b>『身軽に海外へ』</b>。 MU のコアは<b>『在庫を持たない無在庫 POD』</b>。 両者とも「重いものを持たない」設計思想。 ライン名 <b>「旅を、着る。 / 身軽に、遠くへ。」</b> はこの一致点を一行に圧縮したもの。 思想レベルで噛み合う collab。"
+      },
+      {
+        "no": 3,
+        "title": "実 POD 媒体で印刷できる商品のみ (誇大表示ゼロ)",
+        "body": "全 12 SKU を <b>Printful EU / Gelato JP で実際に印刷・発送できる媒体に限定</b>。 Tee / Long Sleeve / Hoodie / Crewneck / Tote / Cap / Pouch / Mug / Phone Case / Sticker — すべて既存 POD ラインで実績のある商品。 「軽量」「パッカブル」は各媒体の実仕様の範囲で記載し、 出せない仕様で売ることは構造的に不可能。"
+      },
+      {
+        "no": 4,
+        "title": "QR / NFC は『構想』として正直に提示",
+        "body": "<b>QR / NFC で NEWT の旅程・行き先にリンクする『旅のお守り』</b> は魅力的な hook だが、 現時点では<b>構想 (proposal) であり実装未確定</b>。 NEWT 様の API / ディープリンク仕様の開示と合意が前提。 合意前は静的 QR (newt.net トップへの送客) に留め、 動的旅程リンクは Phase 2 として正直に分離。"
+      },
+      {
+        "no": 5,
+        "title": "売上 50% は MU 標準寄付プールへ (特定寄付先は捏造しない)",
+        "body": "MU §28 の枠組みで<b>売上 50% を MU 標準寄付プール</b>に回す。 NEWT 様限定の特定チャリティ提携を<b>勝手に作って謳うことはしない</b> (誠実性原則)。 寄付先・配分は NEWT 様との協議で決定・変更可能。 残り 25% が NEWT / 令和トラベル様、 25% が MU 運営。 月締 Wise / 振込、 寄付実績は wearmu.com/newt/donations に公開予定。"
+      },
+      {
+        "no": 6,
+        "title": "ロゴ・行き先・役員名は一切捏造しない",
+        "body": "本 LP のロゴ・配色・ビジュアルは MU が想定で作った<b>仮モック</b>であり、 NEWT 様の実ロゴ・実アセットは未使用。 ツアー名・行き先・役員名・社内 KPI など<b>具体的な事業情報は一切記載していない</b>。 「行き先テーマ」 の drop も実在ツアー名を使わず<b>抽象的な月相連動</b> に留める。 許諾取得後に実ブランドアセットへ差し替える前提。"
+      }
+    ],
+    "live_preconditions": [
+      ["契約", "NEWT / 令和トラベル株式会社 から<b>書面合意</b>: ブランド利用許諾 + 寄付/配分モデル + 価格範囲 + 撤退条項"],
+      ["ブランドアセット", "NEWT 様から<b>実ロゴ・配色・使用ガイドライン</b>の受領 (現状の LP は MU 作成の仮モック)"],
+      ["QR / NFC 仕様", "『旅のお守り』動的リンクのための NEWT アプリ ディープリンク / API 仕様の開示と合意 (合意前は静的 QR のみ)"],
+      ["印刷 proof", "12 SKU 全てを Printful EU / Gelato JP で実物 sample 印刷 → NEWT 様承認"],
+      ["寄付スキーム", "MU §28 標準寄付プールの運用確認 + 寄付先協議 + 月次振込 + 実績公開フロー"],
+      ["送客導線", "全 SKU の inner tag + 同梱カード に印字する QR (newt.net へ) のデザイン合意"],
+      ["catalog 公開", "catalog_brands に INSERT + catalog_products.status を review→live、 LP の DRAFT バナー解除 → /newt storefront 公開"],
+      ["launch arc", "14 日 SNS arc 開始 (MU + NEWT 同時投稿想定、 旅メディアへ press release)"]
+    ],
+    "phase_2_candidates": [
+      ["QR / NFC 動的旅程リンク (『旅のお守り』本実装)", "NEWT アプリのディープリンク / API 仕様開示と合意が前提。 合意前は静的 QR (newt.net トップ) に留める"],
+      ["行き先 (destination) シリーズ Drop 04+ (抽象テーマ)", "実在ツアー名は使わず、 月相 × 抽象的な『遠くへ』テーマで拡張。 NEWT 様の世界観合意後"],
+      ["パッカブル機能 outerwear (ウインドブレーカー等)", "Printful / Gelato で軽量パッカブル媒体が確立した時点で追加 (現行 POD ラインに該当媒体が限定的)"],
+      ["旅行用 大判 goods (ブランケット / タオル等)", "高解像度デザイン master 確立後。 機内ブランケット相当の軽量素材確認が前提"],
+      ["NEWT 利用者限定 welcome kit (バンドル)", "NEWT 様の CRM 連携・配布スキーム合意後にバンドル SKU として設計"]
+    ],
+    "terms": [
+      ["ステータス", "<b>DRAFT 提案 · NEWT / 令和トラベル株式会社 許諾未取得 (unsolicited proposal)</b>"],
+      ["契約期間", "Drop 01 + 30 日 review、 継続オプション"],
+      ["最低発注ロット", "<b>無在庫</b> — Printful (EU/US) / Gelato (JP/SG/AU) POD"],
+      ["売上分配", "<b>MU §28 標準寄付プール 50%</b> · NEWT / 令和トラベル様 25% · MU 25% (POD 原価控除後の純売上) — <b>全て negotiable</b>"],
+      ["支払サイト", "月 1 回 締め · 翌月末 Wise / 銀行振込"],
+      ["IP", "NEWT ブランド IP は NEWT 様 / MU の monoline (linework / 同梱カード) は両者使用可 / 実ブランドアセットは許諾後に使用"],
+      ["credit", "全 SKU の inner tag + 同梱カード + 商品ページ に 「Inspired by NEWT · newt.net」 + QR (合意後に正式 credit へ差し替え)"],
+      ["事業の棲み分け", "<b>NEWT は旅行(体験)・MU は旅装(物)</b>。 MU は旅行予約・OTA 事業には一切参入しない"],
+      ["撤退条項", "30 日前通知でいつでも。 違約金なし"],
+      ["寄付実績", "wearmu.com/newt/donations に毎月公開予定 (寄付先は協議で確定)"],
+      ["連絡先", "MU / 株式会社イネブラ 濱田 優貴 — mail@yukihamada.jp"]
+    ],
+    "timeline": [
+      ["Day 0", "本提案を NEWT / 令和トラベル様へ送付 (mail@yukihamada.jp 経由)"],
+      ["Day 7", "NEWT 様の関心確認 + 実ブランドアセット / 配分モデル / QR 仕様の初期協議"],
+      ["Day 14", "書面合意 + 価格範囲確定 + 12 SKU 確定 + inner tag / 同梱カード 入稿"],
+      ["Day 21", "12 SKU を Printful EU / Gelato JP で実物 sample 印刷 → NEWT 様承認 (修正 1 ラウンド)"],
+      ["Day 28", "catalog_brands INSERT + status review→live → /newt storefront 公開 + LP の DRAFT バナー解除"],
+      ["Day 30", "Drop 01 ローンチ — 月相: 朔。 旅メディアへ press release"],
+      ["Day 60", "売上 review + 第 1 回 寄付振込 (実績公開) + Phase 2 候補 (QR/NFC or 行き先シリーズ) から協議"],
+      ["Day 90", "Drop 03 + Phase 2 第 1 弾 順次追加"]
+    ],
+    "revenue_table": [
+      ["Tier 1 · 着るもの (¥4,800-¥9,800) · 5 SKU", "Tee / Long Sleeve / Hoodie / Crewneck", "想定 月 18 個 × ¥6.2K avg = ¥111,600"],
+      ["Tier 2 · 運ぶもの (¥800-¥3,800) · 4 SKU", "Tote / Cap / Pouch / Luggage Sticker", "想定 月 25 個 × ¥2.8K avg = ¥70,000"],
+      ["Tier 3 · 旅のお守り (¥800-¥3,800) · 3 SKU", "Mug / Phone Case / Sticker", "想定 月 30 個 × ¥2.5K avg = ¥75,000"],
+      ["月商合計 (保守 estimate)", "12 SKU", "<b>¥256,600/月 · NEWT ¥32,075/月 · 寄付プール ¥64,150/月</b>"],
+      ["年商 (Drop 01 + 12 ヶ月)", "12 SKU 安定運用", "<b>¥3,079,200/年 · NEWT ¥384,900/年 · 寄付プール ¥769,800/年</b>"]
+    ]
+  },
+  "skus": [
+    { "letter": "a", "drop_num": 1, "price_jpy": 4800, "label": "「旅を、着る。」 wordmark tee",          "kind": "tee",        "design_slug": "wordmark", "design_url": null, "description": "★ HERO ★ 軽量・しわになりにくい旅 T。 機内で羽織れる定番。 前面に 「旅を、着る。 / 身軽に、遠くへ。」 ワードマーク。" },
+    { "letter": "b", "drop_num": 1, "price_jpy": 4800, "label": "NW monogram pocket tee",                "kind": "tee",        "design_slug": "monogram", "design_url": null, "description": "胸ポケットに NW モノグラム。 空港〜街歩きのデイリー旅装。" },
+    { "letter": "c", "drop_num": 2, "price_jpy": 6800, "label": "「身軽に、遠くへ」 long sleeve",         "kind": "longsleeve", "design_slug": "stacked",  "design_url": null, "description": "UV 対策にもなる長袖。 機内の冷房・夜のビーチに 1 枚。 stacked ロゴ。" },
+    { "letter": "d", "drop_num": 3, "price_jpy": 9800, "label": "旅装 pullover hoodie",                  "kind": "hoodie",     "design_slug": "wordmark", "design_url": null, "description": "移動日の主役。 機内・空港・夜のビーチを 1 枚でつなぐパーカー。 背面に旅ワードマーク。" },
+    { "letter": "e", "drop_num": 3, "price_jpy": 7800, "label": "NW crewneck sweat",                    "kind": "crewneck",   "design_slug": "monogram", "design_url": null, "description": "肌寒い目的地用クルーネック。 NW モノグラム。 帰国後も街で着られる無地寄りデザイン。" },
+    { "letter": "f", "drop_num": 1, "price_jpy": 3800, "label": "packable canvas tote · 旅",            "kind": "tote",       "design_slug": "stripe",   "design_url": null, "description": "機内持ち込みに収まるパッカブル trip トート。 stripe ライン。 サブバッグ / お土産用に。" },
+    { "letter": "g", "drop_num": 2, "price_jpy": 3800, "label": "NW travel cap",                        "kind": "cap",        "design_slug": "monogram", "design_url": null, "description": "日除けの旅キャップ。 NW モノグラム刺繍想定。 ビーチ・街歩き兼用。" },
+    { "letter": "h", "drop_num": 2, "price_jpy": 3800, "label": "「旅を、着る。」 zip pouch",            "kind": "pouch",      "design_slug": "wordmark", "design_url": null, "description": "化粧 / ガジェット / パスポート小物用ジップポーチ。 機内ポーチに最適。 ワードマーク。 ※POD 印刷可能なポーチ媒体に限定。" },
+    { "letter": "i", "drop_num": 1, "price_jpy": 800,  "label": "luggage tag sticker (NW)",            "kind": "sticker",    "design_slug": "monogram", "design_url": null, "description": "スーツケースに貼る目印 luggage-tag 風ダイカットステッカー。 NW モノグラム。 QR で newt.net へ (合意後は旅程リンク構想)。" },
+    { "letter": "j", "drop_num": 1, "price_jpy": 3800, "label": "朝のホテル mug 11oz",                  "kind": "mug",        "design_slug": "stacked",  "design_url": null, "description": "昇華転写マグ 11oz。 旅先ホテルの朝の一杯、 帰宅後はデスクで旅を思い出す。 stacked ロゴ。" },
+    { "letter": "k", "drop_num": 2, "price_jpy": 3800, "label": "旅の相棒 phone case",                 "kind": "phonecase",  "design_slug": "wordmark", "design_url": null, "description": "iPhone 13-16 / Pro / Max 対応。 旅の相棒スマホケース。 QR / NFC で NEWT の旅程・行き先にリンクする 『旅のお守り』 構想 (合意後実装・現状は静的 QR)。" },
+    { "letter": "l", "drop_num": 1, "price_jpy": 800,  "label": "NW destination sticker",             "kind": "sticker",    "design_slug": "stripe",   "design_url": null, "description": "行き先 (destination) テーマのステッカー (抽象・実ツアー名不使用)。 ノート / ボトル / スーツケースに。 1 番低い入口価格。" }
+  ]
+}

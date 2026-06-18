@@ -1,0 +1,2420 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>JIU FIGHT × MU — 150 デザイン一覧</title>
+<style>
+*{box-sizing:border-box}
+body{background:#f5f5f0;color:#1a1a1a;font-family:-apple-system,sans-serif;margin:0;padding:0;font-size:13px}
+header{position:sticky;top:0;background:#fff;padding:16px 24px;border-bottom:2px solid #1e40af;z-index:50;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+h1{margin:0;font-size:18px;color:#1e40af}
+.nav{display:flex;gap:8px;font-size:12px;margin-left:auto}
+.nav a{color:#1e40af;text-decoration:none;padding:6px 12px;border:1px solid #1e40af;border-radius:4px;transition:all 0.15s}
+.nav a:hover{background:#1e40af;color:#fff}
+.subnav{padding:10px 24px;background:#fafafa;border-bottom:1px solid #ddd;display:flex;gap:8px;flex-wrap:wrap;font-size:11px}
+.subnav button{background:#fff;border:1px solid #ddd;color:#1a1a1a;padding:7px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-weight:600}
+.subnav button:hover{border-color:#1e40af}
+.subnav button.on{background:#1e40af;color:#fff;border-color:#1e40af}
+.section{padding:20px 24px 12px}
+h2{font-size:13px;letter-spacing:0.12em;color:#1e40af;margin:0 0 4px;text-transform:uppercase}
+.desc{font-size:11.5px;color:#666;margin-bottom:14px;line-height:1.6}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.card{background:#fff;border:1px solid #ddd;border-radius:6px;overflow:hidden;transition:transform 0.12s,border-color 0.12s,box-shadow 0.12s;display:flex;flex-direction:column}
+.card:hover{transform:translateY(-2px);border-color:#1e40af;box-shadow:0 4px 14px rgba(30,64,175,0.15)}
+.card.B{background:#1a1a1a;color:#f5f5f0;border-color:#444}
+.card.B:hover{border-color:#e6c449;box-shadow:0 4px 14px rgba(230,196,73,0.3)}
+.thumb{aspect-ratio:5/7;background:#fff center/contain no-repeat;cursor:zoom-in;display:block;border-bottom:1px solid #eee}
+.card.B .thumb{background-color:#1a1a1a;filter:invert(1) hue-rotate(180deg);border-bottom-color:#333}
+.meta{padding:10px 12px;font-size:11px;line-height:1.4;flex:1;display:flex;flex-direction:column;gap:3px}
+.meta .top{display:flex;justify-content:space-between;align-items:baseline}
+.meta .id{font-family:ui-monospace;font-size:10px;font-weight:700;color:#1e40af}
+.card.B .meta .id{color:#e6c449}
+.meta .size{font-family:ui-monospace;font-weight:700;color:#1e40af;font-size:11px}
+.card.B .meta .size{color:#e6c449}
+.meta .t{font-weight:600;font-size:12px;color:#1a1a1a;line-height:1.3}
+.card.B .meta .t{color:#f5f5f0}
+.color-tag{display:inline-block;font-size:8.5px;letter-spacing:0.1em;padding:1px 5px;border-radius:2px;font-weight:700;text-transform:uppercase;margin-right:4px}
+.tag-w{background:#fff;color:#000;border:1px solid #ccc}
+.tag-b{background:#000;color:#fff}
+.tag-mu-red{background:#ffeaea;color:#cc2222}
+.tag-blue{background:#e8f1ff;color:#1e40af}
+.tag-sumi{background:#f0f0eb;color:#444}
+.meta .dl{display:inline-block;margin-top:6px;font-size:10px;color:#666;text-decoration:none;padding:4px 8px;border:1px solid #ddd;border-radius:3px;background:#fafafa;text-align:center}
+.meta .dl:hover{border-color:#1e40af;color:#1e40af;background:#e8f1ff}
+.card.B .meta .dl{color:#aaa;border-color:#444;background:#0a0a0a}
+.card.B .meta .dl:hover{border-color:#e6c449;color:#e6c449;background:#2a2a2a}
+
+/* Lightbox */
+#lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.94);z-index:1000;align-items:center;justify-content:center;padding:24px}
+#lb.show{display:flex}
+#lb-img{max-width:90vw;max-height:80vh;object-fit:contain;background:#fff;border-radius:6px;box-shadow:0 12px 40px rgba(0,0,0,0.7)}
+#lb.bg-black #lb-img{background:#1a1a1a}
+#lb.bg-checker #lb-img{background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20'%3E%3Crect width='10' height='10' fill='%23ddd'/%3E%3Crect x='10' y='10' width='10' height='10' fill='%23ddd'/%3E%3C/svg%3E")}
+#lb .swap{position:absolute;top:24px;right:24px;display:flex;gap:8px}
+#lb .swap button{background:#222;color:#fff;border:1px solid #444;padding:7px 12px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px}
+#lb .swap button.active{background:#e6c449;color:#000;border-color:#e6c449}
+#lb .swap button:hover{border-color:#e6c449}
+#lb .info{position:absolute;bottom:24px;left:24px;color:#fff;font-size:12px;font-family:ui-monospace;background:#000;padding:8px 14px;border-radius:4px;border:1px solid #333;max-width:60vw}
+#lb .info b{color:#e6c449}
+#lb .info a{color:#7ec3ff;margin-left:14px;text-decoration:none}
+#lb .info a:hover{color:#e6c449}
+#lb .nav-arrow{position:absolute;top:50%;width:50px;height:50px;background:#222;color:#fff;border:1px solid #444;border-radius:50%;font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;transform:translateY(-50%);user-select:none}
+#lb .nav-arrow:hover{border-color:#e6c449;color:#e6c449}
+#lb .nav-arrow.prev{left:24px}
+#lb .nav-arrow.next{right:24px}
+#lb .close{position:absolute;top:24px;left:24px;background:#222;color:#fff;border:1px solid #444;padding:8px 14px;border-radius:4px;cursor:pointer;font-family:inherit;font-size:11px}
+</style></head><body>
+
+<header>
+  <h1>━◯━ JIU FIGHT × MU — 150 デザイン一覧</h1>
+  <div class="nav">
+    <a href="/static/jiufight/orders/">← orders TOP</a>
+    <a href="/static/jiufight/orders/jiufight_order_150.xlsx" download>📊 XLSX</a>
+    <a href="/static/jiufight/orders/jiufight_order_email.txt" target="_blank">✉️ email</a>
+  </div>
+</header>
+
+<div class="subnav">
+  <button class="on" data-f="all" onclick="filt('all')">all 150</button>
+  <button data-f="A" onclick="filt('A')">Order A · m71×100 nbr</button>
+  <button data-f="B" onclick="filt('B')">Order B · 50 unique</button>
+  <button data-f="W" onclick="filt('W')">WHITE 125</button>
+  <button data-f="BLACK" onclick="filt('BLACK')">BLACK 25</button>
+</div>
+
+<div class="section">
+  <h2>━ Order A — m71 (taped hands) × 100 着 + シリアル</h2>
+  <div class="desc">同じデザイン 100 着、 各シャツに <code>001/100</code> 〜 <code>100/100</code> 番号入り。 全部 WHITE。</div>
+  <div class="grid">
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_001.png')" data-url="/static/jiufight/orderA/m71_001.png" data-letter="m71_001" data-label="taped hands #001/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_001</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #001/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_001.png" download="m71_001.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_002.png')" data-url="/static/jiufight/orderA/m71_002.png" data-letter="m71_002" data-label="taped hands #002/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_002</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #002/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_002.png" download="m71_002.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_003.png')" data-url="/static/jiufight/orderA/m71_003.png" data-letter="m71_003" data-label="taped hands #003/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_003</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #003/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_003.png" download="m71_003.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_004.png')" data-url="/static/jiufight/orderA/m71_004.png" data-letter="m71_004" data-label="taped hands #004/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_004</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #004/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_004.png" download="m71_004.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_005.png')" data-url="/static/jiufight/orderA/m71_005.png" data-letter="m71_005" data-label="taped hands #005/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_005</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #005/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_005.png" download="m71_005.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_006.png')" data-url="/static/jiufight/orderA/m71_006.png" data-letter="m71_006" data-label="taped hands #006/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_006</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #006/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_006.png" download="m71_006.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_007.png')" data-url="/static/jiufight/orderA/m71_007.png" data-letter="m71_007" data-label="taped hands #007/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_007</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #007/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_007.png" download="m71_007.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_008.png')" data-url="/static/jiufight/orderA/m71_008.png" data-letter="m71_008" data-label="taped hands #008/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_008</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #008/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_008.png" download="m71_008.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_009.png')" data-url="/static/jiufight/orderA/m71_009.png" data-letter="m71_009" data-label="taped hands #009/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_009</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #009/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_009.png" download="m71_009.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_010.png')" data-url="/static/jiufight/orderA/m71_010.png" data-letter="m71_010" data-label="taped hands #010/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_010</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #010/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_010.png" download="m71_010.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_011.png')" data-url="/static/jiufight/orderA/m71_011.png" data-letter="m71_011" data-label="taped hands #011/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_011</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #011/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_011.png" download="m71_011.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_012.png')" data-url="/static/jiufight/orderA/m71_012.png" data-letter="m71_012" data-label="taped hands #012/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_012</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #012/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_012.png" download="m71_012.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_013.png')" data-url="/static/jiufight/orderA/m71_013.png" data-letter="m71_013" data-label="taped hands #013/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_013</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #013/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_013.png" download="m71_013.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_014.png')" data-url="/static/jiufight/orderA/m71_014.png" data-letter="m71_014" data-label="taped hands #014/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_014</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #014/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_014.png" download="m71_014.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_015.png')" data-url="/static/jiufight/orderA/m71_015.png" data-letter="m71_015" data-label="taped hands #015/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_015</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #015/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_015.png" download="m71_015.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_016.png')" data-url="/static/jiufight/orderA/m71_016.png" data-letter="m71_016" data-label="taped hands #016/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_016</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #016/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_016.png" download="m71_016.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_017.png')" data-url="/static/jiufight/orderA/m71_017.png" data-letter="m71_017" data-label="taped hands #017/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_017</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #017/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_017.png" download="m71_017.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_018.png')" data-url="/static/jiufight/orderA/m71_018.png" data-letter="m71_018" data-label="taped hands #018/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_018</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #018/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_018.png" download="m71_018.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_019.png')" data-url="/static/jiufight/orderA/m71_019.png" data-letter="m71_019" data-label="taped hands #019/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_019</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #019/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_019.png" download="m71_019.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_020.png')" data-url="/static/jiufight/orderA/m71_020.png" data-letter="m71_020" data-label="taped hands #020/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_020</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">taped hands #020/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_020.png" download="m71_020.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_021.png')" data-url="/static/jiufight/orderA/m71_021.png" data-letter="m71_021" data-label="taped hands #021/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_021</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #021/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_021.png" download="m71_021.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_022.png')" data-url="/static/jiufight/orderA/m71_022.png" data-letter="m71_022" data-label="taped hands #022/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_022</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #022/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_022.png" download="m71_022.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_023.png')" data-url="/static/jiufight/orderA/m71_023.png" data-letter="m71_023" data-label="taped hands #023/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_023</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #023/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_023.png" download="m71_023.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_024.png')" data-url="/static/jiufight/orderA/m71_024.png" data-letter="m71_024" data-label="taped hands #024/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_024</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #024/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_024.png" download="m71_024.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_025.png')" data-url="/static/jiufight/orderA/m71_025.png" data-letter="m71_025" data-label="taped hands #025/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_025</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #025/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_025.png" download="m71_025.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_026.png')" data-url="/static/jiufight/orderA/m71_026.png" data-letter="m71_026" data-label="taped hands #026/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_026</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #026/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_026.png" download="m71_026.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_027.png')" data-url="/static/jiufight/orderA/m71_027.png" data-letter="m71_027" data-label="taped hands #027/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_027</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #027/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_027.png" download="m71_027.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_028.png')" data-url="/static/jiufight/orderA/m71_028.png" data-letter="m71_028" data-label="taped hands #028/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_028</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #028/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_028.png" download="m71_028.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_029.png')" data-url="/static/jiufight/orderA/m71_029.png" data-letter="m71_029" data-label="taped hands #029/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_029</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #029/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_029.png" download="m71_029.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_030.png')" data-url="/static/jiufight/orderA/m71_030.png" data-letter="m71_030" data-label="taped hands #030/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_030</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #030/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_030.png" download="m71_030.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_031.png')" data-url="/static/jiufight/orderA/m71_031.png" data-letter="m71_031" data-label="taped hands #031/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_031</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #031/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_031.png" download="m71_031.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_032.png')" data-url="/static/jiufight/orderA/m71_032.png" data-letter="m71_032" data-label="taped hands #032/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_032</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #032/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_032.png" download="m71_032.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_033.png')" data-url="/static/jiufight/orderA/m71_033.png" data-letter="m71_033" data-label="taped hands #033/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_033</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #033/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_033.png" download="m71_033.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_034.png')" data-url="/static/jiufight/orderA/m71_034.png" data-letter="m71_034" data-label="taped hands #034/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_034</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #034/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_034.png" download="m71_034.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_035.png')" data-url="/static/jiufight/orderA/m71_035.png" data-letter="m71_035" data-label="taped hands #035/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_035</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #035/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_035.png" download="m71_035.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_036.png')" data-url="/static/jiufight/orderA/m71_036.png" data-letter="m71_036" data-label="taped hands #036/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_036</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #036/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_036.png" download="m71_036.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_037.png')" data-url="/static/jiufight/orderA/m71_037.png" data-letter="m71_037" data-label="taped hands #037/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_037</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #037/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_037.png" download="m71_037.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_038.png')" data-url="/static/jiufight/orderA/m71_038.png" data-letter="m71_038" data-label="taped hands #038/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_038</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #038/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_038.png" download="m71_038.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_039.png')" data-url="/static/jiufight/orderA/m71_039.png" data-letter="m71_039" data-label="taped hands #039/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_039</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #039/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_039.png" download="m71_039.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_040.png')" data-url="/static/jiufight/orderA/m71_040.png" data-letter="m71_040" data-label="taped hands #040/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_040</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #040/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_040.png" download="m71_040.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_041.png')" data-url="/static/jiufight/orderA/m71_041.png" data-letter="m71_041" data-label="taped hands #041/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_041</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #041/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_041.png" download="m71_041.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_042.png')" data-url="/static/jiufight/orderA/m71_042.png" data-letter="m71_042" data-label="taped hands #042/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_042</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #042/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_042.png" download="m71_042.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_043.png')" data-url="/static/jiufight/orderA/m71_043.png" data-letter="m71_043" data-label="taped hands #043/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_043</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #043/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_043.png" download="m71_043.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_044.png')" data-url="/static/jiufight/orderA/m71_044.png" data-letter="m71_044" data-label="taped hands #044/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_044</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #044/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_044.png" download="m71_044.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_045.png')" data-url="/static/jiufight/orderA/m71_045.png" data-letter="m71_045" data-label="taped hands #045/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_045</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #045/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_045.png" download="m71_045.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_046.png')" data-url="/static/jiufight/orderA/m71_046.png" data-letter="m71_046" data-label="taped hands #046/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_046</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #046/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_046.png" download="m71_046.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_047.png')" data-url="/static/jiufight/orderA/m71_047.png" data-letter="m71_047" data-label="taped hands #047/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_047</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #047/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_047.png" download="m71_047.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_048.png')" data-url="/static/jiufight/orderA/m71_048.png" data-letter="m71_048" data-label="taped hands #048/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_048</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #048/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_048.png" download="m71_048.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_049.png')" data-url="/static/jiufight/orderA/m71_049.png" data-letter="m71_049" data-label="taped hands #049/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_049</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #049/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_049.png" download="m71_049.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_050.png')" data-url="/static/jiufight/orderA/m71_050.png" data-letter="m71_050" data-label="taped hands #050/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_050</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #050/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_050.png" download="m71_050.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_051.png')" data-url="/static/jiufight/orderA/m71_051.png" data-letter="m71_051" data-label="taped hands #051/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_051</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #051/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_051.png" download="m71_051.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_052.png')" data-url="/static/jiufight/orderA/m71_052.png" data-letter="m71_052" data-label="taped hands #052/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_052</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #052/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_052.png" download="m71_052.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_053.png')" data-url="/static/jiufight/orderA/m71_053.png" data-letter="m71_053" data-label="taped hands #053/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_053</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #053/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_053.png" download="m71_053.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_054.png')" data-url="/static/jiufight/orderA/m71_054.png" data-letter="m71_054" data-label="taped hands #054/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_054</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #054/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_054.png" download="m71_054.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_055.png')" data-url="/static/jiufight/orderA/m71_055.png" data-letter="m71_055" data-label="taped hands #055/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_055</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #055/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_055.png" download="m71_055.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_056.png')" data-url="/static/jiufight/orderA/m71_056.png" data-letter="m71_056" data-label="taped hands #056/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_056</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #056/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_056.png" download="m71_056.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_057.png')" data-url="/static/jiufight/orderA/m71_057.png" data-letter="m71_057" data-label="taped hands #057/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_057</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #057/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_057.png" download="m71_057.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_058.png')" data-url="/static/jiufight/orderA/m71_058.png" data-letter="m71_058" data-label="taped hands #058/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_058</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #058/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_058.png" download="m71_058.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_059.png')" data-url="/static/jiufight/orderA/m71_059.png" data-letter="m71_059" data-label="taped hands #059/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_059</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #059/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_059.png" download="m71_059.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_060.png')" data-url="/static/jiufight/orderA/m71_060.png" data-letter="m71_060" data-label="taped hands #060/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_060</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">taped hands #060/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_060.png" download="m71_060.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_061.png')" data-url="/static/jiufight/orderA/m71_061.png" data-letter="m71_061" data-label="taped hands #061/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_061</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #061/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_061.png" download="m71_061.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_062.png')" data-url="/static/jiufight/orderA/m71_062.png" data-letter="m71_062" data-label="taped hands #062/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_062</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #062/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_062.png" download="m71_062.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_063.png')" data-url="/static/jiufight/orderA/m71_063.png" data-letter="m71_063" data-label="taped hands #063/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_063</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #063/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_063.png" download="m71_063.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_064.png')" data-url="/static/jiufight/orderA/m71_064.png" data-letter="m71_064" data-label="taped hands #064/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_064</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #064/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_064.png" download="m71_064.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_065.png')" data-url="/static/jiufight/orderA/m71_065.png" data-letter="m71_065" data-label="taped hands #065/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_065</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #065/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_065.png" download="m71_065.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_066.png')" data-url="/static/jiufight/orderA/m71_066.png" data-letter="m71_066" data-label="taped hands #066/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_066</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #066/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_066.png" download="m71_066.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_067.png')" data-url="/static/jiufight/orderA/m71_067.png" data-letter="m71_067" data-label="taped hands #067/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_067</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #067/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_067.png" download="m71_067.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_068.png')" data-url="/static/jiufight/orderA/m71_068.png" data-letter="m71_068" data-label="taped hands #068/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_068</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #068/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_068.png" download="m71_068.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_069.png')" data-url="/static/jiufight/orderA/m71_069.png" data-letter="m71_069" data-label="taped hands #069/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_069</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #069/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_069.png" download="m71_069.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_070.png')" data-url="/static/jiufight/orderA/m71_070.png" data-letter="m71_070" data-label="taped hands #070/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_070</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #070/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_070.png" download="m71_070.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_071.png')" data-url="/static/jiufight/orderA/m71_071.png" data-letter="m71_071" data-label="taped hands #071/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_071</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #071/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_071.png" download="m71_071.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_072.png')" data-url="/static/jiufight/orderA/m71_072.png" data-letter="m71_072" data-label="taped hands #072/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_072</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #072/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_072.png" download="m71_072.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_073.png')" data-url="/static/jiufight/orderA/m71_073.png" data-letter="m71_073" data-label="taped hands #073/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_073</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #073/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_073.png" download="m71_073.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_074.png')" data-url="/static/jiufight/orderA/m71_074.png" data-letter="m71_074" data-label="taped hands #074/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_074</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #074/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_074.png" download="m71_074.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_075.png')" data-url="/static/jiufight/orderA/m71_075.png" data-letter="m71_075" data-label="taped hands #075/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_075</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #075/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_075.png" download="m71_075.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_076.png')" data-url="/static/jiufight/orderA/m71_076.png" data-letter="m71_076" data-label="taped hands #076/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_076</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #076/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_076.png" download="m71_076.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_077.png')" data-url="/static/jiufight/orderA/m71_077.png" data-letter="m71_077" data-label="taped hands #077/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_077</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #077/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_077.png" download="m71_077.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_078.png')" data-url="/static/jiufight/orderA/m71_078.png" data-letter="m71_078" data-label="taped hands #078/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_078</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #078/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_078.png" download="m71_078.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_079.png')" data-url="/static/jiufight/orderA/m71_079.png" data-letter="m71_079" data-label="taped hands #079/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_079</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #079/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_079.png" download="m71_079.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_080.png')" data-url="/static/jiufight/orderA/m71_080.png" data-letter="m71_080" data-label="taped hands #080/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_080</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #080/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_080.png" download="m71_080.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_081.png')" data-url="/static/jiufight/orderA/m71_081.png" data-letter="m71_081" data-label="taped hands #081/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_081</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #081/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_081.png" download="m71_081.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_082.png')" data-url="/static/jiufight/orderA/m71_082.png" data-letter="m71_082" data-label="taped hands #082/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_082</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #082/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_082.png" download="m71_082.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_083.png')" data-url="/static/jiufight/orderA/m71_083.png" data-letter="m71_083" data-label="taped hands #083/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_083</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #083/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_083.png" download="m71_083.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_084.png')" data-url="/static/jiufight/orderA/m71_084.png" data-letter="m71_084" data-label="taped hands #084/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_084</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #084/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_084.png" download="m71_084.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_085.png')" data-url="/static/jiufight/orderA/m71_085.png" data-letter="m71_085" data-label="taped hands #085/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_085</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #085/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_085.png" download="m71_085.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_086.png')" data-url="/static/jiufight/orderA/m71_086.png" data-letter="m71_086" data-label="taped hands #086/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_086</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #086/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_086.png" download="m71_086.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_087.png')" data-url="/static/jiufight/orderA/m71_087.png" data-letter="m71_087" data-label="taped hands #087/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_087</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #087/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_087.png" download="m71_087.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_088.png')" data-url="/static/jiufight/orderA/m71_088.png" data-letter="m71_088" data-label="taped hands #088/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_088</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #088/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_088.png" download="m71_088.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_089.png')" data-url="/static/jiufight/orderA/m71_089.png" data-letter="m71_089" data-label="taped hands #089/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_089</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #089/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_089.png" download="m71_089.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_090.png')" data-url="/static/jiufight/orderA/m71_090.png" data-letter="m71_090" data-label="taped hands #090/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_090</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #090/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_090.png" download="m71_090.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_091.png')" data-url="/static/jiufight/orderA/m71_091.png" data-letter="m71_091" data-label="taped hands #091/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_091</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #091/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_091.png" download="m71_091.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_092.png')" data-url="/static/jiufight/orderA/m71_092.png" data-letter="m71_092" data-label="taped hands #092/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_092</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #092/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_092.png" download="m71_092.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_093.png')" data-url="/static/jiufight/orderA/m71_093.png" data-letter="m71_093" data-label="taped hands #093/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_093</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #093/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_093.png" download="m71_093.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_094.png')" data-url="/static/jiufight/orderA/m71_094.png" data-letter="m71_094" data-label="taped hands #094/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_094</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #094/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_094.png" download="m71_094.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_095.png')" data-url="/static/jiufight/orderA/m71_095.png" data-letter="m71_095" data-label="taped hands #095/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_095</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #095/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_095.png" download="m71_095.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_096.png')" data-url="/static/jiufight/orderA/m71_096.png" data-letter="m71_096" data-label="taped hands #096/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_096</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #096/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_096.png" download="m71_096.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_097.png')" data-url="/static/jiufight/orderA/m71_097.png" data-letter="m71_097" data-label="taped hands #097/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_097</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #097/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_097.png" download="m71_097.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_098.png')" data-url="/static/jiufight/orderA/m71_098.png" data-letter="m71_098" data-label="taped hands #098/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_098</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #098/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_098.png" download="m71_098.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_099.png')" data-url="/static/jiufight/orderA/m71_099.png" data-letter="m71_099" data-label="taped hands #099/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_099</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #099/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_099.png" download="m71_099.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="A" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/orderA/m71_100.png')" data-url="/static/jiufight/orderA/m71_100.png" data-letter="m71_100" data-label="taped hands #100/100" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m71_100</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">taped hands #100/100</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/orderA/m71_100.png" download="m71_100.png">⬇ DL PNG</a>
+  </div>
+</div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>━ Order B — 50 種類別デザイン (25 W / 25 B)</h2>
+  <div class="desc">MU × JIUFIGHT (red) + JIU FIGHT (blue) + SUMI (black) の 50 ユニーク。 BLACK は白インク反転印刷。</div>
+  <div class="grid">
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/proposals/jiufight-design-date.png')" data-url="/static/proposals/jiufight-design-date.png" data-letter="mu_date" data-label="MU × JIUFIGHT · datestamp" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">mu_date</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">MU × JIUFIGHT · datestamp</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/proposals/jiufight-design-date.png" download="mu_date.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/116_front_marked.png')" data-url="/static/jiufight/products/116_front_marked.png" data-letter="m116" data-label="MU × scoreboard" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m116</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">MU × scoreboard</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/116_front_marked.png" download="m116.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/117_front_marked.png')" data-url="/static/jiufight/products/117_front_marked.png" data-letter="m117" data-label="MU × podium 1-2-3" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m117</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">MU × podium 1-2-3</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/117_front_marked.png" download="m117.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/118_front_marked.png')" data-url="/static/jiufight/products/118_front_marked.png" data-letter="m118" data-label="MU × bracket" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m118</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">MU × bracket</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/118_front_marked.png" download="m118.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/119_front_marked.png')" data-url="/static/jiufight/products/119_front_marked.png" data-letter="m119" data-label="MU × huge VS" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m119</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">MU × huge VS</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/119_front_marked.png" download="m119.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/147_front_marked.png')" data-url="/static/jiufight/products/147_front_marked.png" data-letter="m147" data-label="MU × Japan map" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m147</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">MU × Japan map</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/147_front_marked.png" download="m147.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/148_front_marked.png')" data-url="/static/jiufight/products/148_front_marked.png" data-letter="m148" data-label="MU × MMXXVI" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m148</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">MU × MMXXVI</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/148_front_marked.png" download="m148.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/149_front_marked.png')" data-url="/static/jiufight/products/149_front_marked.png" data-letter="m149" data-label="MU × 柔" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m149</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">MU × 柔</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-mu-red">mu-red</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/149_front_marked.png" download="m149.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/73_front_marked.png')" data-url="/static/jiufight/products/73_front_marked.png" data-letter="m73" data-label="triangle choke" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m73</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">triangle choke</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/73_front_marked.png" download="m73.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/76_front_marked.png')" data-url="/static/jiufight/products/76_front_marked.png" data-letter="m76" data-label="karate strike" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m76</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">karate strike</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/76_front_marked.png" download="m76.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/78_front_marked.png')" data-url="/static/jiufight/products/78_front_marked.png" data-letter="m78" data-label="belt knot" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m78</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">belt knot</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/78_front_marked.png" download="m78.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/80_front_marked.png')" data-url="/static/jiufight/products/80_front_marked.png" data-letter="m80" data-label="trophy" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m80</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">trophy</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/80_front_marked.png" download="m80.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/83_front_marked.png')" data-url="/static/jiufight/products/83_front_marked.png" data-letter="m83" data-label="crossed katana" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m83</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">crossed katana</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/83_front_marked.png" download="m83.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/87_front_marked.png')" data-url="/static/jiufight/products/87_front_marked.png" data-letter="m87" data-label="bracket tree" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m87</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">bracket tree</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/87_front_marked.png" download="m87.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/88_front_marked.png')" data-url="/static/jiufight/products/88_front_marked.png" data-letter="m88" data-label="tiger WILD CARD" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m88</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">tiger WILD CARD</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/88_front_marked.png" download="m88.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/91_front_marked.png')" data-url="/static/jiufight/products/91_front_marked.png" data-letter="m91" data-label="KIMURA" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m91</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">KIMURA</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/91_front_marked.png" download="m91.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/99_front_marked.png')" data-url="/static/jiufight/products/99_front_marked.png" data-letter="m99" data-label="DRAGON SPIRIT" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m99</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">DRAGON SPIRIT</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/99_front_marked.png" download="m99.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/101_front_marked.png')" data-url="/static/jiufight/products/101_front_marked.png" data-letter="m101" data-label="GOLD medal" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m101</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">GOLD medal</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/101_front_marked.png" download="m101.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/104_front_marked.png')" data-url="/static/jiufight/products/104_front_marked.png" data-letter="m104" data-label="HEEL HOOK" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m104</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">HEEL HOOK</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/104_front_marked.png" download="m104.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/106_front_marked.png')" data-url="/static/jiufight/products/106_front_marked.png" data-letter="m106" data-label="GUILLOTINE" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m106</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">GUILLOTINE</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/106_front_marked.png" download="m106.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/125_front_marked.png')" data-url="/static/jiufight/products/125_front_marked.png" data-letter="m125" data-label="WARRIOR kabuto" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m125</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">WARRIOR kabuto</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/125_front_marked.png" download="m125.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/126_front_marked.png')" data-url="/static/jiufight/products/126_front_marked.png" data-letter="m126" data-label="BEFORE THE FIGHT bow" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m126</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">BEFORE THE FIGHT bow</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/126_front_marked.png" download="m126.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/140_front_marked.png')" data-url="/static/jiufight/products/140_front_marked.png" data-letter="m140" data-label="RISE AGAIN phoenix" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m140</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">RISE AGAIN phoenix</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/140_front_marked.png" download="m140.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/141_front_marked.png')" data-url="/static/jiufight/products/141_front_marked.png" data-letter="m141" data-label="NIGHT WATCH owl" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m141</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">NIGHT WATCH owl</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/141_front_marked.png" download="m141.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card W" data-section="B" data-color="WHITE">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/142_front_marked.png')" data-url="/static/jiufight/products/142_front_marked.png" data-letter="m142" data-label="IRON WILL kettlebell" data-color="WHITE"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m142</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">IRON WILL kettlebell</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-w">WHITE</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/142_front_marked.png" download="m142.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/21_front_marked.png')" data-url="/static/jiufight/products/21_front_marked.png" data-letter="m21" data-label="無 mu" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m21</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">無 mu</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/21_front_marked.png" download="m21.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/22_front_marked.png')" data-url="/static/jiufight/products/22_front_marked.png" data-letter="m22" data-label="柔 jū" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m22</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">柔 jū</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/22_front_marked.png" download="m22.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/23_front_marked.png')" data-url="/static/jiufight/products/23_front_marked.png" data-letter="m23" data-label="極 kiwami" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m23</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">極 kiwami</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/23_front_marked.png" download="m23.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/25_front_marked.png')" data-url="/static/jiufight/products/25_front_marked.png" data-letter="m25" data-label="道 dō" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m25</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">道 dō</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/25_front_marked.png" download="m25.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/26_front_marked.png')" data-url="/static/jiufight/products/26_front_marked.png" data-letter="m26" data-label="闘 tatakai" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m26</span>
+      <span class="size">S</span>
+    </div>
+    <div class="t">闘 tatakai</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/26_front_marked.png" download="m26.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/27_front_marked.png')" data-url="/static/jiufight/products/27_front_marked.png" data-letter="m27" data-label="無心 mushin" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m27</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">無心 mushin</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/27_front_marked.png" download="m27.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/30_front_marked.png')" data-url="/static/jiufight/products/30_front_marked.png" data-letter="m30" data-label="一本 ippon" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m30</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">一本 ippon</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/30_front_marked.png" download="m30.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/50_front_marked.png')" data-url="/static/jiufight/products/50_front_marked.png" data-letter="m50" data-label="━◯━ MU" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m50</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">━◯━ MU</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/50_front_marked.png" download="m50.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/72_back_marked.png')" data-url="/static/jiufight/products/72_back_marked.png" data-letter="m72" data-label="shaka TOKYO" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m72</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">shaka TOKYO</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/72_back_marked.png" download="m72.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/79_front_marked.png')" data-url="/static/jiufight/products/79_front_marked.png" data-letter="m79" data-label="tatami footprints" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m79</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">tatami footprints</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/79_front_marked.png" download="m79.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/81_front_marked.png')" data-url="/static/jiufight/products/81_front_marked.png" data-letter="m81" data-label="stopwatch" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m81</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">stopwatch</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/81_front_marked.png" download="m81.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/84_front_marked.png')" data-url="/static/jiufight/products/84_front_marked.png" data-letter="m84" data-label="lotus + sun" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m84</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">lotus + sun</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/84_front_marked.png" download="m84.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/85_front_marked.png')" data-url="/static/jiufight/products/85_front_marked.png" data-letter="m85" data-label="fan 柔" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m85</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">fan 柔</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/85_front_marked.png" download="m85.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/89_front_marked.png')" data-url="/static/jiufight/products/89_front_marked.png" data-letter="m89" data-label="rising koi" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m89</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">rising koi</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/89_front_marked.png" download="m89.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/96_front_marked.png')" data-url="/static/jiufight/products/96_front_marked.png" data-letter="m96" data-label="TAKE THE BACK" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m96</span>
+      <span class="size">M</span>
+    </div>
+    <div class="t">TAKE THE BACK</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/96_front_marked.png" download="m96.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/109_front_marked.png')" data-url="/static/jiufight/products/109_front_marked.png" data-letter="m109" data-label="勝 katsu" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m109</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">勝 katsu</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/109_front_marked.png" download="m109.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/111_front_marked.png')" data-url="/static/jiufight/products/111_front_marked.png" data-letter="m111" data-label="練 ren" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m111</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">練 ren</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/111_front_marked.png" download="m111.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/113_front_marked.png')" data-url="/static/jiufight/products/113_front_marked.png" data-letter="m113" data-label="試合 shiai" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m113</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">試合 shiai</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/113_front_marked.png" download="m113.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/115_front_marked.png')" data-url="/static/jiufight/products/115_front_marked.png" data-letter="m115" data-label="覇 ha" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m115</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">覇 ha</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/115_front_marked.png" download="m115.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/122_front_marked.png')" data-url="/static/jiufight/products/122_front_marked.png" data-letter="m122" data-label="FOLD UP origami" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m122</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">FOLD UP origami</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/122_front_marked.png" download="m122.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/127_front_marked.png')" data-url="/static/jiufight/products/127_front_marked.png" data-letter="m127" data-label="POST FIGHT FEAST" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m127</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">POST FIGHT FEAST</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/127_front_marked.png" download="m127.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/134_front_marked.png')" data-url="/static/jiufight/products/134_front_marked.png" data-letter="m134" data-label="闘魂 toukon" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m134</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">闘魂 toukon</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/134_front_marked.png" download="m134.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/136_front_marked.png')" data-url="/static/jiufight/products/136_front_marked.png" data-letter="m136" data-label="全力 zenryoku" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m136</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">全力 zenryoku</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/136_front_marked.png" download="m136.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/137_front_marked.png')" data-url="/static/jiufight/products/137_front_marked.png" data-letter="m137" data-label="強 tsuyoi" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m137</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">強 tsuyoi</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-sumi">sumi</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/137_front_marked.png" download="m137.png">⬇ DL PNG</a>
+  </div>
+</div>
+<div class="card B" data-section="B" data-color="BLACK">
+  <div class="thumb" style="background-image:url('/static/jiufight/products/144_front_marked.png')" data-url="/static/jiufight/products/144_front_marked.png" data-letter="m144" data-label="AMERICANA" data-color="BLACK"></div>
+  <div class="meta">
+    <div class="top">
+      <span class="id">m144</span>
+      <span class="size">LL</span>
+    </div>
+    <div class="t">AMERICANA</div>
+    <div style="margin-top:4px">
+      <span class="color-tag tag-b">BLACK</span>
+      <span class="color-tag tag-blue">blue</span>
+    </div>
+    <a class="dl" href="/static/jiufight/products/144_front_marked.png" download="m144.png">⬇ DL PNG</a>
+  </div>
+</div>
+  </div>
+</div>
+
+<div id="lb">
+  <button class="close" onclick="close_lb()">✕ close</button>
+  <div class="swap">
+    <button id="bg-white" class="active" onclick="setBg('white')">WHITE tee</button>
+    <button id="bg-black" onclick="setBg('black')">BLACK tee</button>
+    <button id="bg-checker" onclick="setBg('checker')">透過 check</button>
+  </div>
+  <div class="nav-arrow prev" onclick="nav(-1)">‹</div>
+  <img id="lb-img" src="">
+  <div class="nav-arrow next" onclick="nav(1)">›</div>
+  <div class="info">
+    <b id="lb-letter"></b> · <span id="lb-label"></span> · <span id="lb-pos"></span>
+    <a id="lb-dl" href="" download>⬇ DL PNG</a>
+  </div>
+</div>
+
+<script>
+var thumbs = Array.from(document.querySelectorAll('.thumb'));
+var cur = 0;
+function open_lb(idx){
+  cur = idx;
+  var t = thumbs[cur];
+  document.getElementById('lb-img').src = t.dataset.url;
+  document.getElementById('lb-letter').textContent = t.dataset.letter;
+  document.getElementById('lb-label').textContent = t.dataset.label;
+  document.getElementById('lb-pos').textContent = (cur+1) + ' / ' + thumbs.length;
+  var dl = document.getElementById('lb-dl');
+  dl.href = t.dataset.url;
+  dl.download = t.dataset.letter + '.png';
+  document.getElementById('lb').classList.add('show');
+}
+function close_lb(){ document.getElementById('lb').classList.remove('show'); }
+function nav(dir){
+  cur = (cur + dir + thumbs.length) % thumbs.length;
+  open_lb(cur);
+}
+function setBg(bg){
+  var lb = document.getElementById('lb');
+  lb.classList.remove('bg-white','bg-black','bg-checker');
+  lb.classList.add('bg-'+bg);
+  ['white','black','checker'].forEach(function(b){
+    document.getElementById('bg-'+b).classList.toggle('active', b === bg);
+  });
+}
+thumbs.forEach(function(t,i){
+  t.addEventListener('click', function(){ open_lb(i); });
+});
+document.getElementById('lb').addEventListener('click', function(e){
+  if (e.target.id === 'lb') close_lb();
+});
+document.addEventListener('keydown', function(e){
+  if (!document.getElementById('lb').classList.contains('show')) return;
+  if (e.key === 'Escape') close_lb();
+  if (e.key === 'ArrowLeft') nav(-1);
+  if (e.key === 'ArrowRight') nav(1);
+});
+function filt(f){
+  document.querySelectorAll('.subnav button').forEach(function(b){
+    b.classList.toggle('on', b.dataset.f === f);
+  });
+  document.querySelectorAll('.card').forEach(function(c){
+    var match;
+    if (f === 'all') match = true;
+    else if (f === 'A' || f === 'B') match = (c.dataset.section === f);
+    else if (f === 'W') match = (c.dataset.color === 'WHITE');
+    else if (f === 'BLACK') match = (c.dataset.color === 'BLACK');
+    c.style.display = match ? '' : 'none';
+  });
+  thumbs = Array.from(document.querySelectorAll('.card:not([style*="none"]) .thumb'));
+}
+</script>
+</body></html>

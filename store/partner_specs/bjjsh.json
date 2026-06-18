@@ -1,0 +1,850 @@
+{
+  "slug": "bjjsh",
+  "name": "BJJ TOKYO",
+  "ip_owner": "BJJ TOKYO (MU original line)",
+  "design": {
+    "monogram": "BJJ",
+    "accent": "#0a4d9c"
+  },
+  "meta": {
+    "display_name": "BJJ TOKYO",
+    "tagline": "QUIET. FAST.",
+    "subtitle": "MU × BJJ TOKYO — competition jiu-jitsu, stripped to the essentials.",
+    "h1": "Nothing wasted.",
+    "accent_hex": "#0a4d9c",
+    "lede": "Jiu-jitsu is subtraction, not addition. Drop the wasted motion, cut the noise, finish on the shortest path. BJJ TOKYO carries MU's philosophy — quiet, fast — into competition jiu-jitsu. Built from MU's minimal vocabulary (無 nothing · 月 moon · 円相 the zen circle · 柔 the gentle art · 帯 the belt) in monochrome plus a single jiu-jitsu blue. The global face of the line — same drop, English-first.",
+    "hero_kv": [
+      [
+        "Category",
+        "Competition BJJ apparel"
+      ],
+      [
+        "First drop",
+        "16 SKU (scaling to 100)"
+      ],
+      [
+        "Base / Domain",
+        "Tokyo / bjj.sh"
+      ],
+      [
+        "Design",
+        "MU — 無 / 月 / 円相 / 柔 / 帯"
+      ],
+      [
+        "Accent",
+        "Jiu-jitsu blue #0a4d9c — a nod to the blue belt"
+      ]
+    ],
+    "why_md": "Most jiu-jitsu apparel is loud. BJJ TOKYO goes the other way.<br>無 (cut the waste), 月 (the MU lineage), 円相 (the one-stroke zen circle that completes in a single move), 柔 (softness overcomes hardness), 帯 (the proof of rank) — only the signs that matter, in monochrome plus one jiu-jitsu blue.<br>Wears as a daily training kit, a competition travel uniform, or an academy's own merch. Zero-inventory print-on-demand, so a gym or academy can run it under its own name.",
+    "use_cases": [
+      "Daily training & open mat",
+      "Competition travel team kit",
+      "Academy & gym merch (zero inventory risk)",
+      "Cross-academy exchange gifts",
+      "Belt promotion & podium keepsakes",
+      "Spectator & support goods (sticker / bandana / tote)"
+    ]
+  },
+  "skus": [
+    {
+      "letter": "a",
+      "drop_num": 1,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · Ju Enso",
+      "kind": "rashguard_ls",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "b",
+      "drop_num": 2,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · Belt",
+      "kind": "rashguard_ls",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "c",
+      "drop_num": 3,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · Mu / Moon",
+      "kind": "rashguard_ls",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "d",
+      "drop_num": 4,
+      "price_jpy": 8800,
+      "label": "Rashguard LS · BJJ TOKYO",
+      "kind": "rashguard_ls",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "e",
+      "drop_num": 5,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · Ju Enso",
+      "kind": "athletic_tee",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "f",
+      "drop_num": 6,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · Belt",
+      "kind": "athletic_tee",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "g",
+      "drop_num": 7,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · Mu / Moon",
+      "kind": "athletic_tee",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "h",
+      "drop_num": 8,
+      "price_jpy": 7800,
+      "label": "Rashguard SS (AOP) · BJJ TOKYO",
+      "kind": "athletic_tee",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "i",
+      "drop_num": 9,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · Ju Enso",
+      "kind": "spats",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "j",
+      "drop_num": 10,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · Belt",
+      "kind": "spats",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "k",
+      "drop_num": 11,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · Mu / Moon",
+      "kind": "spats",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "l",
+      "drop_num": 12,
+      "price_jpy": 7800,
+      "label": "Grappling Spats · BJJ TOKYO",
+      "kind": "spats",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "m",
+      "drop_num": 13,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · Ju Enso",
+      "kind": "fight_shorts",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "n",
+      "drop_num": 14,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · Belt",
+      "kind": "fight_shorts",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "o",
+      "drop_num": 15,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · Mu / Moon",
+      "kind": "fight_shorts",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "p",
+      "drop_num": 16,
+      "price_jpy": 7800,
+      "label": "Fight Shorts · BJJ TOKYO",
+      "kind": "fight_shorts",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "q",
+      "drop_num": 17,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · Ju Enso",
+      "kind": "tee",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "r",
+      "drop_num": 18,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · Belt",
+      "kind": "tee",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "s",
+      "drop_num": 19,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · Mu / Moon",
+      "kind": "tee",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "t",
+      "drop_num": 20,
+      "price_jpy": 4900,
+      "label": "Heavy Tee · BJJ TOKYO",
+      "kind": "tee",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "u",
+      "drop_num": 21,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · Ju Enso",
+      "kind": "longsleeve",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "v",
+      "drop_num": 22,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · Belt",
+      "kind": "longsleeve",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "w",
+      "drop_num": 23,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · Mu / Moon",
+      "kind": "longsleeve",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "x",
+      "drop_num": 24,
+      "price_jpy": 5400,
+      "label": "Long Sleeve Tee · BJJ TOKYO",
+      "kind": "longsleeve",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "y",
+      "drop_num": 25,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · Ju Enso",
+      "kind": "hoodie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "z",
+      "drop_num": 26,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · Belt",
+      "kind": "hoodie",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "aa",
+      "drop_num": 27,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · Mu / Moon",
+      "kind": "hoodie",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "ab",
+      "drop_num": 28,
+      "price_jpy": 8800,
+      "label": "Heavy Hoodie · BJJ TOKYO",
+      "kind": "hoodie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ac",
+      "drop_num": 29,
+      "price_jpy": 7800,
+      "label": "Crewneck · Ju Enso",
+      "kind": "crewneck",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ad",
+      "drop_num": 30,
+      "price_jpy": 7800,
+      "label": "Crewneck · Belt",
+      "kind": "crewneck",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ae",
+      "drop_num": 31,
+      "price_jpy": 7800,
+      "label": "Crewneck · Mu / Moon",
+      "kind": "crewneck",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "af",
+      "drop_num": 32,
+      "price_jpy": 7800,
+      "label": "Crewneck · BJJ TOKYO",
+      "kind": "crewneck",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ag",
+      "drop_num": 33,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · Ju Enso",
+      "kind": "zip_hoodie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ah",
+      "drop_num": 34,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · Belt",
+      "kind": "zip_hoodie",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ai",
+      "drop_num": 35,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · Mu / Moon",
+      "kind": "zip_hoodie",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "aj",
+      "drop_num": 36,
+      "price_jpy": 9800,
+      "label": "Zip Hoodie · BJJ TOKYO",
+      "kind": "zip_hoodie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ak",
+      "drop_num": 37,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · Ju Enso",
+      "kind": "track_pants",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "al",
+      "drop_num": 38,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · Belt",
+      "kind": "track_pants",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "am",
+      "drop_num": 39,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · Mu / Moon",
+      "kind": "track_pants",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "an",
+      "drop_num": 40,
+      "price_jpy": 8800,
+      "label": "Track Pants (AOP) · BJJ TOKYO",
+      "kind": "track_pants",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ao",
+      "drop_num": 41,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · Ju Enso",
+      "kind": "sweatpants",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ap",
+      "drop_num": 42,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · Belt",
+      "kind": "sweatpants",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "aq",
+      "drop_num": 43,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · Mu / Moon",
+      "kind": "sweatpants",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "ar",
+      "drop_num": 44,
+      "price_jpy": 7800,
+      "label": "Fleece Sweatpants · BJJ TOKYO",
+      "kind": "sweatpants",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "as",
+      "drop_num": 45,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · Ju Enso",
+      "kind": "tank_top",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "at",
+      "drop_num": 46,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · Belt",
+      "kind": "tank_top",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "au",
+      "drop_num": 47,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · Mu / Moon",
+      "kind": "tank_top",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "av",
+      "drop_num": 48,
+      "price_jpy": 4400,
+      "label": "Athletic Tank · BJJ TOKYO",
+      "kind": "tank_top",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "aw",
+      "drop_num": 49,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · Ju Enso",
+      "kind": "polo",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ax",
+      "drop_num": 50,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · Belt",
+      "kind": "polo",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ay",
+      "drop_num": 51,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · Mu / Moon",
+      "kind": "polo",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "az",
+      "drop_num": 52,
+      "price_jpy": 6800,
+      "label": "Open Collar Polo · BJJ TOKYO",
+      "kind": "polo",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ba",
+      "drop_num": 53,
+      "price_jpy": 9800,
+      "label": "Windbreaker · Ju Enso",
+      "kind": "windbreaker",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bb",
+      "drop_num": 54,
+      "price_jpy": 9800,
+      "label": "Windbreaker · Belt",
+      "kind": "windbreaker",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bc",
+      "drop_num": 55,
+      "price_jpy": 9800,
+      "label": "Windbreaker · Mu / Moon",
+      "kind": "windbreaker",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bd",
+      "drop_num": 56,
+      "price_jpy": 9800,
+      "label": "Windbreaker · BJJ TOKYO",
+      "kind": "windbreaker",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "be",
+      "drop_num": 57,
+      "price_jpy": 4400,
+      "label": "Dad Hat · Ju Enso",
+      "kind": "dad_hat",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bf",
+      "drop_num": 58,
+      "price_jpy": 4400,
+      "label": "Dad Hat · Belt",
+      "kind": "dad_hat",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bg",
+      "drop_num": 59,
+      "price_jpy": 4400,
+      "label": "Dad Hat · Mu / Moon",
+      "kind": "dad_hat",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bh",
+      "drop_num": 60,
+      "price_jpy": 4400,
+      "label": "Dad Hat · BJJ TOKYO",
+      "kind": "dad_hat",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bi",
+      "drop_num": 61,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · Ju Enso",
+      "kind": "cap",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bj",
+      "drop_num": 62,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · Belt",
+      "kind": "cap",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bk",
+      "drop_num": 63,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · Mu / Moon",
+      "kind": "cap",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bl",
+      "drop_num": 64,
+      "price_jpy": 4400,
+      "label": "Snapback Cap · BJJ TOKYO",
+      "kind": "cap",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bm",
+      "drop_num": 65,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · Ju Enso",
+      "kind": "beanie",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bn",
+      "drop_num": 66,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · Belt",
+      "kind": "beanie",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bo",
+      "drop_num": 67,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · Mu / Moon",
+      "kind": "beanie",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bp",
+      "drop_num": 68,
+      "price_jpy": 3900,
+      "label": "Knit Beanie · BJJ TOKYO",
+      "kind": "beanie",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bq",
+      "drop_num": 69,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · Ju Enso",
+      "kind": "bucket_hat",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "br",
+      "drop_num": 70,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · Belt",
+      "kind": "bucket_hat",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bs",
+      "drop_num": 71,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · Mu / Moon",
+      "kind": "bucket_hat",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bt",
+      "drop_num": 72,
+      "price_jpy": 4400,
+      "label": "Bucket Hat · BJJ TOKYO",
+      "kind": "bucket_hat",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "bu",
+      "drop_num": 73,
+      "price_jpy": 2900,
+      "label": "Bandana · Ju Enso",
+      "kind": "bandana",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bv",
+      "drop_num": 74,
+      "price_jpy": 2900,
+      "label": "Bandana · Belt",
+      "kind": "bandana",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "bw",
+      "drop_num": 75,
+      "price_jpy": 2900,
+      "label": "Bandana · Mu / Moon",
+      "kind": "bandana",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "bx",
+      "drop_num": 76,
+      "price_jpy": 2900,
+      "label": "Bandana · BJJ TOKYO",
+      "kind": "bandana",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "by",
+      "drop_num": 77,
+      "price_jpy": 3900,
+      "label": "AOP Tote · Ju Enso",
+      "kind": "tote",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "bz",
+      "drop_num": 78,
+      "price_jpy": 3900,
+      "label": "AOP Tote · Belt",
+      "kind": "tote",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ca",
+      "drop_num": 79,
+      "price_jpy": 3900,
+      "label": "AOP Tote · Mu / Moon",
+      "kind": "tote",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cb",
+      "drop_num": 80,
+      "price_jpy": 3900,
+      "label": "AOP Tote · BJJ TOKYO",
+      "kind": "tote",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "cc",
+      "drop_num": 81,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · Ju Enso",
+      "kind": "drawstring",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "cd",
+      "drop_num": 82,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · Belt",
+      "kind": "drawstring",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ce",
+      "drop_num": 83,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · Mu / Moon",
+      "kind": "drawstring",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cf",
+      "drop_num": 84,
+      "price_jpy": 4400,
+      "label": "Drawstring Bag · BJJ TOKYO",
+      "kind": "drawstring",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "cg",
+      "drop_num": 85,
+      "price_jpy": 2400,
+      "label": "Crew Socks · Ju Enso",
+      "kind": "socks",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ch",
+      "drop_num": 86,
+      "price_jpy": 2400,
+      "label": "Crew Socks · Belt",
+      "kind": "socks",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "ci",
+      "drop_num": 87,
+      "price_jpy": 2400,
+      "label": "Crew Socks · Mu / Moon",
+      "kind": "socks",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cj",
+      "drop_num": 88,
+      "price_jpy": 2400,
+      "label": "Crew Socks · BJJ TOKYO",
+      "kind": "socks",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "ck",
+      "drop_num": 89,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · Ju Enso",
+      "kind": "patch",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "cl",
+      "drop_num": 90,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · Belt",
+      "kind": "patch",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "cm",
+      "drop_num": 91,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · Mu / Moon",
+      "kind": "patch",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cn",
+      "drop_num": 92,
+      "price_jpy": 1400,
+      "label": "Velcro Patch · BJJ TOKYO",
+      "kind": "patch",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "co",
+      "drop_num": 93,
+      "price_jpy": 2900,
+      "label": "Mug · Ju Enso",
+      "kind": "mug",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "cp",
+      "drop_num": 94,
+      "price_jpy": 2900,
+      "label": "Mug · Belt",
+      "kind": "mug",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "cq",
+      "drop_num": 95,
+      "price_jpy": 2900,
+      "label": "Mug · Mu / Moon",
+      "kind": "mug",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cr",
+      "drop_num": 96,
+      "price_jpy": 2900,
+      "label": "Mug · BJJ TOKYO",
+      "kind": "mug",
+      "design_slug": "wordmark"
+    },
+    {
+      "letter": "cs",
+      "drop_num": 97,
+      "price_jpy": 800,
+      "label": "Sticker Pack · Ju Enso",
+      "kind": "sticker",
+      "design_slug": "monogram"
+    },
+    {
+      "letter": "ct",
+      "drop_num": 98,
+      "price_jpy": 800,
+      "label": "Sticker Pack · Belt",
+      "kind": "sticker",
+      "design_slug": "stripe"
+    },
+    {
+      "letter": "cu",
+      "drop_num": 99,
+      "price_jpy": 800,
+      "label": "Sticker Pack · Mu / Moon",
+      "kind": "sticker",
+      "design_slug": "stacked"
+    },
+    {
+      "letter": "cv",
+      "drop_num": 100,
+      "price_jpy": 800,
+      "label": "Sticker Pack · BJJ TOKYO",
+      "kind": "sticker",
+      "design_slug": "wordmark"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "brand": "roll",
+  "name": "ROLL",
+  "tagline": "MOVE THE WORLD",
+  "concept": "片月 / Half Moon — パラ柔術の最前線へ。Spin the World.",
+  "color_primary": "#e6c449",
+  "color_accent": "#dc2626",
+  "color_bg": "#0a0a0a",
+  "emoji": "◐",
+  "donation_pct": 50,
+  "tees": [
+    { "n": "01", "label": "ROLL ◐ MU",            "color": "BLACK", "hook": "Core logo · ◐半月 + ROLL ワードマーク",                                 "design_brief": "Centered white ROLL wordmark in 100 weight sans-serif. ◐ half-moon glyph above in gold. Minimal, premium, hero piece. Black tee." },
+    { "n": "02", "label": "SPIN THE WORLD",        "color": "BLACK", "hook": "Bold horizontal kinetic type. 世界を、回せ。",                          "design_brief": "Bold SPIN THE WORLD horizontal stacked white type, slight italic kinetic forward lean. Gold underline accent." },
+    { "n": "03", "label": "片月 HALF MOON",        "color": "BLACK", "hook": "漢字 + romaji vertical lockup",                                       "design_brief": "Vertical sumi-e brush '片月' kanji in white, with 'HALF MOON' tiny romaji underneath in gold. Centered chest." },
+    { "n": "04", "label": "回せ、世界を。",         "color": "WHITE", "hook": "Brush calligraphy · ink black on white",                              "design_brief": "Large sumi-e brush 回せ、世界を。 calligraphy in black ink. Centered, dynamic stroke with intentional ink splatters. White tee." },
+    { "n": "05", "label": "ROLL #001",             "color": "BLACK", "hook": "Limited edition · first 100 only",                                    "design_brief": "Small left-chest 'ROLL #001 / FIRST 100' typewriter-style print in red. Back: huge '#001' centered." },
+    { "n": "06", "label": "NO PITY. JUST ROLL.",   "color": "BLACK", "hook": "Manifesto · anti-sympathy stance",                                     "design_brief": "All-caps stacked manifesto type, white on black. 'NO PITY.' / 'JUST ROLL.' with ◐ separator." },
+    { "n": "07", "label": "ONE TURNS ALL",         "color": "WHITE", "hook": "Minimal · 片腕がすべてを回す",                                          "design_brief": "Minimal san-serif statement 'ONE TURNS ALL' in black on white. Single ◐→ arrow glyph. Centered, premium." },
+    { "n": "08", "label": "◐",                     "color": "BLACK", "hook": "Pure half-moon mark · giant back print",                              "design_brief": "Giant ◐ half-moon glyph centered back, ~30cm tall, gold fill with thin red outline. Small ROLL wordmark on front-chest." },
+    { "n": "09", "label": "MAT · WHEEL · WORLD",   "color": "BLACK", "hook": "Three words. Three Rolls.",                                            "design_brief": "Three-line stacked typography: MAT / WHEEL / WORLD with ◐ dot separators. Gold accent on WHEEL." },
+    { "n": "10", "label": "不可逆 IRREVERSIBLE",   "color": "BLACK", "hook": "魂の回転は止まらない",                                                  "design_brief": "Kanji 不可逆 vertical right-side in white. 'IRREVERSIBLE' below in red ink-stamp style. Philosophical, dense." }
+  ],
+  "rashguards": [
+    { "n": "01", "label": "HALF MOON OVERLOAD",    "hook": "巨大 ◐ がトルソーから袖まで bleed",                                                    "design_brief": "Massive black-and-gold ◐ half-moon bleeding across torso into sleeves. Background deep matte black with subtle radial gradient. All-over print." },
+    { "n": "02", "label": "SPIN GRID",             "hook": "回転するタイポ・グリッド",                                                              "design_brief": "Rotating SPIN type grid pattern in 4 directions, white on black, kinetic optical effect across torso." },
+    { "n": "03", "label": "回転 KAITEN",           "hook": "巨大な回 brush stroke",                                                                 "design_brief": "Giant black 回 brush kanji wrapping torso, with red ink stamp '回転 KAITEN' on right side. White sleeves." },
+    { "n": "04", "label": "MAT TOPOLOGY",          "hook": "Grappling lines · 抽象トポロジ",                                                        "design_brief": "Abstract grappling flow lines as topographic contour map. Black/gold thin lines on dark navy. Map of submissions visualized." },
+    { "n": "05", "label": "ROLL THUNDER",          "hook": "Lightning + ROLL wordmark",                                                              "design_brief": "Red lightning bolts across chest with bold ROLL wordmark in white. Power aesthetic. Black base." },
+    { "n": "06", "label": "THE WHEEL",             "hook": "Wheelchair wheel as 神聖幾何学",                                                          "design_brief": "Geometric wheelchair wheel motif as sacred-geometry mandala, gold lines on black. Subtle and elegant." },
+    { "n": "07", "label": "PHASES",                "hook": "Moon phases sleeve→sleeve",                                                              "design_brief": "Eight moon phases horizontally from left sleeve to right sleeve, full moon ◯ at center chest. Black with white-gold moons." },
+    { "n": "08", "label": "前線 FRONT LINE",       "hook": "JP/EN bilingual war-cry",                                                                 "design_brief": "Large vertical 前線 brush kanji on chest. 'FRONT LINE' romaji on back. Red Japanese flag accent disc on right shoulder." },
+    { "n": "09", "label": "ASYMMETRY 片",          "hook": "片袖だけにプリント。非対称こそ美。",                                                       "design_brief": "Intentionally asymmetric: print only on LEFT sleeve and left chest panel. Right side plain matte black. 片 kanji prominent." },
+    { "n": "10", "label": "無限 MUGEN ROLL",       "hook": "∞ infinity loop pattern",                                                                "design_brief": "Infinity loop ∞ pattern in gold on black, tessellating across the torso. Small 無限 kanji on hem." }
+  ]
+}

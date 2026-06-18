@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU Heritage Edition — 100 年 着られる 1 着</title>
+<meta name="description" content="和歌山 Loopwheel 14oz tubular knit × 弟子屈 mineral dye × 国内 flatlock 縫製。30 着限定 / made-to-order / ¥35,000 / 60-90 日後発送。粗利益 50% は弟子屈町・気候・運営に。">
+<meta property="og:type" content="website">
+<meta property="og:title" content="MU Heritage Edition — 100 年 着られる 1 着">
+<meta property="og:description" content="30 着限定。和歌山 loopwheel × 弟子屈 mineral dye。pre-order、60-90 日後発送。">
+<meta property="og:image" content="/static/proposals/heritage-mockup-1-black.png">
+<meta property="og:url" content="https://wearmu.com/heritage">
+<meta property="og:site_name" content="MU">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU Heritage Edition — 100 年 着られる 1 着">
+<meta name="twitter:description" content="30 着限定 made-to-order / ¥35,000 / 60-90 日後発送。">
+<meta name="twitter:image" content="/static/proposals/heritage-mockup-1-black.png">
+<link rel="canonical" href="https://wearmu.com/heritage">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/heritage">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/heritage?lang=en">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/heritage">
+<style>
+:root{
+  --bg:#070707; --bg-2:#0d0d0d; --bg-3:#161616;
+  --fg:#F5F5F0; --mute:rgba(245,245,240,0.62); --line:rgba(255,255,255,0.10);
+  --y:#e6c449; --y-soft:rgba(230,196,73,0.08);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:'Helvetica Neue','Hiragino Mincho ProN','Yu Mincho',Arial,sans-serif;
+  line-height:1.95;-webkit-font-smoothing:antialiased;font-feature-settings:"palt";
+}
+a{color:inherit;text-decoration:none}
+img{display:block;max-width:100%;height:auto}
+
+nav{display:flex;justify-content:space-between;align-items:center;padding:16px 28px;border-bottom:1px solid var(--line);font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--mute)}
+nav .logo{font-size:18px;color:var(--y);font-family:'Hiragino Mincho ProN',serif;letter-spacing:0.04em}
+nav .right{display:flex;gap:18px}
+nav .right a{color:var(--mute);transition:color 0.15s}
+nav .right a:hover{color:var(--y)}
+
+.cover{padding:120px 28px 92px;text-align:center;border-bottom:1px solid var(--line);max-width:880px;margin:0 auto}
+.cover .mark{font-size:74px;color:var(--y);margin-bottom:22px;line-height:1;font-family:'Hiragino Mincho ProN',serif}
+.cover .kicker{font-size:11px;letter-spacing:0.36em;text-transform:uppercase;color:var(--mute);margin-bottom:18px}
+.cover h1{font-size:clamp(38px,6.4vw,64px);font-weight:200;letter-spacing:0.01em;line-height:1.18;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;margin-bottom:24px}
+.cover h1 em{color:var(--y);font-style:normal}
+.cover .lede{font-size:15px;color:var(--mute);letter-spacing:0.04em;max-width:620px;margin:0 auto 32px;line-height:2}
+.cover .badges{display:inline-flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.cover .badge{display:inline-block;border:1px solid var(--y);color:var(--y);padding:6px 14px;font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase}
+
+section{padding:84px 28px;border-bottom:1px solid var(--line);max-width:920px;margin:0 auto}
+section h2{font-size:clamp(22px,3vw,30px);font-weight:200;text-align:center;margin-bottom:12px;letter-spacing:0.03em;font-family:'Hiragino Mincho ProN',serif}
+section h2 em{color:var(--y);font-style:normal}
+section .lede{font-size:13.5px;color:var(--mute);text-align:center;max-width:640px;margin:0 auto 44px;letter-spacing:0.06em;line-height:2}
+
+/* Product hero */
+.hero-shot{margin:0 auto 18px;border:1px solid var(--line);background:#fff;max-width:760px}
+.hero-shot img{width:100%;height:auto;display:block}
+.swap-row{display:grid;grid-template-columns:1fr 1fr;gap:14px;max-width:760px;margin:14px auto 28px}
+.swap-row .swap-card{border:1px solid var(--line);background:#fff;cursor:pointer;transition:border-color 0.15s,transform 0.15s;position:relative}
+.swap-row .swap-card.active{border-color:var(--y);transform:translateY(-2px)}
+.swap-row .swap-card img{width:100%;height:auto;display:block}
+.swap-row .swap-card .lab{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,0.72);color:#fff;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;padding:3px 8px}
+
+/* Buy card */
+.buy-card{max-width:760px;margin:0 auto;border:1px solid var(--y);background:linear-gradient(180deg,rgba(230,196,73,0.05),transparent);padding:36px 30px 32px}
+.buy-card .price{font-size:36px;font-weight:200;color:var(--fg);letter-spacing:0.02em;line-height:1;margin-bottom:6px;font-family:'Hiragino Mincho ProN',serif}
+.buy-card .price small{font-size:12px;color:var(--mute);margin-left:8px;letter-spacing:0.12em}
+.buy-card .stock{font-size:12px;color:var(--y);letter-spacing:0.2em;text-transform:uppercase;margin-bottom:18px}
+.buy-card .stock b{color:var(--fg);font-weight:500}
+.buy-card .pick{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
+@media (max-width:580px){.buy-card .pick{grid-template-columns:1fr}}
+.buy-card .pick label{cursor:pointer;border:1px solid var(--line);background:var(--bg-2);padding:14px 16px;display:block;transition:border-color 0.15s}
+.buy-card .pick label.on{border-color:var(--y);background:rgba(230,196,73,0.06)}
+.buy-card .pick input{margin-right:8px;accent-color:var(--y)}
+.buy-card .pick .nm{font-size:13.5px;color:var(--fg);font-weight:500}
+.buy-card .pick .sub{font-size:11px;color:var(--mute);margin-top:4px;letter-spacing:0.06em}
+.buy-card .btn{display:block;text-align:center;background:var(--y);color:#070707;border:0;padding:18px;font-size:12.5px;font-weight:700;letter-spacing:0.28em;text-transform:uppercase;cursor:pointer;font-family:inherit;width:100%;transition:opacity 0.15s}
+.buy-card .btn:hover{opacity:0.88}
+.buy-card .btn[disabled]{opacity:0.4;cursor:not-allowed}
+.buy-card .small{font-size:11px;color:var(--mute);margin-top:14px;letter-spacing:0.06em;text-align:center;line-height:1.85}
+.buy-card .small b{color:var(--y);font-weight:500}
+
+/* Sticky bottom Buy CTA — surfaces only after the user has scrolled past
+   the hero, so it doesn't fight with the in-page buy-card. The whole-
+   page funnel was stuck at 4 pv / 0 buy click — visitors were reaching
+   50%+ scroll without re-engaging with the buy button. A persistent
+   bottom bar gives them a one-tap fallback regardless of position. */
+.sticky-buy{
+  position:fixed;left:0;right:0;bottom:0;z-index:90;
+  background:rgba(10,10,10,0.96);border-top:1px solid var(--y);
+  padding:10px 14px;display:none;align-items:center;gap:12px;
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+  box-shadow:0 -8px 24px rgba(0,0,0,0.45);
+}
+.sticky-buy.on{display:flex}
+.sticky-buy .meta{flex:1;min-width:0;font-size:11.5px;line-height:1.45;color:var(--mute)}
+.sticky-buy .meta b{color:var(--y);font-weight:600;font-size:13px;display:block}
+.sticky-buy .btn{
+  background:var(--y);color:#070707;border:0;padding:13px 22px;
+  font-size:11.5px;font-weight:800;letter-spacing:0.22em;text-transform:uppercase;
+  border-radius:3px;cursor:pointer;font-family:inherit;white-space:nowrap;
+}
+.sticky-buy .btn[disabled]{opacity:0.4;cursor:not-allowed}
+
+/* Spec table */
+.spec-grid{display:grid;grid-template-columns:160px 1fr;gap:0;max-width:780px;margin:0 auto;border-top:1px solid var(--line)}
+@media (max-width:580px){.spec-grid{grid-template-columns:110px 1fr}}
+.spec-grid .k,.spec-grid .v{padding:16px 18px;border-bottom:1px solid var(--line)}
+.spec-grid .k{color:var(--y);font-size:10.5px;letter-spacing:0.24em;text-transform:uppercase;font-weight:500}
+.spec-grid .v{color:var(--fg);font-size:13.5px;line-height:1.9}
+.spec-grid .v small{display:block;color:var(--mute);font-size:11.5px;margin-top:4px;letter-spacing:0.04em}
+
+/* Story */
+.story{max-width:720px;margin:0 auto;color:var(--fg);font-size:14.5px;line-height:2.15;letter-spacing:0.04em}
+.story p{margin-bottom:20px}
+.story p strong{color:var(--y);font-weight:500}
+.story .quote{font-family:'Hiragino Mincho ProN',serif;font-size:20px;color:var(--y);text-align:center;margin:36px 0 32px;line-height:1.7;letter-spacing:0.05em;font-weight:300}
+
+/* Timeline */
+.timeline{max-width:760px;margin:0 auto}
+.timeline .step{display:grid;grid-template-columns:90px 1fr;gap:24px;padding:18px 0;border-bottom:1px solid var(--line);align-items:baseline}
+.timeline .step:last-child{border-bottom:none}
+.timeline .step .d{color:var(--y);font-size:13px;font-weight:500;letter-spacing:0.1em;font-variant-numeric:tabular-nums}
+.timeline .step .b{color:var(--fg);font-size:14px;line-height:1.85}
+.timeline .step .b small{display:block;color:var(--mute);font-size:11.5px;margin-top:4px;letter-spacing:0.06em}
+
+/* Accessories grid */
+.acc{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;max-width:780px;margin:0 auto}
+@media (max-width:580px){.acc{grid-template-columns:1fr}}
+.acc .card{border:1px solid var(--line);background:var(--bg-2);padding:24px 22px}
+.acc .card h4{font-size:11px;color:var(--y);letter-spacing:0.26em;text-transform:uppercase;margin-bottom:10px;font-weight:500}
+.acc .card p{font-size:13px;color:var(--mute);line-height:1.95}
+
+/* Donation breakdown */
+.donate{max-width:760px;margin:0 auto}
+.donate .bar{display:flex;height:14px;border-radius:999px;overflow:hidden;border:1px solid var(--line);margin-bottom:18px}
+.donate .bar span{display:block;height:100%}
+.donate .bar .a{background:var(--y);width:35%}
+.donate .bar .b{background:#7ab6c8;width:10%}
+.donate .bar .c{background:#888;width:5%}
+.donate .bar .d{background:#222;width:50%}
+.donate .legend{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;font-size:13px;color:var(--mute);line-height:1.9}
+@media (max-width:580px){.donate .legend{grid-template-columns:1fr}}
+.donate .legend .li{display:flex;gap:10px;align-items:baseline}
+.donate .legend .sw{width:14px;height:14px;display:inline-block;border:1px solid var(--line);flex-shrink:0;position:relative;top:2px}
+.donate .legend .sw.a{background:var(--y)}
+.donate .legend .sw.b{background:#7ab6c8}
+.donate .legend .sw.c{background:#888}
+.donate .legend .sw.d{background:#222}
+.donate .legend b{color:var(--fg);font-weight:500;margin-right:6px}
+
+footer{padding:42px 28px;color:var(--mute);font-size:11px;text-align:center;line-height:2.1;letter-spacing:0.08em}
+footer a{color:var(--y)}
+footer .row{margin-bottom:8px}
+
+.note{max-width:720px;margin:24px auto 0;font-size:11.5px;color:var(--mute);text-align:center;letter-spacing:0.04em;line-height:1.85;opacity:0.78}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="logo">無 · MU</a>
+  <span class="right">
+    <a href="/merch/art">/merch/art</a>
+    <a href="/constitution">constitution</a>
+    <a href="/donations">donations</a>
+  </span>
+</nav>
+
+<!-- ── HERO ── -->
+<header class="cover">
+  <div class="mark">無</div>
+  <div class="kicker">MU Heritage Edition · No.001</div>
+  <h1>100 年 着られる、<br><em>1 着。</em></h1>
+  <p class="lede">
+    和歌山 Loopwheel 14oz tubular knit。<br>
+    弟子屈 mineral dye、火山灰と鉄で 染め分ける 黒と 生成。<br>
+    胸下 1cm に 「━◯━」 だけ を 沈める silk screen。<br>
+    国内 flatlock 縫製、単洗い + enzyme。<br>
+    NFC タグ + 内刺繍 serial + 100 年 修繕券 + 北海道 オンコ 木箱。
+  </p>
+  <div class="badges">
+    <span class="badge">30 着 限定</span>
+    <span class="badge">Pre-order</span>
+    <span class="badge">60-90 日 後 発送</span>
+  </div>
+</header>
+
+<!-- ── PRODUCT HERO + BUY ── -->
+<section style="padding-top:64px">
+  <div class="hero-shot">
+    <img id="hero-img" src="/static/proposals/heritage-mockup-1-black.png" alt="MU Heritage Edition — Mineral Black">
+  </div>
+  <div class="swap-row">
+    <div class="swap-card active" data-color="BLK" data-img="/static/proposals/heritage-mockup-1-black.png">
+      <img src="/static/proposals/heritage-mockup-1-black.png" alt="Mineral Black">
+      <span class="lab">Mineral Black · 20</span>
+    </div>
+    <div class="swap-card" data-color="NAT" data-img="/static/proposals/heritage-mockup-2-natural.png">
+      <img src="/static/proposals/heritage-mockup-2-natural.png" alt="Mineral Natural">
+      <span class="lab">Natural · 10</span>
+    </div>
+  </div>
+
+  <div class="buy-card">
+    <div class="price">¥35,000 <small>/ 1 着 (税込・送料込)</small></div>
+    <div class="stock">のこり <b id="stock-num">30</b> / 30 · pre-order 受付中</div>
+
+    <div class="pick">
+      <label class="on" id="pick-blk">
+        <input type="radio" name="color" value="BLK" checked>
+        <span class="nm">Mineral Black · L</span>
+        <div class="sub">MU-HER-001-LS-BLK-L · 20 着</div>
+      </label>
+      <label id="pick-nat">
+        <input type="radio" name="color" value="NAT">
+        <span class="nm">Mineral Natural · L</span>
+        <div class="sub">MU-HER-002-LS-NAT-L · 10 着</div>
+      </label>
+    </div>
+
+    <button class="btn" id="buy-btn" type="button">Pre-order · ¥35,000</button>
+
+    <div class="small">
+      <b>製造 ETA</b>: 60-90 日 (pre-order 確定後、 染色 + 縫製 + 検品 を 経て 発送)<br>
+      <b>キャンセル</b>: 発注確定 (Day 30) までは メール 1 通 で 全額返金<br>
+      <b>寄付</b>: 粗利益 50% (≒ ¥320,100 / ロット) を 弟子屈町 70% · 気候 20% · 運営 10% に
+    </div>
+  </div>
+  <p class="note">
+    ※ 初回ロットは L のみ供給。 S / M / XL は waitlist 形式で 受付 (info@enablerdao.com)。<br>
+    ※ 製造数量・染色 ロット の都合上、 30 着 完売 で 受付 終了。 次ロットは 90 日後 を 想定。
+  </p>
+</section>
+
+<!-- ── SPEC ── -->
+<section>
+  <h2>仕様 <em>—</em> 何が 入っている か</h2>
+  <p class="lede">想定 spec。 supplier 確定 (Day 30) 後、 数値は 微調整 されます。</p>
+  <div class="spec-grid">
+    <div class="k">生地</div>
+    <div class="v">
+      和歌山 Loopwheel 14oz tubular knit
+      <small>Supima 70% + 純国産綿 30% · side-seam なし · 1 日 1 反 程度 の 旧式 釣り編み機 で 編成 (想定)</small>
+    </div>
+    <div class="k">染色</div>
+    <div class="v">
+      弟子屈 mineral dye · 2 色
+      <small>Black = 火山灰 + 鉄 媒染 / Natural = 生成 (kibata) · 単ロット 限定 · 個体差 あり</small>
+    </div>
+    <div class="k">プリント</div>
+    <div class="v">
+      胸下 1cm 「━◯━」 silk screen
+      <small>単色 ink 1 版 · 内ネック にも 同 マーク を 押捺 (or 内刺繍 切替可)</small>
+    </div>
+    <div class="k">縫製</div>
+    <div class="v">
+      国内 flatlock 縫製 (兵庫 ヒラオカ縫製 等 想定)
+      <small>肩 / 脇 / 袖 / 裾 すべて flatlock · 補強 テープ 入り · 内タグ は 印字 + 紙 1 枚</small>
+    </div>
+    <div class="k">洗い</div>
+    <div class="v">
+      単洗い + enzyme wash
+      <small>1 着 ずつ 単独洗浄 → 風合い 安定 + 縮み 完了済 (洗濯後 縮み &lt; 1% 想定)</small>
+    </div>
+    <div class="k">サイズ</div>
+    <div class="v">
+      L (初回ロット 唯一)
+      <small>身幅 56 / 着丈 71 / 肩幅 49 / 袖丈 22 cm (想定) · S / M / XL は 次ロット 以降</small>
+    </div>
+    <div class="k">付属</div>
+    <div class="v">
+      NFC タグ + 内刺繍 serial + 100 年 修繕券 + 北海道 オンコ 木箱
+      <small>NFC で 個体 ID と 製造 履歴 を 紐づけ · 修繕券 で 100 年 間 無償 修繕 / 染め直し</small>
+    </div>
+    <div class="k">価格</div>
+    <div class="v">
+      ¥35,000 / 着 (税込・送料込)
+      <small>原価 ¥13,660 · 粗利益 ¥21,340 のうち 50% = <b style="color:var(--y)">¥10,670/着</b> を 弟子屈町 70% / 気候 20% / 運営 10% に 分配</small>
+    </div>
+  </div>
+</section>
+
+<!-- ── STORY ── -->
+<section>
+  <h2>製造の <em>背景</em></h2>
+  <p class="lede">1 着 を 100 年 着るための、 5 つの 産地と 7 つの 手 の話。</p>
+  <div class="story">
+    <p>
+      <strong>和歌山の Loopwheel 機</strong> は、 1 日に 1 反 程度しか 織れない 釣り編み機 だ。
+      重力 だけで 編針 を 落とすので、 糸 に 余計な 張力 が かからない。
+      だから 糸 の 油分 が 残り、 繊維 が 痩せず、 何度 洗っても へたらない。
+      量産 ライン では 30 倍 速い 高速 機 が 使われるが、 そこで 失われる ものを 取り戻す ために 14oz を 選んだ。
+    </p>
+    <p>
+      <strong>弟子屈 の mineral dye</strong> は、 屈斜路湖 周辺で 採れる 火山灰 と 鉄 を 媒染 に 使う。
+      化学染料 を 使わないので、 黒 は 一律 ではなく、 個体ごとに 微妙な 濃淡 が 残る。
+      これは 「不良」 ではない。 鉱物 が 繊維 に 落ちる ときの 物理現象 で、
+      同じ ロット でも 厳密 に 同じ 黒 は 二つ と ない。
+    </p>
+    <p>
+      <strong>縫製</strong> は 兵庫 の 老舗 工場 で flatlock。 肩から 袖、 脇から 裾 まで、
+      縫い目 が 肌 に 当たらない 平縫い。 縫い代 を 折り返さない から、 経年 で 糸 が 切れにくい。
+      ヴィンテージ tee が 50 年 残る のと 同じ 構造 を、 新品 の 段階 で 入れる。
+    </p>
+    <div class="quote">
+      量産で失うものを、 30 着 だけ 取り戻す。
+    </div>
+    <p>
+      <strong>付属</strong> は MU の 全 edition 共通の NFC タグ + serial 内刺繍 に 加え、
+      この edition だけ 「100 年 修繕券」 を つける。
+      生地 が ほつれたら、 染料 が 褪せたら、 縫い目 が 切れたら、 一着 ずつ 弟子屈 に 戻して 直す。
+      子・孫 に 渡しても 引き継げる。 修繕券 の 名義 は NFC で 移譲 する。
+    </p>
+    <p>
+      <strong>包装</strong> は 北海道 産 オンコ (一位) の 木箱。 オンコ は 樹齢 数百年で 育つ 針葉樹 で、
+      箱 自体 が 100 年 もつ。 1 着 を 100 年 残す ための 容器 として、 これ 以外 を 考えなかった。
+    </p>
+  </div>
+</section>
+
+<!-- ── TIMELINE ── -->
+<section>
+  <h2>製造 <em>timeline</em></h2>
+  <p class="lede">受注 確定 から 発送 まで 60-90 日。 各 step は メール で 進捗 共有 します。</p>
+  <div class="timeline">
+    <div class="step">
+      <div class="d">Day 0</div>
+      <div class="b">Pre-order 受付 (この LP)
+        <small>30 着 (Black 20 + Natural 10) の 枠 を 順次 確保。 決済は Stripe で authorize。</small>
+      </div>
+    </div>
+    <div class="step">
+      <div class="d">Day 30</div>
+      <div class="b">発注 確定 · 染色 ロット ロック
+        <small>30 着 中 半数以上 確定 した 時点 で 和歌山 / 弟子屈 / 兵庫 の 3 supplier に 同時 発注。 ここまでは キャンセル 無料。</small>
+      </div>
+    </div>
+    <div class="step">
+      <div class="d">Day 30-60</div>
+      <div class="b">生地 編成 + 染色
+        <small>Loopwheel で 反物 編成 (~15 日) → 弟子屈 で mineral dye 染色 + 単洗い (~15 日)。</small>
+      </div>
+    </div>
+    <div class="step">
+      <div class="d">Day 60-80</div>
+      <div class="b">縫製 + 検品 + 仕上げ
+        <small>兵庫 で flatlock 縫製 → 内刺繍 (serial 個体番号) → 検品 → enzyme wash。</small>
+      </div>
+    </div>
+    <div class="step">
+      <div class="d">Day 80-90</div>
+      <div class="b">NFC 付与 · 木箱 packing · 発送
+        <small>NFC タグ に 個体 ID を 書き込み (per piece) → オンコ 木箱 に 1 着 ずつ → ヤマト 元払い で 発送。</small>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── ACCESSORIES ── -->
+<section>
+  <h2>付属 <em>—</em> 1 着 の 周りに 入る もの</h2>
+  <p class="lede">Tee の 価格 に すべて 含まれる。 追加 課金 なし。</p>
+  <div class="acc">
+    <div class="card">
+      <h4>NFC タグ</h4>
+      <p>裾 内側 に 縫い込み。 iPhone / Android で タッチ する と 個体 ID + 製造履歴 + 修繕履歴 が 開く。 譲渡 時の 名義変更 も NFC 経由。</p>
+    </div>
+    <div class="card">
+      <h4>Serial 内刺繍</h4>
+      <p><code style="color:var(--y)">MU-HER-001-LS-BLK-L #001</code> 形式 で 内ネック 下 に 刺繍。 個体番号 は 受注順。 NFC と 紐づく。</p>
+    </div>
+    <div class="card">
+      <h4>100 年 修繕券</h4>
+      <p>1 着 に 1 枚。 ほつれ / 染め直し / 縫い直し を 100 年 間 無償。 修繕券 の 名義は NFC で 子・孫 に 引き継げる。</p>
+    </div>
+    <div class="card">
+      <h4>北海道 オンコ 木箱</h4>
+      <p>樹齢 数百年 の 一位 (オンコ) で 1 着 用 木箱。 箱 自体 が 100 年 もつ。 中で Tee を 折りたたまず ロール で 収納。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── COST + DONATION (原価公開) ── -->
+<section>
+  <h2>原価 と <em>利益の 50%</em> の 行き先</h2>
+  <p class="lede">¥35,000 × 30 着 = <b>¥1,050,000</b> 初回 ロット 売上。 まず 原価 を 全部 公開、 残った 利益 の 半分 を 公益 に 回す。</p>
+
+  <div class="donate" style="max-width:780px;margin:0 auto">
+    <h3 style="font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);margin:24px 0 14px">━ 原価 内訳 (per 着、 実数 公開)</h3>
+    <div class="spec-grid">
+      <div class="k">和歌山 Loopwheel 14oz 生地</div><div class="v">¥4,200</div>
+      <div class="k">弟子屈 mineral dye 染色</div><div class="v">¥1,500</div>
+      <div class="k">国内 flatlock 縫製</div><div class="v">¥3,500</div>
+      <div class="k">NFC タグ + 内刺繍 serial</div><div class="v">¥800</div>
+      <div class="k">100 年 修繕券 + オンコ 木箱</div><div class="v">¥1,400</div>
+      <div class="k">国内 発送 + 検品 + 梱包</div><div class="v">¥1,000</div>
+      <div class="k">Stripe 決済 手数料 (3.6%)</div><div class="v">¥1,260</div>
+      <div class="k" style="color:#fff">━ 原価 合計</div><div class="v" style="color:#fff;font-weight:700">¥13,660</div>
+    </div>
+
+    <h3 style="font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);margin:32px 0 14px">━ ロット 全体 (× 30 着)</h3>
+    <div class="spec-grid">
+      <div class="k">売上</div><div class="v">¥1,050,000</div>
+      <div class="k">原価 合計</div><div class="v">−¥409,800</div>
+      <div class="k" style="color:#fff">━ 粗利益</div><div class="v" style="color:#fff;font-weight:700">¥640,200</div>
+      <div class="k" style="color:var(--y)">公益 配分 (粗利益 50%)</div><div class="v" style="color:var(--y);font-weight:700">¥320,100</div>
+      <div class="k">運営 / 内部留保 (50%)</div><div class="v">¥320,100</div>
+    </div>
+
+    <h3 style="font-size:11px;letter-spacing:0.28em;text-transform:uppercase;color:var(--y);margin:32px 0 14px">━ ¥320,100 の 公益 内訳</h3>
+    <div class="bar">
+      <span class="a"></span><span class="b"></span><span class="c"></span>
+    </div>
+    <div class="legend">
+      <div class="li"><span class="sw a"></span><div><b>¥224,070 (70%)</b> 弟子屈町 (企業版 ふるさと納税 経由、 約 9 割 税控除)</div></div>
+      <div class="li"><span class="sw b"></span><div><b>¥64,020 (20%)</b> 気候 reserve (将来の 再生 fund)</div></div>
+      <div class="li"><span class="sw c"></span><div><b>¥32,010 (10%)</b> 運営 (NFC / 修繕 / 木箱 origin track)</div></div>
+    </div>
+
+    <p class="note">
+    ※ 「売上の50%」 ではなく <b>粗利益 (売上 − 原価) の 50%</b>。 <a href="/profit-split" style="color:var(--y)">/profit-split §28 v2</a> は累計sold 0-99着 で 1% を基準にするが、 Heritage は限定 100 年スケール piece のため特例で 50% に引上げ。<br>
+    ※ Yuki 個人報酬 と 法人税 を 引いた 「税後 純利益」 ではなく 粗利益 base なのは、 数字を弄れない透明性 を 優先するため。<br>
+    ※ ロット 完売後 に <a href="/transparency" style="color:var(--y)">/transparency</a> で 実数 帳簿 を 公表。
+    </p>
+  </div>
+</section>
+
+<!-- ── REPEAT BUY ── -->
+<section>
+  <h2>Pre-order を <em>確定</em> する</h2>
+  <p class="lede">30 着 限定。 完売 で 受付 終了。 次ロットは 90 日後 を 想定。</p>
+  <div class="buy-card">
+    <div class="price">¥35,000 <small>/ 1 着</small></div>
+    <div class="stock">のこり <b id="stock-num-2">30</b> / 30</div>
+    <button class="btn" id="buy-btn-2" type="button">Pre-order · ¥35,000 を 確保 する</button>
+    <div class="small">
+      <b>製造 ETA</b> 60-90 日 · <b>キャンセル</b> Day 30 までは メール 1 通 で 全額返金 · <b>寄付</b> 粗利益 50%
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="row">株式会社イネブラ · Enabler Inc. · 千代田区九段南 1-5-6 りそな九段ビル 5F</div>
+  <div class="row">お問い合わせ <a href="mailto:info@enablerdao.com">info@enablerdao.com</a> · <a href="/tokushoho">特定商取引法</a> · <a href="/privacy">privacy</a></div>
+  <div class="row" style="opacity:0.55;margin-top:14px">MU Heritage Edition · No.001 · 2026</div>
+</footer>
+
+<!-- Sticky bottom Buy CTA — appears after the user scrolls past hero -->
+<div class="sticky-buy" id="sticky-buy" role="region" aria-label="Pre-order Heritage Edition">
+  <div class="meta">
+    <b>MU Heritage Edition</b>¥35,000 · 30 着 限定 · 60-90 日 後 発送
+  </div>
+  <button class="btn" id="sticky-buy-btn" type="button">Pre-order →</button>
+</div>
+
+<script>
+// ── Live stock + color picker + Stripe checkout ──
+const STATE = {
+  selected: 'BLK',
+  // Will be filled from /api/v1/products/heritage
+  skus: {
+    BLK: { id: null, inventory: 20, sold: 0, serial: 'MU-HER-001-LS-BLK-L' },
+    NAT: { id: null, inventory: 10, sold: 0, serial: 'MU-HER-002-LS-NAT-L' },
+  },
+};
+
+function rem(s){ return Math.max(0, s.inventory - s.sold); }
+function totalRem(){ return rem(STATE.skus.BLK) + rem(STATE.skus.NAT); }
+
+function refreshStock(){
+  const total = totalRem();
+  document.getElementById('stock-num').textContent = total;
+  const s2 = document.getElementById('stock-num-2');
+  if (s2) s2.textContent = total;
+  // Update label sublines + disable if 0
+  const blkRem = rem(STATE.skus.BLK), natRem = rem(STATE.skus.NAT);
+  const blkLab = document.querySelector('.swap-card[data-color="BLK"] .lab');
+  const natLab = document.querySelector('.swap-card[data-color="NAT"] .lab');
+  if (blkLab) blkLab.textContent = `Mineral Black · のこり ${blkRem}`;
+  if (natLab) natLab.textContent = `Natural · のこり ${natRem}`;
+  // Buy buttons
+  for (const btn of [document.getElementById('buy-btn'), document.getElementById('buy-btn-2')]){
+    if (!btn) continue;
+    const cur = STATE.skus[STATE.selected];
+    if (rem(cur) <= 0){
+      btn.disabled = true;
+      btn.textContent = `${STATE.selected === 'BLK' ? 'Black' : 'Natural'} 完売 · 別色 を選択`;
+    } else {
+      btn.disabled = false;
+      btn.textContent = `Pre-order · ¥35,000`;
+    }
+  }
+}
+
+// Load live SKUs from server
+(async () => {
+  try {
+    const r = await fetch('/api/v1/products/heritage');
+    if (r.ok) {
+      const j = await r.json();
+      // The API returns an array of products; map by color
+      const items = Array.isArray(j) ? j : (j.products || j.items || []);
+      for (const p of items){
+        const col = (p.color || '').toUpperCase();
+        if (col === 'BLK' || col === 'NAT'){
+          STATE.skus[col].id = p.id;
+          if (typeof p.inventory === 'number') STATE.skus[col].inventory = p.inventory;
+          if (typeof p.sold === 'number') STATE.skus[col].sold = p.sold;
+        }
+      }
+    }
+  } catch (e) {
+    // graceful fallback to baked defaults
+  }
+  refreshStock();
+})();
+
+// Color picker
+for (const card of document.querySelectorAll('.swap-card')){
+  card.addEventListener('click', () => {
+    document.querySelectorAll('.swap-card').forEach(c => c.classList.remove('active'));
+    card.classList.add('active');
+    document.getElementById('hero-img').src = card.dataset.img;
+    const color = card.dataset.color;
+    STATE.selected = color;
+    document.querySelector(`#pick-${color.toLowerCase()} input`).checked = true;
+    document.querySelectorAll('.buy-card .pick label').forEach(l => l.classList.remove('on'));
+    document.getElementById(`pick-${color.toLowerCase()}`).classList.add('on');
+    refreshStock();
+  });
+}
+for (const inp of document.querySelectorAll('input[name="color"]')){
+  inp.addEventListener('change', () => {
+    STATE.selected = inp.value;
+    document.querySelectorAll('.swap-card').forEach(c => {
+      c.classList.toggle('active', c.dataset.color === inp.value);
+    });
+    document.getElementById('hero-img').src =
+      document.querySelector(`.swap-card[data-color="${inp.value}"]`).dataset.img;
+    document.querySelectorAll('.buy-card .pick label').forEach(l => l.classList.remove('on'));
+    document.getElementById(`pick-${inp.value.toLowerCase()}`).classList.add('on');
+    refreshStock();
+  });
+}
+
+// Buy → Stripe Payment Link (fixed ¥35,000). Bypasses /api/checkout which
+// runs through mu-store dynamic_price() — that fn doesn't have a heritage
+// case and would silently downprice to ¥5,000 (PRICE_BASE_JPY default).
+// Until that's patched in Rust, the Payment Link is the source of truth.
+// price_1TZYlTDqLakc8NxkbI4SL1Ok / plink_1TZYlfDqLakc8Nxk9n32rBvu.
+const HERITAGE_PAYMENT_LINK = 'https://buy.stripe.com/6oUcN56s35nY1Ju756efD1e';
+function buy(){
+  const cur = STATE.skus[STATE.selected];
+  if (rem(cur) <= 0){
+    alert('この色は完売しました。');
+    return;
+  }
+  // Pass selected color through so the post-purchase fulfillment knows
+  // which colorway the buyer chose. Stripe Payment Link supports a
+  // `prefilled_promo_code` and `client_reference_id` for round-tripping
+  // metadata back via the webhook.
+  const ref = `heritage_${STATE.selected}_${Date.now().toString(36)}`;
+  window.location.href = HERITAGE_PAYMENT_LINK + '?client_reference_id=' + encodeURIComponent(ref);
+}
+document.getElementById('buy-btn').addEventListener('click', buy);
+const b2 = document.getElementById('buy-btn-2');
+if (b2) b2.addEventListener('click', buy);
+
+// ── Sticky bottom Buy CTA — visibility logic ──
+// Iter17 fix: 4 pv / 0 buy click on the original in-page CTA. Surface a
+// persistent one after the user has cleared the hero so it's always within
+// reach. Hide when the in-page buy-card is visible (avoid duplicates).
+const sticky = document.getElementById('sticky-buy');
+const stickyBtn = document.getElementById('sticky-buy-btn');
+if (sticky && stickyBtn) {
+  stickyBtn.addEventListener('click', () => {
+    // Reuse the same logic as buy() so funnel events stay consistent.
+    buy();
+  });
+  const updateSticky = () => {
+    // Show after scrolling past 1 viewport. Hide when the bottom buy-card
+    // (heading "Pre-order を 確定 する") enters viewport.
+    const past = window.scrollY > window.innerHeight * 0.6;
+    const lower = document.getElementById('buy-btn-2');
+    let lowerInView = false;
+    if (lower) {
+      const rect = lower.getBoundingClientRect();
+      lowerInView = rect.top < window.innerHeight && rect.bottom > 0;
+    }
+    sticky.classList.toggle('on', past && !lowerInView);
+  };
+  updateSticky();
+  window.addEventListener('scroll', updateSticky, {passive: true});
+  window.addEventListener('resize', updateSticky);
+}
+</script>
+
+</body>
+</html>

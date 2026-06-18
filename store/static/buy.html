@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>今すぐ買える MUGEN — MU</title>
+<meta name="description" content="MUGEN は北海道弟子屈町の気温が seed の自律生成 T シャツ。 Stanley/Stella SATU001 リブ襟 / GOTS organic / EU 製。 早く買うほど安い bonding curve。">
+<meta name="robots" content="index,follow">
+<meta property="og:title" content="今すぐ買える MUGEN — MU">
+<meta property="og:description" content="気温が seed、 早く買うほど安い。 Stanley/Stella SATU001 リブ襟。">
+<meta property="og:image" content="https://mockups.wearmu.com/hero.png">
+<meta property="og:url" content="https://wearmu.com/buy">
+<meta property="og:type" content="product">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
+<link rel="canonical" href="https://wearmu.com/buy">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<script defer src="/mu-funnel.js"></script>
+<script defer src="/tracking.js"></script>
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--red:#ff8a8a;--line:rgba(255,255,255,0.08)}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{
+  background:var(--bg);
+  color:var(--fg);
+  font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  font-feature-settings:"palt";
+  line-height:1.7;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+}
+a{color:var(--y);text-decoration:none}
+a:hover{text-decoration:underline}
+
+nav{
+  position:sticky;top:0;
+  background:rgba(10,10,10,0.92);
+  backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--line);
+  padding:14px 28px;
+  display:flex;justify-content:space-between;align-items:center;
+  font-size:11px;letter-spacing:0.3em;text-transform:uppercase;
+  z-index:50;
+}
+nav .logo{font-weight:700;letter-spacing:0.45em;color:var(--fg)}
+nav .right{font-size:10px;opacity:0.55}
+nav .right a{margin-left:14px;color:inherit}
+
+main{flex:1;max-width:880px;width:100%;margin:0 auto;padding:40px 24px 80px}
+
+.eyebrow{
+  font-size:10px;letter-spacing:0.42em;text-transform:uppercase;
+  color:var(--y);opacity:0.9;margin-bottom:12px;
+}
+h1{
+  font-size:clamp(24px,3.5vw,34px);
+  font-weight:300;
+  letter-spacing:0.02em;
+  line-height:1.35;
+  margin-bottom:14px;
+}
+h1 em{color:var(--y);font-style:normal;font-weight:500}
+.lede{
+  color:var(--mute);
+  font-size:14px;
+  line-height:1.95;
+  max-width:560px;
+  margin-bottom:32px;
+}
+.lede strong{color:var(--fg);font-weight:500}
+
+/* The product hero card — biggest, brightest element on the page */
+.product-card{
+  background:rgba(255,255,255,0.02);
+  border:1px solid rgba(230,196,73,0.4);
+  border-radius:6px;
+  padding:24px;
+  display:grid;
+  grid-template-columns:280px 1fr;
+  gap:28px;
+  align-items:flex-start;
+  margin-bottom:24px;
+}
+.product-card img{
+  width:100%;
+  aspect-ratio:1/1;
+  object-fit:cover;
+  border-radius:4px;
+  background:#000;
+  display:block;
+}
+.product-info .name{
+  font-size:13px;letter-spacing:0.28em;text-transform:uppercase;
+  color:var(--y);font-weight:600;margin-bottom:8px;
+}
+.product-info .title{
+  font-size:22px;font-weight:300;letter-spacing:0.02em;
+  margin-bottom:14px;line-height:1.4;
+}
+.product-info .price{
+  font-size:32px;font-weight:300;color:#fff;
+  font-variant-numeric:tabular-nums;letter-spacing:0.02em;
+  margin-bottom:4px;
+}
+.product-info .price small{
+  font-size:13px;color:var(--mute);font-weight:400;margin-left:8px;
+}
+.product-info .stock{
+  font-size:12px;color:var(--mute);margin-bottom:18px;
+  letter-spacing:0.04em;
+}
+.product-info .stock .red{color:var(--red);font-weight:500}
+.countdown{
+  font-size:11px;letter-spacing:0.3em;text-transform:uppercase;
+  color:var(--red);
+  margin-bottom:18px;
+  display:flex;align-items:center;gap:6px;
+}
+.countdown .pulse{
+  display:inline-block;
+  width:6px;height:6px;
+  background:var(--red);
+  border-radius:50%;
+  animation:pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:0.4;transform:scale(1)}50%{opacity:1;transform:scale(1.4)}}
+
+.size-row{
+  display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;
+}
+.size-btn{
+  background:transparent;
+  border:1px solid var(--line);
+  color:var(--fg);
+  font-family:inherit;
+  font-size:12px;letter-spacing:0.1em;
+  padding:8px 14px;
+  cursor:pointer;
+  border-radius:2px;
+  transition:all 0.15s ease;
+}
+.size-btn:hover{border-color:var(--y);color:var(--y)}
+.size-btn.selected{background:var(--y);color:#0A0A0A;border-color:var(--y);font-weight:600}
+
+.btn-buy{
+  display:block;
+  width:100%;
+  background:var(--y);
+  color:#0A0A0A;
+  border:0;
+  padding:18px 24px;
+  font-family:inherit;
+  font-size:13px;letter-spacing:0.3em;text-transform:uppercase;font-weight:700;
+  border-radius:3px;
+  cursor:pointer;
+  transition:all 0.15s ease;
+  margin-bottom:12px;
+}
+.btn-buy:hover{background:#f5d56f;transform:translateY(-1px)}
+.btn-buy:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+.btn-buy .sub{display:block;font-size:9px;letter-spacing:0.32em;opacity:0.65;margin-top:4px;font-weight:600}
+
+.suzuri-link{
+  display:block;
+  text-align:center;
+  padding:12px;
+  font-size:11px;letter-spacing:0.18em;text-transform:uppercase;
+  color:var(--red);
+  border:1px solid rgba(255,138,138,0.35);
+  border-radius:2px;
+  background:rgba(255,138,138,0.04);
+  text-decoration:none;
+  margin-bottom:18px;
+}
+.suzuri-link:hover{text-decoration:none;background:rgba(255,138,138,0.08)}
+
+.specs{
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(160px,1fr));
+  gap:14px;
+  margin:32px 0;
+  padding:20px;
+  background:rgba(255,255,255,0.02);
+  border:1px solid var(--line);
+  border-radius:3px;
+}
+.spec{font-size:12px;line-height:1.7}
+.spec .l{font-size:9.5px;letter-spacing:0.3em;text-transform:uppercase;color:var(--y);opacity:0.8;margin-bottom:4px}
+.spec .v{color:var(--fg)}
+
+.bullet-list{
+  margin:24px 0 32px;
+  padding-left:0;
+  list-style:none;
+}
+.bullet-list li{
+  padding:8px 0 8px 22px;
+  color:var(--mute);
+  font-size:13.5px;
+  position:relative;
+  line-height:1.85;
+}
+.bullet-list li::before{
+  content:"━◯";
+  position:absolute;
+  left:0;
+  color:var(--y);
+  font-size:11px;
+  top:11px;
+}
+.bullet-list strong{color:var(--fg);font-weight:500}
+
+.trust{
+  margin:28px 0;
+  padding:18px 20px;
+  background:rgba(230,196,73,0.04);
+  border-left:2px solid var(--y);
+  font-size:12.5px;
+  color:var(--mute);
+  line-height:1.95;
+}
+.trust strong{color:var(--fg)}
+
+.links{
+  margin-top:48px;
+  padding-top:24px;
+  border-top:1px solid var(--line);
+  font-size:11px;
+  color:var(--mute);
+  line-height:2.2;
+  letter-spacing:0.05em;
+}
+.links a{color:var(--y);text-decoration:none;margin:0 4px}
+.links a:hover{text-decoration:underline}
+
+footer{
+  text-align:center;
+  padding:24px;
+  font-size:10px;letter-spacing:0.2em;text-transform:uppercase;
+  color:var(--mute);opacity:0.55;
+  border-top:1px solid var(--line);
+}
+
+@media (max-width:640px){
+  .product-card{grid-template-columns:1fr;gap:18px;padding:18px}
+}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+
+<!-- ── /buy A/B (2026-06-11): CVR改善テスト ──────────────────────────
+     実測根拠: /buy=939PV/714UU(全PVの51%)なのに購入CTAクリック17回(UU比2.4%)。
+     scroll25%到達23%・滞在中央値9秒 → 大半がCTAに到達する前に離脱している。
+     b = ①商品カードをファーストビューへ前倒し ②sticky 購入バー(常時可視CTA)
+         ③YouTube経由者への文脈ブリッジ(流入主役=YouTube 7日333)
+     a = 現行レイアウト(コントロール)。
+     割当は visitor_id の決定的2分割。mu-funnel.js が body[data-ab] を全イベントに
+     刻むので path=/buy × extra.ab で pageview/cta_click/checkout_attempt を
+     変分別に集計できる(index.html のトップA/B/Cと同じ仕組み)。
+     初訪問は mu_funnel_v1 未作成のため、ここで identity を先に作って
+     mu-funnel.js に引き継がせる(初訪問が全員同バケツに落ちる偏りの回避)。
+     検証用強制: ?ab=a / ?ab=b -->
+<script>
+(function(){
+  try{
+    var KEY='mu_funnel_v1';
+    function uuid(){
+      try{
+        return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,function(c){
+          return (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c/4).toString(16);
+        });
+      }catch(_){ return 'v'+Date.now().toString(36)+Math.random().toString(36).slice(2,10); }
+    }
+    var id=null;
+    try{ id=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(_){}
+    if(!id||!id.visitor_id){
+      id={visitor_id:uuid(),session_id:uuid(),last:Date.now()};
+      try{ localStorage.setItem(KEY,JSON.stringify(id)); }catch(_){}
+    }
+    var s=id.visitor_id,h=0;
+    for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;
+    var q=new URLSearchParams(location.search).get('ab');
+    var v=(q==='a'||q==='b')?q:['a','b'][h%2];
+    document.body.setAttribute('data-ab',v);
+    window.MU_BUY_AB=v;
+  }catch(_){ window.MU_BUY_AB='a'; }
+})();
+</script>
+
+<nav>
+  <a href="/" class="logo">MU</a>
+  <span class="right">
+    <a href="/about">MU とは</a>
+    <a href="/source">ソース</a>
+    <a href="/transparency">数字</a>
+    <a href="/blog/fabric-shift">記事</a>
+    <a href="mailto:mail@yukihamada.jp">連絡</a>
+  </span>
+</nav>
+
+<main>
+  <div class="eyebrow" id="eyebrow">▶ Buy / 今買える 1 着</div>
+  <h1 id="buy-h1">気温が決めたデザイン。<br>
+    <em>今日の 1 着</em>を、 1 click で。
+  </h1>
+  <p class="lede" id="buy-lede">
+    MUGEN は北海道弟子屈町の気温・月相・時刻を seed に AI が生成する <strong>1 時間に 1 着</strong>の T シャツです。 同じデザインは二度と作られません。 早く買うほど安い bonding curve、 完売したらそれで終わり。
+  </p>
+  <p style="font-size:12.5px;color:rgba(245,245,240,0.6);margin:-12px 0 18px;line-height:1.6">
+    <strong style="color:#e6c449">MU</strong> はブランド名、 <strong style="color:#e6c449">MUGEN</strong> はその1番目の商品ライン (Tシャツ)。 他に MA (週1オークション) / MUON (日替わり) があります。 今このページで買えるのは MUGEN です。
+  </p>
+
+  <!-- JiuFlow cross-promo coupon banner — shows when ?ref=jiuflow (or cookie set).
+       Coupon "JIUFLOW20" is created in Stripe dashboard (20% off, max 100, expires 6/30).
+       Stripe checkout's allow_promotion_codes=true (server) lets user paste the code. -->
+  <div id="jiuflow-coupon-banner" style="display:none;background:linear-gradient(135deg,rgba(123,229,123,0.12),rgba(123,229,123,0.02));border:1.5px solid rgba(123,229,123,0.4);border-radius:8px;padding:14px 22px;margin:18px 0 14px;display:none;flex-wrap:wrap;align-items:center;gap:14px">
+    <div style="font-size:28px;line-height:1">🎁</div>
+    <div style="flex:1;min-width:240px">
+      <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#7ed492;font-weight:700;margin-bottom:4px">JiuFlow 紹介クーポン</div>
+      <div style="font-size:15px;color:#fff;line-height:1.55">checkout 画面で <strong style="background:#7ed492;color:#000;padding:2px 8px;border-radius:3px;font-family:'SF Mono','Menlo',monospace">JIUFLOW20</strong> を入力 → <strong style="color:#7ed492">20% off</strong> (最初の100名限定 / 6月末まで)</div>
+      <div style="font-size:11.5px;color:rgba(245,245,240,0.55);margin-top:4px">クーポンは Stripe checkout ページ で コピペ。 適用後 ¥4,900 → ¥3,920 (約 $26)。</div>
+    </div>
+    <button type="button" id="jiuflow-coupon-copy" style="background:rgba(123,229,123,0.18);color:#7ed492;border:1px solid rgba(123,229,123,0.5);padding:10px 16px;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;font-weight:700;border-radius:4px;cursor:pointer;white-space:nowrap;font-family:inherit">コードをコピー</button>
+  </div>
+  <script>
+  (function () {
+    // Detect ?ref=jiuflow (or stored cookie/localStorage). Persist across visits.
+    var key = "mu_ref_jiuflow";
+    var url = new URL(location.href);
+    var qref = (url.searchParams.get("ref") || "").toLowerCase();
+    var hasRef = qref === "jiuflow";
+    if (!hasRef) {
+      try { hasRef = localStorage.getItem(key) === "1"; } catch (_) {}
+    }
+    if (hasRef) {
+      try { localStorage.setItem(key, "1"); } catch (_) {}
+      var b = document.getElementById("jiuflow-coupon-banner");
+      if (b) b.style.display = "flex";
+      var c = document.getElementById("jiuflow-coupon-copy");
+      if (c) c.addEventListener("click", function () {
+        try {
+          navigator.clipboard.writeText("JIUFLOW20");
+          c.textContent = "✓ コピー済";
+          setTimeout(function () { c.textContent = "コードをコピー"; }, 2000);
+        } catch (_) {
+          window.prompt("コピーしてください:", "JIUFLOW20");
+        }
+      });
+    }
+  })();
+  </script>
+
+  <!-- 2 価格レンジ + MSA bundle banner. -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 8px">
+    <div style="background:#0c0c0c;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px 14px">
+      <div style="font-size:10px;letter-spacing:0.22em;color:#7ed492;text-transform:uppercase;margin-bottom:4px">🇯🇵 SUZURI 経路</div>
+      <div style="font-size:18px;font-weight:600;color:#fff">¥4,900 <span style="font-size:11px;opacity:0.55;font-weight:400">≈ $33</span></div>
+      <div style="font-size:11px;opacity:0.6;margin-top:2px">国内 5-8 日 · Printstar · 日本国内のみ</div>
+    </div>
+    <div style="background:#0c0c0c;border:1px solid rgba(255,255,255,0.1);border-radius:6px;padding:12px 14px">
+      <div style="font-size:10px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:4px">⚙️ Premium 経路</div>
+      <div style="font-size:18px;font-weight:600;color:#fff">¥6,900〜¥9,800 <span style="font-size:11px;opacity:0.55;font-weight:400">≈ $46-$66</span></div>
+      <div style="font-size:11px;opacity:0.6;margin-top:2px">EU 2-3 週 · Stanley/Stella · 🌍 海外発送 可</div>
+    </div>
+  </div>
+
+  <!-- MSA bundle banner — every wearmu T-shirt purchase unlocks MU Source Access. -->
+  <div style="background:linear-gradient(135deg,#1a1a1a 0%,#0f0f0f 100%);border:1px solid rgba(230,196,73,0.4);border-radius:8px;padding:16px 22px;margin:8px 0 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div style="font-size:32px;line-height:1">🔓</div>
+    <div style="flex:1;min-width:240px">
+      <div style="font-size:11px;letter-spacing:0.25em;text-transform:uppercase;color:#e6c449;margin-bottom:4px">MSA · MU SOURCE ACCESS</div>
+      <div style="font-size:15px;color:#F5F5F0;line-height:1.55"><strong>MSA = Tシャツ 買って くれた人 専用 の ソースコード 開放</strong>。 yukihamada が private にした <strong>21リポ のソース</strong> が <a href="/source" style="color:#e6c449">/source</a> から DL できる ようになる (Phase 2、 2026-05-31 開放予定)。 First 100名は将来追加リポも lifetime。</div>
+    </div>
+    <a href="/source" style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;border:1px solid rgba(230,196,73,0.6);padding:8px 14px;border-radius:4px;text-decoration:none;white-space:nowrap">中身を 見る →</a>
+  </div>
+
+  <!-- 2026-05-16: ローンチ/紹介クーポン (FIRST30 / REF500) は廃止。 価格は
+       原価ベースで透明設計 (/transparency)。 -->
+
+  <!-- 2026-06-11 fix: 旧マークアップは <a id="product-link"> の中に
+       <a id="suzuri-link"> がネストしていて invalid HTML だった。パーサが
+       3 fragment に分割し #product-card が main 直下に落ちるため、JS の
+       product-link.href 更新は空の <a> にしか効かず、カード全体クリックが
+       死んでいた (本番 DOM 実測)。div[role=link] + 委譲クリック
+       (goToProduct, 下の <script>) に置き換え。data-funnel はそのまま
+       なので cta_click(buy_page_card) 計測は従来どおり mu-funnel.js が拾う。 -->
+  <div id="product-link" role="link" tabindex="0" aria-label="商品ページを見る" data-funnel="cta_click" data-funnel-cta="buy_page_card" style="cursor:pointer">
+    <div class="product-card" id="product-card">
+      <img id="product-img" src="https://mockups.wearmu.com/hero.png" alt="latest MUGEN" loading="eager" fetchpriority="high">
+      <div class="product-info">
+        <div class="name" id="product-name">今日の MUGEN を取得中…</div>
+        <div class="title" id="product-title">MU MUGEN</div>
+        <div class="price">
+          <span id="product-price">¥4,900〜¥9,800</span>
+          <small>JPY · Stripe · 即時購入 · 国内発送</small>
+        </div>
+        <div class="stock"><span id="product-stock">在庫: 取得中…</span></div>
+        <div class="countdown"><span class="pulse"></span><span id="product-countdown">次の drop: 毎時 0 分 (JST)</span></div>
+
+        <!-- Variant selectors (2026-05-18): Type × POD provider with おすすめ
+             badges. JS reads /api/product_variants once and builds both rows
+             dynamically. Default for JP users = Tee × Gelato JP; EN users =
+             Tee × Printful EU. Each click recomputes the price below. -->
+        <div style="margin:14px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">素材タイプ</div>
+        <div class="size-row" id="variant-type-row" style="margin-bottom:14px"></div>
+        <div style="margin:6px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">印刷・配送</div>
+        <div class="size-row" id="variant-pod-row" style="margin-bottom:6px"></div>
+        <div id="variant-note" style="font-size:11.5px;color:rgba(245,245,240,0.6);margin:4px 0 14px;min-height:18px"></div>
+
+        <div style="margin:6px 0 6px;font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase">Size</div>
+        <div class="size-row" id="size-row">
+          <button type="button" class="size-btn" data-size="S" data-funnel="cta_click" data-funnel-cta="buy_size_S">S</button>
+          <button type="button" class="size-btn selected" data-size="M" data-funnel="cta_click" data-funnel-cta="buy_size_M">M</button>
+          <button type="button" class="size-btn" data-size="L" data-funnel="cta_click" data-funnel-cta="buy_size_L">L</button>
+          <button type="button" class="size-btn" data-size="XL" data-funnel="cta_click" data-funnel-cta="buy_size_XL">XL</button>
+          <button type="button" class="size-btn" data-size="XXL" data-funnel="cta_click" data-funnel-cta="buy_size_XXL">XXL</button>
+        </div>
+
+        <button class="btn-buy" id="btn-buy" data-funnel="cta_click" data-funnel-cta="buy_page_purchase">
+          このシャツを買う
+          <span class="sub">→ Stripe へ · 1 step · 領収書 OK</span>
+        </button>
+
+        <a id="suzuri-link" href="#" class="suzuri-link" style="display:none" data-funnel="cta_click" data-funnel-cta="buy_page_suzuri">
+          🇯🇵 SUZURI で買う ¥4,900 (国内 2-3 日発送 / Printstar)
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- 「あなたが受け取る 4 つ」: 1 着で何が手に入るか可視化。
+       MU Pass (NFT 会員証) を期待値に含めることで「単なるTシャツ」ではなく
+       「永久メンバーシップ」を買う体験にする。詳細は /pass。 -->
+  <div style="margin:28px 0 8px;padding:22px 22px 18px;background:linear-gradient(180deg,rgba(230,196,73,0.04),rgba(230,196,73,0.01));border:1px solid rgba(230,196,73,0.25);border-radius:10px">
+    <div style="font-size:10.5px;letter-spacing:0.32em;color:#e6c449;text-transform:uppercase;margin-bottom:14px;font-weight:600">あなたが受け取る 4 つ</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">① モノ</div>
+        <div style="font-size:13px;line-height:1.5">1 着の T シャツ<br><span style="font-size:11px;opacity:0.6">EU print · 国内発送</span></div>
+      </div>
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">② 会員証</div>
+        <div style="font-size:13px;line-height:1.5">MU Pass デジタル会員証<br><span style="font-size:11px;opacity:0.6">買えば 一生 あなたの · 譲渡 OK</span></div>
+      </div>
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">③ Vault</div>
+        <div style="font-size:13px;line-height:1.5">買った人限定エリア<br><span style="font-size:11px;opacity:0.6">原価・没デザイン・投票</span></div>
+      </div>
+      <div style="background:rgba(0,0,0,0.3);border-radius:6px;padding:13px 14px">
+        <div style="font-size:11px;color:#e6c449;letter-spacing:0.15em;margin-bottom:5px">④ 還元</div>
+        <div style="font-size:13px;line-height:1.5">売上の 10% が戻る<br><span style="font-size:11px;opacity:0.6">持ってる Tシャツ枚数 比で</span></div>
+      </div>
+    </div>
+    <div style="text-align:right;margin-top:10px;font-size:11px;letter-spacing:0.1em">
+      <a href="/pass" style="color:#e6c449;text-decoration:none;border-bottom:1px dotted rgba(230,196,73,0.4);padding-bottom:1px">仕組み詳細 → /pass</a>
+    </div>
+  </div>
+
+  <!-- Holder-only teaser + on-chain proof — wired into /community-numbers
+       and /anchor/:id. JS below fills product-anchor-link with the active
+       product id once loadProduct() resolves. -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 32px">
+    <a href="/community-numbers" style="background:#0c0c0c;border:1px solid #2a2310;border-radius:6px;padding:14px 16px;text-decoration:none;color:#f5f5f0;display:block">
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:6px">🔒 買ってから見れる中身</div>
+      <div style="font-size:13px;line-height:1.55">原価・没デザイン・明日の予告<br/><span style="opacity:0.6;font-size:11px">プレビュー: クリックで一部公開 →</span></div>
+    </a>
+    <a id="product-anchor-link" href="#" style="background:#0c0c0c;border:1px solid #1a2a20;border-radius:6px;padding:14px 16px;text-decoration:none;color:#f5f5f0;display:block">
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#7ed492;text-transform:uppercase;margin-bottom:6px">🔗 proof of birth</div>
+      <div style="font-size:13px;line-height:1.55">この 1 着の SHA-256 anchor を<br/>誰でも検証 → on-chain hourly</div>
+    </a>
+  </div>
+
+  <!-- 100枚 challenge live progress — Sho FB #7 #11: 進捗 を 隠さず 出す.
+       JSON は /api/100/progress (sold count + period start). -->
+  <a href="/100" id="challenge-100-live" style="display:flex;align-items:center;gap:14px;background:#0c0c0c;border:1px solid rgba(230,196,73,0.3);border-radius:8px;padding:14px 18px;margin:0 0 24px;text-decoration:none;color:#F5F5F0">
+    <div style="font-size:22px">🎯</div>
+    <div style="flex:1">
+      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:4px">100枚 チャレンジ · 5/18 → 5/31</div>
+      <div style="font-size:14px"><span id="challenge-100-sold" style="font-size:22px;font-weight:700;color:#fff;font-family:'SF Mono','Menlo',monospace">—</span> <span style="opacity:0.6">/ 100 着</span></div>
+    </div>
+    <div style="font-size:11px;letter-spacing:0.15em;color:#e6c449;text-transform:uppercase">live →</div>
+  </a>
+
+  <!-- 商品 写真 ギャラリー — Sho FB #8 #12. 4枚 grid。 (a) latest mockup
+       (既存 hero.png API) (b) Yuki が 着てる 写真 (c) タグ / moon-phase
+       クローズアップ (d) 配送 / 開封. (b)-(d) は Yuki が 撮って 差し替え。 -->
+  <div style="margin:0 0 24px">
+    <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:10px">写真</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+      <img src="https://mockups.wearmu.com/hero.png" alt="latest MUGEN" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#fff" onerror="this.style.display='none'">
+      <img src="https://mockups.wearmu.com/yuki-wearing.jpg" alt="Yuki が 着てる" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#1a1a1a" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'aspect-ratio:1;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;text-align:center',innerHTML:'着てる<br>写真<br>準備中'}))">
+      <img src="https://mockups.wearmu.com/tag-closeup.jpg" alt="タグ / moon-phase クローズアップ" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#1a1a1a" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'aspect-ratio:1;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;text-align:center',innerHTML:'タグ<br>moon-phase<br>準備中'}))">
+      <img src="https://mockups.wearmu.com/unboxing.jpg" alt="配送 / 開封" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:4px;background:#1a1a1a" onerror="this.replaceWith(Object.assign(document.createElement('div'),{style:'aspect-ratio:1;background:#1a1a1a;border-radius:4px;display:flex;align-items:center;justify-content:center;color:#666;font-size:10px;text-align:center',innerHTML:'配送<br>開封<br>準備中'}))">
+    </div>
+    <div style="font-size:10.5px;opacity:0.5;margin-top:8px">※ (2)-(4) は 順次 追加。 撮影 待ち。</div>
+  </div>
+
+  <div class="specs">
+    <div class="spec"><div class="l">Fabric</div><div class="v">Stanley/Stella SATU001 · 180gsm · GOTS organic (Premium 経路) / Printstar 5.6oz (SUZURI 経路)</div></div>
+    <div class="spec"><div class="l">Neck</div><div class="v">織りリブ襟 (Premium のみ)</div></div>
+    <div class="spec"><div class="l">Made in</div><div class="v">Portugal EU (Premium) · 日本 (SUZURI)</div></div>
+    <div class="spec"><div class="l">Print</div><div class="v">DTG · 白インクのみ</div></div>
+    <div class="spec"><div class="l">Delivery 国内</div><div class="v"><strong style="color:#fff">SUZURI 約 5-8 営業日</strong> · Premium (Printful EU) 約 2-3 週間</div></div>
+    <div class="spec"><div class="l">Delivery 海外</div><div class="v">Premium (Printful EU) のみ。 米国 7-10 日 / アジア 10-14 日 / 欧州 5-7 日 (¥1,200-¥2,400 別途)。 SUZURI 経路 は 国内 のみ。</div></div>
+    <div class="spec"><div class="l">Origin city</div><div class="v">北海道 弟子屈町 (気温 seed)</div></div>
+    <div class="spec"><div class="l">Cycle</div><div class="v">108 枚 / drop · 完売したら永久終了</div></div>
+  </div>
+
+  <!-- サイズ表 — Sho FB #10. Stanley/Stella SATU001 基準 (Premium 経路)。
+       SUZURI 経路 (Printstar 5.6oz) は 別測定で 値 が ±1cm 程度 ズレる。
+       Yuki が 実測 で 差し替え 推奨。 -->
+  <div style="margin:24px 0">
+    <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:10px">サイズ表 (cm)</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.15)">
+          <th style="padding:8px 6px;text-align:left;color:#e6c449;font-weight:600">サイズ</th>
+          <th style="padding:8px 6px;text-align:right">S</th>
+          <th style="padding:8px 6px;text-align:right">M</th>
+          <th style="padding:8px 6px;text-align:right">L</th>
+          <th style="padding:8px 6px;text-align:right">XL</th>
+          <th style="padding:8px 6px;text-align:right">XXL</th>
+        </tr>
+      </thead>
+      <tbody style="font-family:'SF Mono','Menlo',monospace">
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:8px 6px;opacity:0.75">着丈</td>
+          <td style="padding:8px 6px;text-align:right">68</td>
+          <td style="padding:8px 6px;text-align:right">71</td>
+          <td style="padding:8px 6px;text-align:right">74</td>
+          <td style="padding:8px 6px;text-align:right">77</td>
+          <td style="padding:8px 6px;text-align:right">80</td>
+        </tr>
+        <tr style="border-bottom:1px solid rgba(255,255,255,0.05)">
+          <td style="padding:8px 6px;opacity:0.75">身幅</td>
+          <td style="padding:8px 6px;text-align:right">49</td>
+          <td style="padding:8px 6px;text-align:right">52</td>
+          <td style="padding:8px 6px;text-align:right">55</td>
+          <td style="padding:8px 6px;text-align:right">58</td>
+          <td style="padding:8px 6px;text-align:right">61</td>
+        </tr>
+        <tr>
+          <td style="padding:8px 6px;opacity:0.75">肩幅</td>
+          <td style="padding:8px 6px;text-align:right">43</td>
+          <td style="padding:8px 6px;text-align:right">46</td>
+          <td style="padding:8px 6px;text-align:right">49</td>
+          <td style="padding:8px 6px;text-align:right">52</td>
+          <td style="padding:8px 6px;text-align:right">55</td>
+        </tr>
+      </tbody>
+    </table>
+    <div style="font-size:10.5px;opacity:0.55;margin-top:8px">Stanley/Stella SATU001 (Premium 経路) 公称値。 SUZURI 経路 (Printstar 5.6oz) は ±1cm 程度 ズレあり。 普段 着てる ユニセックス T と 同じサイズ 推奨。</div>
+  </div>
+
+  <ul class="bullet-list">
+    <li><strong>同じデザインは二度と作られない</strong> — 1 時間に 1 着、 108 枚 cycle で永久終了</li>
+    <li><strong>今 LP の価格が最安</strong> — 1 着売れる毎に +¥250 上がるので、 待つほど高くなります</li>
+    <li><strong>原価 ¥5,700 公開</strong> — blank ¥3,750 + DTG print ¥750 + EU→JP shipping ¥1,200 (<a href="/blog/fabric-shift">なぜ?</a>)</li>
+  </ul>
+  <details style="margin:18px 0;font-size:12px;color:var(--mute)">
+    <summary style="cursor:pointer;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.65">+ NFT / DAO / moon-phase 等の詳細</summary>
+    <ul class="bullet-list" style="margin-top:12px">
+      <li><strong>デジタル会員証 + 投票権</strong> — 1 着 = 1 vote、 同じドロップの buyer 同士が見られる。 Solana 上の NFT として on-chain mint 予定 (collection address / wallet flow は Phase 2、 詳細 → <a href="/pass">/pass</a>)。 v1 現状 は サーバ側 DB で 発行、 後で claim 形式 で wallet 移行可。</li>
+      <li><strong>moon-phase marker</strong> — 内側襟下に 8 つの白円。 /scan でそのシャツの「生まれた天気」が読める</li>
+      <li><strong>1人 founder (濱田優貴 / Yuki) が 設計、 AI が 日々 の 運営 を 担当</strong>。 「ブランド 0人 (AI のみ)」 を <strong>目標</strong> として 100 年 運営 を 目指す ( <a href="/constitution">MU の ルール (Constitution)</a>: ブランド の §0 〜 §32 全ルール を 公開、 「数字 で 書く」 「在庫 完売 で 永久 終了」 など 32条)。 今日 時点 で は Yuki が 全部 書いて いる、 という のが 正直 な ところ。</li>
+    </ul>
+  </details>
+
+  <div class="trust">
+    <strong>透明性:</strong> 累計売上・在庫・Constitution・コードは全て公開 (<a href="/transparency">数字</a> / <a href="https://github.com/yukihamada/mu-brand">GitHub</a>)。 §11 で「数字で書く」 と決めている、 つまり何が売れているか・何が売れていないか・原価も全部出す。 進行中の <a href="/100" style="color:#e6c449">100枚チャレンジ (5/18-5/31)</a> の 残数 も live で 見れる。
+  </div>
+
+  <div class="links" style="font-size:11.5px;opacity:0.55">
+    迷ったら: <a href="/about" data-funnel="cta_click" data-funnel-cta="buy_to_about">MU って何?</a> ·
+    <a href="/transparency" data-funnel="cta_click" data-funnel-cta="buy_to_tx">透明性 (数字)</a>
+  </div>
+
+  <!-- BJJ 導線: /buy は SEO/YouTube の主着地だが中身は汎用 MUGEN。実需(BJJ)で来た層を
+       買える垂直カタログ /bjj へ運ぶ (CLAUDE.md STRATEGY=「BJJ垂直の具体オファーで一次流通」)。 -->
+  <div style="margin:26px auto 0;max-width:1200px"><a href="/bjj" data-funnel="cta_click" data-funnel-cta="buy_to_bjj" style="display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;background:linear-gradient(90deg,rgba(120,160,255,.14),rgba(120,160,255,.05));border:1px solid rgba(120,160,255,.4);border-radius:14px;padding:14px 18px;text-decoration:none;color:#f5f5f0;font-size:15px;font-weight:700;letter-spacing:.01em">
+<span style="font-size:20px">🥋</span><span>柔術なら — MU × BJJ コレクション (TAP × NAP)</span>
+<span style="background:#7aa0ff;color:#0a0a0a;border-radius:99px;padding:7px 16px;font-size:13px;font-weight:800;white-space:nowrap">BJJ を見る →</span></a></div>
+
+  <!-- 作る動線: /buy は広告の主着地 = 最大トラフィック面。「自分でも作れる」を見せる (make_cta_banner と同形・静的版) -->
+  <div style="margin:26px auto 0;max-width:1200px"><a href="/make?ref=buy" data-funnel="cta_click" data-funnel-cta="make_buy_page" style="display:flex;align-items:center;gap:12px;justify-content:center;flex-wrap:wrap;background:linear-gradient(90deg,rgba(255,215,0,.14),rgba(255,215,0,.05));border:1px solid rgba(255,215,0,.4);border-radius:14px;padding:14px 18px;text-decoration:none;color:#f5f5f0;font-size:15px;font-weight:700;letter-spacing:.01em">
+<span style="font-size:20px">✦</span><span>ひとこと言うだけで、自分のTシャツをAIが作る</span>
+<span style="background:#ffd700;color:#0a0a0a;border-radius:99px;padding:7px 16px;font-size:13px;font-weight:800;white-space:nowrap">作ってみる →</span></a>
+<div style="text-align:center;margin-top:8px;font-size:13.5px;font-weight:700"><a href="/start?ref=buy" data-funnel="cta_click" data-funnel-cta="start_buy_page" style="color:#ffd700;text-decoration:none">クリエイター登録すると、売れるたび10%があなたに → /start</a></div></div>
+</main>
+
+<!-- Sticky 購入バー (variant b のみ表示) — ファーストビューから常時可視の CTA。
+     商品名/価格/サムネは loadProduct() が同期。クリックは本体ボタンと同じ
+     startCheckout() に入る (checkout_attempt source='buy.html#sticky')。 -->
+<div id="sticky-cta" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:rgba(10,10,10,0.95);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-top:1px solid rgba(230,196,73,0.35);padding:10px 16px;padding-bottom:calc(10px + env(safe-area-inset-bottom))">
+  <div style="max-width:880px;margin:0 auto;display:flex;align-items:center;gap:12px">
+    <img id="sticky-img" src="https://mockups.wearmu.com/hero.png" alt="MUGEN" style="width:44px;height:44px;object-fit:cover;border-radius:4px;background:#000;flex-shrink:0">
+    <div style="flex:1;min-width:0;line-height:1.35">
+      <div id="sticky-name" style="font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#e6c449;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">MUGEN</div>
+      <div id="sticky-price" style="font-size:15px;font-weight:600;color:#fff;font-variant-numeric:tabular-nums">¥4,900〜¥9,800</div>
+    </div>
+    <button type="button" id="btn-buy-sticky" data-funnel="cta_click" data-funnel-cta="buy_sticky_purchase" style="background:#e6c449;color:#0A0A0A;border:0;padding:12px 22px;font-family:inherit;font-size:12px;letter-spacing:0.22em;text-transform:uppercase;font-weight:700;border-radius:3px;cursor:pointer;white-space:nowrap">今すぐ買う</button>
+  </div>
+</div>
+
+<script>
+// Variant b activation — DOM 前倒し + sticky CTA + YouTube ブリッジ。
+// 全て try/catch で囲い、失敗しても variant a 相当の表示に劣化するだけにする。
+(function(){
+  if(window.MU_BUY_AB!=='b')return;
+  var isJa=/^ja/.test(navigator.language||'');
+  // ① 商品カード(画像+価格+購入ボタン)を h1 直後 = ファーストビューへ前倒し。
+  //    哲学(lede)より商品写真が先 (/buy/today の 2026-05-09 診断と同方針)。
+  //    lede・価格レンジ/MSA等の説明ブロックはカードの下に下がる。
+  //    2026-06-11: ネスト<a>解消で #product-card はラッパー div#product-link の
+  //    中に戻ったので、動かすのはラッパーごと (カードだけ抜くとカード全体
+  //    クリックが variant b でだけ死ぬ)。旧DOM互換で #product-card にフォールバック。
+  try{
+    var card=document.getElementById('product-link')||document.getElementById('product-card');
+    var lede=document.getElementById('buy-lede');
+    if(card&&lede&&lede.parentNode)lede.parentNode.insertBefore(card,lede);
+  }catch(_){}
+  // ② sticky 購入バー表示 + 表示計測 (CTR = cta_click/cta_view の cta を揃える)
+  try{
+    var bar=document.getElementById('sticky-cta');
+    var btn=document.getElementById('btn-buy-sticky');
+    if(btn&&!isJa)btn.textContent='BUY NOW';
+    if(bar){
+      bar.style.display='block';
+      document.body.style.paddingBottom='76px';
+      var sent=false;
+      var view=function(){
+        if(sent)return;sent=true;
+        try{if(window.MuFunnel&&window.MuFunnel.track)window.MuFunnel.track('cta_view',{cta:'buy_sticky_purchase'});}catch(_){}
+      };
+      // mu-funnel.js は defer 読込なので DOMContentLoaded 後に送る
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',view);
+      else view();
+      // 本体の購入ボタンが画面内にある間は隠す (二重UI回避)
+      if('IntersectionObserver' in window){
+        var real=document.getElementById('btn-buy');
+        if(real)new IntersectionObserver(function(es){
+          bar.style.display=es[0].isIntersecting?'none':'block';
+        },{threshold:0.5}).observe(real);
+      }
+    }
+  }catch(_){}
+  // ③ YouTube 文脈ブリッジ — 動画から来た人に「ここで買える」を最上部で一行明示。
+  //    判定 = referrer が youtube.com/youtu.be、または ?utm_source|ref が youtube/yt。
+  try{
+    var sp=new URLSearchParams(location.search);
+    var src=((sp.get('utm_source')||'')+' '+(sp.get('ref')||'')).toLowerCase();
+    var fromYt=/youtube|\byt\b/.test(src)||/(^|\.)youtube\.com|(^|\.)youtu\.be/.test((document.referrer||'').replace(/^https?:\/\//,''));
+    if(fromYt){
+      var mainEl=document.querySelector('main');
+      var d=document.createElement('a');
+      d.href='#product-card';
+      d.setAttribute('data-funnel','cta_click');
+      d.setAttribute('data-funnel-cta','buy_yt_bridge');
+      d.style.cssText='display:flex;align-items:center;gap:10px;background:rgba(255,138,138,0.06);border:1px solid rgba(255,138,138,0.35);border-radius:8px;padding:12px 16px;margin:0 0 20px;text-decoration:none;color:#F5F5F0;font-size:13px;line-height:1.6';
+      d.innerHTML=isJa
+        ?'<span style="font-size:18px">📺</span><span><strong style="color:#ff8a8a">動画から来た方へ</strong> — ここが MU の購入ページです。 いま買える最新の 1 着はこちら ↓</span>'
+        :'<span style="font-size:18px">📺</span><span><strong style="color:#ff8a8a">Came from the video?</strong> This is MU\'s buy page — the latest one-of-one drop is right below ↓</span>';
+      if(mainEl)mainEl.insertBefore(d,mainEl.firstChild);
+      var sentB=false;
+      var viewB=function(){
+        if(sentB)return;sentB=true;
+        try{if(window.MuFunnel&&window.MuFunnel.track)window.MuFunnel.track('cta_view',{cta:'buy_yt_bridge'});}catch(_){}
+      };
+      if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',viewB);
+      else viewB();
+    }
+  }catch(_){}
+})();
+</script>
+
+<footer>
+  MU · wearmu.com · <a href="mailto:mail@yukihamada.jp" style="color:inherit">mail@yukihamada.jp</a>
+</footer>
+
+<script>
+let SELECTED_SIZE = 'M';
+let CURRENT_PRODUCT = null;
+// Variant state — wired by initVariants() once /api/product_variants resolves.
+let VARIANT_MATRIX = null;
+let SELECTED_TYPE = null;   // e.g. 'tee'
+let SELECTED_POD  = null;   // e.g. 'gelato_jp'
+
+// Size buttons: only the size-row should reset itself on click, NOT every
+// other .size-btn on the page (variant rows reuse the same class for style).
+document.getElementById('size-row').querySelectorAll('.size-btn').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.preventDefault();
+    document.getElementById('size-row').querySelectorAll('.size-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    SELECTED_SIZE = btn.dataset.size;
+  });
+});
+
+// Card-wide click → product page (nested-<a> fix, 2026-06-11). The wrapper
+// div#product-link navigates to data-href (set by loadProduct) unless the
+// click landed on an interactive descendant (size/variant buttons, btn-buy,
+// suzuri-link, anchor link) — those keep their own behavior. cta_click is
+// NOT sent here: mu-funnel.js's capture-phase [data-funnel] listener already
+// fires for the wrapper (innermost data-funnel wins, so buttons still report
+// their own cta). Works identically in both A/B variants — variant b moves
+// the wrapper node, listeners travel with it.
+(function () {
+  const wrap = document.getElementById('product-link');
+  if (!wrap) return;
+  function goToProduct(e) {
+    if (e.target.closest && e.target.closest('a,button')) return;
+    const href = wrap.dataset.href;
+    if (href) location.href = href;
+  }
+  wrap.addEventListener('click', goToProduct);
+  wrap.addEventListener('keydown', (e) => { if (e.key === 'Enter') goToProduct(e); });
+  // 表示計測: cta_view を cta_click と同じ cta で送る → CTR = click/view が
+  // そのまま出る (sticky バーと同じ様式)。mu-funnel.js は defer なので
+  // DOMContentLoaded 後に observe 開始。
+  function observeView() {
+    if (!('IntersectionObserver' in window)) return;
+    new IntersectionObserver(function (es, obs) {
+      if (!es[0].isIntersecting) return;
+      obs.disconnect();
+      try { if (window.MuFunnel && window.MuFunnel.track) window.MuFunnel.track('cta_view', { cta: 'buy_page_card' }); } catch (_) {}
+    }, { threshold: 0.25 }).observe(wrap);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', observeView);
+  else observeView();
+})();
+
+async function initVariants() {
+  try {
+    const r = await fetch('/api/product_variants');
+    if (!r.ok) return;
+    VARIANT_MATRIX = await r.json();
+  } catch (_) { return; }
+  const m = VARIANT_MATRIX;
+  const isJa = /^ja/.test(navigator.language || '');
+  // Default: JP user → tee × gelato_jp, EN user → tee × printful_eu
+  SELECTED_TYPE = (m.default_combo && m.default_combo.type) || 'tee';
+  SELECTED_POD  = isJa ? ((m.default_combo && m.default_combo.pod) || 'gelato_jp') : 'printful_eu';
+
+  const typeRow = document.getElementById('variant-type-row');
+  const podRow  = document.getElementById('variant-pod-row');
+  typeRow.innerHTML = '';
+  podRow.innerHTML = '';
+
+  // Build type buttons
+  for (const t of m.types) {
+    const has = !!(m.combos[t.key]);
+    if (!has) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'size-btn' + (t.key === SELECTED_TYPE ? ' selected' : '');
+    b.textContent = isJa ? t.label_jp : t.label_en;
+    b.dataset.vtype = t.key;
+    b.dataset.funnel = 'cta_click';
+    b.dataset.funnelCta = 'buy_variant_type_' + t.key;
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      SELECTED_TYPE = t.key;
+      // If current POD isn't available for new type, pick the first available.
+      if (!m.combos[t.key][SELECTED_POD]) {
+        SELECTED_POD = Object.keys(m.combos[t.key])[0];
+      }
+      renderVariantRows();
+      updateVariantPrice();
+    });
+    typeRow.appendChild(b);
+  }
+
+  renderVariantRows();
+  updateVariantPrice();
+}
+
+function renderVariantRows() {
+  if (!VARIANT_MATRIX) return;
+  const m = VARIANT_MATRIX;
+  // Re-highlight type row
+  document.querySelectorAll('#variant-type-row .size-btn').forEach(b => {
+    b.classList.toggle('selected', b.dataset.vtype === SELECTED_TYPE);
+  });
+  // Rebuild POD row (only pods available for the selected type)
+  const podRow = document.getElementById('variant-pod-row');
+  podRow.innerHTML = '';
+  const combos = m.combos[SELECTED_TYPE] || {};
+  for (const pod of m.pods) {
+    const combo = combos[pod.key];
+    if (!combo) continue;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'size-btn' + (pod.key === SELECTED_POD ? ' selected' : '');
+    b.style.position = 'relative';
+    b.style.paddingRight = combo.recommended ? '60px' : '14px';
+    b.innerHTML = pod.label + ' <span style="font-size:10px;opacity:0.65;letter-spacing:0.05em">¥' + combo.price_jpy.toLocaleString() + '</span>' +
+      (combo.recommended ? '<span style="position:absolute;top:-7px;right:-6px;background:#e6c449;color:#0a0a0a;font-size:8.5px;letter-spacing:0.18em;padding:2px 6px;border-radius:8px;font-weight:700">おすすめ</span>' : '');
+    b.dataset.vpod = pod.key;
+    b.addEventListener('click', (e) => {
+      e.preventDefault();
+      SELECTED_POD = pod.key;
+      renderVariantRows();
+      updateVariantPrice();
+    });
+    podRow.appendChild(b);
+  }
+}
+
+function updateVariantPrice() {
+  if (!VARIANT_MATRIX) return;
+  const combo = ((VARIANT_MATRIX.combos[SELECTED_TYPE]||{})[SELECTED_POD]) || null;
+  const noteEl = document.getElementById('variant-note');
+  const priceEl = document.getElementById('product-price');
+  if (combo && priceEl) {
+    priceEl.textContent = '¥' + combo.price_jpy.toLocaleString();
+  }
+  const pod = (VARIANT_MATRIX.pods.find(p => p.key === SELECTED_POD) || {});
+  if (noteEl) {
+    noteEl.textContent = (combo && combo.note ? combo.note + ' · ' : '') +
+      '配送 ' + (pod.ship_to_jp_days || '?') + '日';
+  }
+  // Sticky bar price mirrors the card price (variant b).
+  const stickyPrice = document.getElementById('sticky-price');
+  if (stickyPrice && priceEl) stickyPrice.textContent = priceEl.textContent;
+}
+
+async function loadProduct() {
+  try {
+    // Allow ad / SNS traffic to pin a specific product via:
+    //   - pretty URL: /buy/<id>
+    //   - or query param: /buy?product_id=<id>
+    // Falls back to the latest in-stock MUGEN drop if no param given.
+    const params = new URLSearchParams(location.search);
+    const pathMatch = location.pathname.match(/^\/buy\/(\d+)/);
+    const pinId = pathMatch ? pathMatch[1] : params.get('product_id');
+    let pick;
+    if (pinId) {
+      const r = await fetch('/api/products/item/' + encodeURIComponent(pinId));
+      if (!r.ok) return;
+      pick = await r.json();
+      if (!pick || !pick.id) return;
+    } else {
+      const r = await fetch('/api/products/mugen?limit=20');
+      if (!r.ok) return;
+      const ps = await r.json();
+      pick = ps.find(p => (p.inventory - (p.sold||0)) > 0);
+      if (!pick) return;
+    }
+    CURRENT_PRODUCT = pick;
+
+    // Fetch brand-level copy from DB so /buy/:id shows the right framing
+    // for kawanabe_personal / ads_* / collabs instead of MUGEN's weather copy.
+    // Falls back silently to the default MUGEN copy when brand_copy returns 404.
+    try {
+      const brand = (pick.brand || 'mugen').toLowerCase();
+      // mugen has no brand_copy row by design (page default IS the MUGEN
+      // copy) — skip the fetch so the console stays clean instead of 404ing.
+      if (brand === 'mugen') throw 0;
+      const cr = await fetch('/api/brand_copy/' + encodeURIComponent(brand));
+      if (cr.ok) {
+        const c = await cr.json();
+        if (c.eyebrow) document.getElementById('eyebrow').textContent = c.eyebrow;
+        if (c.h1)      document.getElementById('buy-h1').innerHTML  = c.h1;
+        if (c.lede)    document.getElementById('buy-lede').innerHTML = c.lede;
+      }
+    } catch (_) {}
+
+    document.getElementById('product-img').src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
+    document.getElementById('product-img').onerror = (e) => { e.target.src = 'https://mockups.wearmu.com/hero.png'; };
+    // Brand label: show "ads_jujitsu · #1" for ads_*, "MUGEN · #N" for mugen, etc.
+    const brandLabel = (pick.brand || 'MUGEN').toUpperCase().replace('ADS_', '');
+    document.getElementById('product-name').textContent = brandLabel + ' · #' + pick.drop_num;
+    document.getElementById('product-title').textContent = pick.name || brandLabel;
+    document.getElementById('product-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
+    const rem = (pick.inventory||0) - (pick.sold||0);
+    const stockEl = document.getElementById('product-stock');
+    if (rem <= 5 && rem > 0) {
+      // Real scarcity — show urgency.
+      stockEl.innerHTML = '<span class="red">のこり ' + rem + ' 着 · 完売間近</span>';
+    } else if (rem <= 0) {
+      stockEl.innerHTML = '<span class="red">完売</span>';
+    } else if ((pick.sold || 0) === 0) {
+      // Fresh drop — no sales yet. NEVER show "0 着 売れ済" — it kills
+      // purchase intent ("nobody wants this"). Frame as new.
+      stockEl.textContent = '🆕 New drop · 在庫 ' + rem + ' 着';
+    } else {
+      // Show positive social proof. "発送済" is neutral.
+      stockEl.textContent = 'のこり ' + rem + ' 着 · ' + pick.sold + ' 着 発送済';
+    }
+    // Card-wide link target. The wrapper is a div[role=link] (nested-<a> fix,
+    // 2026-06-11) — navigation happens in the delegated click handler below.
+    // data-funnel-href feeds mu-funnel.js so cta_click(buy_page_card) keeps
+    // reporting the destination in extra.href like a real <a> would.
+    const cardWrap = document.getElementById('product-link');
+    const cardHref = '/products/' + (pick.brand || 'mugen') + '/' + pick.id + '?from=buy_page';
+    cardWrap.dataset.href = cardHref;
+    cardWrap.setAttribute('data-funnel-href', cardHref);
+    // Sticky bar (variant b): mirror thumb / name / price from the card.
+    const stickyImg = document.getElementById('sticky-img');
+    if (stickyImg) stickyImg.src = document.getElementById('product-img').src;
+    const stickyName = document.getElementById('sticky-name');
+    if (stickyName) stickyName.textContent = brandLabel + ' · #' + pick.drop_num;
+    const stickyPriceEl = document.getElementById('sticky-price');
+    if (stickyPriceEl) stickyPriceEl.textContent = document.getElementById('product-price').textContent;
+    const anchorLink = document.getElementById('product-anchor-link');
+    if (anchorLink) anchorLink.href = '/anchor/' + pick.id;
+    // SUZURI は国内 (日本) 顧客向け fulfillment のみ。 navigator.language が
+    // ja で始まる、 または ?lang=ja の場合のみ表示。 海外からは Printful EU 経路だけ。
+    const isJa = (navigator.language || '').toLowerCase().startsWith('ja')
+              || /[?&]lang=ja\b/.test(location.search);
+    if (pick.suzuri_url && isJa) {
+      const sl = document.getElementById('suzuri-link');
+      sl.href = pick.suzuri_url;
+      sl.style.display = 'block';
+    }
+    // If a variant was already picked, re-apply its price over pick.price_jpy
+    // so the variant selector remains authoritative for the displayed amount.
+    if (typeof updateVariantPrice === 'function' && VARIANT_MATRIX) updateVariantPrice();
+  } catch (e) {}
+}
+
+function tickCountdown() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  const ms = next - now;
+  const mm = Math.floor(ms / 60000).toString().padStart(2, '0');
+  const ss = Math.floor((ms % 60000) / 1000).toString().padStart(2, '0');
+  const el = document.getElementById('product-countdown');
+  if (el) el.textContent = 'next drop ' + mm + ':' + ss;
+}
+setInterval(tickCountdown, 1000);
+tickCountdown();
+
+// Task #17: 1-click direct buy. ?from=home_hero or ?direct=1 triggers
+// the buy flow automatically once the product is loaded — skips the
+// modal/size-picker step. Default size 'M' is already set on
+// SELECTED_SIZE. User can still cancel by hitting back / closing the
+// Stripe tab. Keeps existing flow intact when params absent.
+loadProduct().then(() => {
+  const sp = new URLSearchParams(location.search);
+  if (sp.get('direct') === '1' || sp.get('from') === 'home_hero') {
+    const btn = document.getElementById('btn-buy');
+    if (btn && !btn.disabled && CURRENT_PRODUCT) {
+      // Defer one tick so any DOM mutation from loadProduct() settles.
+      setTimeout(() => btn.click(), 50);
+    }
+  }
+});
+initVariants();
+
+// 2026-05-16: 紹介クーポン (REF500) は廃止。 ?ref=CODE のクリックだけ
+// /api/referral/:code が記録する (アトリビューション目的)。
+(async () => {
+  const ref = new URLSearchParams(location.search).get('ref');
+  if (!ref) return;
+  const code = ref.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  if (code.length < 4) return;
+  try {
+    await fetch('/api/referral/' + code);
+    if (window.MU_FUNNEL?.send) {
+      window.MU_FUNNEL.send('cta_click', { cta: 'ref_landing', ref_code: code });
+    }
+  } catch (e) {}
+})();
+
+// Shared checkout flow — main buy button + sticky bar button both land here.
+// `source` keeps the two CTA positions distinguishable in checkout_attempt
+// ('buy.html' = 従来位置 / 'buy.html#sticky' = sticky バー)。data-ab は
+// mu-funnel.js が自動で全イベントに刻むので variant 別比較もそのまま出る。
+async function startCheckout(btn, source) {
+  if (!CURRENT_PRODUCT) return;
+  const prevHtml = btn.innerHTML;
+  btn.disabled = true; btn.textContent = '...';
+  try {
+    if (window.MuFunnel?.track) {
+      window.MuFunnel.track('checkout_attempt', {
+        product_id: CURRENT_PRODUCT.id,
+        size: SELECTED_SIZE,
+        source: source,
+      });
+    }
+    const r = await fetch('/api/checkout', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        product_id: CURRENT_PRODUCT.id,
+        quantity: 1,
+        size: SELECTED_SIZE,
+        variant_type: SELECTED_TYPE || undefined,
+        pod_provider: SELECTED_POD || undefined,
+      }),
+    });
+    if (!r.ok) throw new Error('checkout ' + r.status);
+    const d = await r.json();
+    if (d.url) {
+      window.location.href = d.url;
+    } else {
+      throw new Error('no checkout url');
+    }
+  } catch (err) {
+    btn.disabled = false;
+    if (btn.id === 'btn-buy') {
+      btn.innerHTML = 'もう一度試す<span class="sub">エラー · 別経路 → <a href="/mugen" style="color:#0A0A0A;text-decoration:underline">MUGEN 一覧</a></span>';
+    } else {
+      btn.innerHTML = prevHtml;
+    }
+  }
+}
+
+document.getElementById('btn-buy').addEventListener('click', (e) => {
+  e.preventDefault();
+  startCheckout(e.currentTarget, 'buy.html');
+});
+const stickyBuyBtn = document.getElementById('btn-buy-sticky');
+if (stickyBuyBtn) stickyBuyBtn.addEventListener('click', (e) => {
+  e.preventDefault();
+  startCheckout(e.currentTarget, 'buy.html#sticky');
+});
+
+// 100枚 challenge live counter (Sho FB #7 #11) — fetch /api/100/progress.
+// JSON: { sold: number, target: 100, ... }. Hide block silently on error.
+(async () => {
+  try {
+    const r = await fetch('/api/100/progress', { cache: 'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    const sold = (d && (d.sold ?? d.count ?? d.purchases)) ?? null;
+    if (typeof sold === 'number') {
+      const el = document.getElementById('challenge-100-sold');
+      if (el) el.textContent = sold;
+    }
+  } catch (_) {
+    // network err → leave "—" placeholder, link still goes to /100
+  }
+})();
+</script>
+
+</body>
+</html>

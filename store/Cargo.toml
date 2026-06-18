@@ -1,0 +1,65 @@
+[package]
+name = "mu-store"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "mu-store"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.7", features = ["json", "multipart"] }
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }   # ReaderStream for streaming DB backup
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.31", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+tower-http = { version = "0.5", features = ["fs", "trace", "cors", "compression-gzip", "compression-br"] }
+hmac = "0.12"
+sha1 = "0.10"   # OAuth 1.0a signing for X API
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+# Solana Pay `reference` must be a base58-encoded 32-byte ed25519 pubkey-format
+# value — UUID strings fail Helius confirmation lookup (R2).
+bs58 = "0.5"
+# Verify Phantom/Backpack/Solflare `signMessage` outputs server-side, so
+# /api/dao/bind can lift the binding from email-only ("magic_link") to
+# cryptographically wallet-proven ("wallet_sig"). Pure-Rust ed25519, no openssl.
+ed25519-dalek = "2"
+rand = "0.8"
+rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
+urlencoding = "2.1"
+encoding_rs = "0.8"   # 送り状CSVの Shift_JIS(CP932) 出力 (ヤマトB2クラウド/佐川e飛伝)
+# Safe Markdown → HTML for auto-blog. Strips script tags + javascript: URLs.
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+ammonia = "4"
+# Per-order chronicle QR: pure-Rust QR encoder. SVG output is composited
+# into the Printful print file at fulfillment time.
+qrcodegen = "1.8"
+# PNG encoder (no decoder, no full image crate) — used to serve the QR
+# as a PNG that Printful's order API can accept as a print file.
+png = "0.17"
+# Apple Wallet pass (.pkpass) packaging — pkpass is just a stored-mode zip
+# of pass.json + manifest.json + signature + icons. We construct it
+# in-memory and stream the bytes via Axum.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Embed store/partner_specs/*.json into the binary at compile time.
+# New partners go through spec.json (unified ③ path) instead of being
+# hard-coded as const arrays in main.rs.
+include_dir = "0.7"
+# White → alpha transparency processing for catalog print files.
+# DTG ignores transparency anyway, but AOP rashguards print every pixel
+# so a white background reads as a white rectangle on the garment.
+# Default features are wide; we need png decode+encode AND jpeg decode
+# (Gemini returns JPEG → must decode it to knock the white/black bg to alpha).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+[dev-dependencies]
+# Integration tests spawn the compiled `mu-store` binary against a
+# throw-away DB on a free port, then hit it with blocking HTTP.
+tempfile = "3"

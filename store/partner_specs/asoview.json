@@ -1,0 +1,151 @@
+{
+  "slug": "asoview",
+  "name": "Asoview Inc.",
+  "ip_owner": "Asoview Inc.",
+  "skus": [
+    {
+      "letter": "a",
+      "drop_num": 1,
+      "price_jpy": 6400,
+      "label": "ikiruni asobiwo back-print",
+      "kind": "tee",
+      "design_slug": "a"
+    },
+    {
+      "letter": "b",
+      "drop_num": 2,
+      "price_jpy": 6800,
+      "label": "7500 places map",
+      "kind": "tee",
+      "design_slug": "b"
+    },
+    {
+      "letter": "c",
+      "drop_num": 3,
+      "price_jpy": 5400,
+      "label": "scan-to-play QR tee",
+      "kind": "tee",
+      "design_slug": "c"
+    },
+    {
+      "letter": "d",
+      "drop_num": 4,
+      "price_jpy": 5400,
+      "label": "22 jouken icon grid",
+      "kind": "tee",
+      "design_slug": "d"
+    },
+    {
+      "letter": "e",
+      "drop_num": 5,
+      "price_jpy": 6800,
+      "label": "off-day manifesto",
+      "kind": "tee",
+      "design_slug": "e"
+    },
+    {
+      "letter": "f",
+      "drop_num": 6,
+      "price_jpy": 5800,
+      "label": "asoview crew polo",
+      "kind": "polo",
+      "design_slug": "f"
+    },
+    {
+      "letter": "g",
+      "drop_num": 7,
+      "price_jpy": 4200,
+      "label": "gift tote",
+      "kind": "tote",
+      "design_slug": "g"
+    },
+    {
+      "letter": "h",
+      "drop_num": 8,
+      "price_jpy": 9800,
+      "label": "play-side reversible hoodie",
+      "kind": "hoodie",
+      "design_slug": "h"
+    },
+    {
+      "letter": "i",
+      "drop_num": 9,
+      "price_jpy": 5800,
+      "label": "orange snapback cap",
+      "kind": "cap",
+      "design_slug": "i"
+    },
+    {
+      "letter": "j",
+      "drop_num": 10,
+      "price_jpy": 4400,
+      "label": "yume miru no wa soto de",
+      "kind": "pillow",
+      "design_slug": "j"
+    },
+    {
+      "letter": "k",
+      "drop_num": 11,
+      "price_jpy": 6400,
+      "label": "ame demo asobu longsleeve",
+      "kind": "longsleeve",
+      "design_slug": "k"
+    },
+    {
+      "letter": "l",
+      "drop_num": 12,
+      "price_jpy": 4800,
+      "label": "unwrap-me gift tee",
+      "kind": "tee",
+      "design_slug": "l"
+    },
+    {
+      "letter": "m",
+      "drop_num": 13,
+      "price_jpy": 980,
+      "label": "orange die-cut sticker",
+      "kind": "sticker",
+      "design_slug": "m"
+    },
+    {
+      "letter": "n",
+      "drop_num": 14,
+      "price_jpy": 2400,
+      "label": "asobu yotei mug",
+      "kind": "mug",
+      "design_slug": "n"
+    },
+    {
+      "letter": "o",
+      "drop_num": 15,
+      "price_jpy": 3800,
+      "label": "soto de asobu beanie",
+      "kind": "beanie",
+      "design_slug": "o"
+    },
+    {
+      "letter": "p",
+      "drop_num": 16,
+      "price_jpy": 4200,
+      "label": "ashita nani shite asobu kids",
+      "kind": "kids_tee",
+      "design_slug": "p"
+    },
+    {
+      "letter": "q",
+      "drop_num": 17,
+      "price_jpy": 3400,
+      "label": "jouken pin set 5",
+      "kind": "pin",
+      "design_slug": "q"
+    },
+    {
+      "letter": "r",
+      "drop_num": 18,
+      "price_jpy": 6800,
+      "label": "place-name limited tee",
+      "kind": "tee",
+      "design_slug": "r"
+    }
+  ]
+}

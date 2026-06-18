@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MA Council — MU</title>
+<meta name="description" content="MA Council — MU brand の議決機関。週 1 着の MA 落札者と入札参加者が議題に投票する。1 council = 1 vote。">
+<meta name="robots" content="noindex,follow">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0A0A0A;--fg:#F5F5F0;--mute:rgba(245,245,240,0.6);--y:#e6c449;--card:#111;--green:#7be57b;--red:#C8362C}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--fg);font-family:'Noto Serif JP','Helvetica Neue','Hiragino Sans',serif;line-height:1.85;font-size:16px;-webkit-font-smoothing:antialiased;min-height:100vh}
+nav{position:sticky;top:0;background:rgba(10,10,10,0.88);backdrop-filter:blur(14px);border-bottom:1px solid rgba(255,255,255,0.06);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:'Helvetica Neue',Arial,sans-serif}
+nav a.brand{font-size:14px;font-weight:700;letter-spacing:0.45em;color:#fff;text-decoration:none}
+nav a.back{font-size:10px;letter-spacing:0.3em;color:var(--mute);text-decoration:none;text-transform:uppercase}
+nav a.back:hover{color:var(--y)}
+main{max-width:720px;margin:0 auto;padding:48px 28px 80px}
+.eyebrow{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.45em;text-transform:uppercase;color:var(--y);opacity:0.9;margin-bottom:14px}
+h1{font-family:'Helvetica Neue',Arial,sans-serif;font-size:28px;font-weight:300;letter-spacing:0.02em;line-height:1.4;margin-bottom:14px;color:var(--y)}
+h2{font-family:'Helvetica Neue',Arial,sans-serif;font-size:18px;font-weight:400;letter-spacing:0.04em;margin:48px 0 18px;color:var(--fg)}
+h3{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;font-weight:500;letter-spacing:0.2em;text-transform:uppercase;color:var(--y);margin:24px 0 8px}
+p{color:var(--mute);font-size:14px;line-height:1.85;margin-bottom:14px}
+a{color:var(--y);text-decoration:underline;text-underline-offset:3px}
+.card{background:var(--card);border:1px solid rgba(255,255,255,0.06);padding:24px 22px;margin:18px 0;border-radius:2px;backdrop-filter:blur(8px)}
+.card.gold{border-left:2px solid var(--y)}
+.kv{display:flex;justify-content:space-between;gap:18px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.06em;margin:4px 0;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--mute);text-transform:uppercase;letter-spacing:0.2em;font-size:10px}
+.kv .v{color:var(--fg)}
+.tier-badge{display:inline-block;font-family:'Helvetica Neue',Arial,sans-serif;font-size:9px;letter-spacing:0.35em;text-transform:uppercase;padding:5px 12px;border-radius:2px;font-weight:600}
+.tier-badge.full{background:var(--y);color:#000}
+.tier-badge.trial{background:#1C1C1C;color:var(--mute);border:1px solid rgba(255,255,255,0.1)}
+.agenda{margin:24px 0;padding:20px 22px;background:#0F0F0F;border:1px solid rgba(255,255,255,0.06);border-radius:2px}
+.agenda .q{font-size:15px;font-weight:400;line-height:1.55;margin-bottom:16px;color:var(--fg)}
+.agenda .ah{font-family:'Helvetica Neue',Arial,sans-serif;font-size:9px;letter-spacing:0.35em;text-transform:uppercase;color:var(--y);opacity:0.9;margin-bottom:8px}
+.opts{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.opt{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#1C1C1C;color:var(--fg);padding:14px 18px;font-size:13px;cursor:pointer;border:0;text-align:left;border-left:2px solid rgba(230,196,73,0.25);transition:all 0.15s;font-family:inherit;width:100%}
+.opt:hover{border-left-color:var(--y);background:#222}
+.opt:disabled{cursor:default;opacity:0.85}
+.opt.voted{border-left-color:var(--y);background:#1C1C1C}
+.opt.voted::after{content:'✓ 投票済';color:var(--y);font-size:10px;letter-spacing:0.25em;text-transform:uppercase;font-family:'Helvetica Neue',Arial,sans-serif}
+.bar{height:6px;background:rgba(255,255,255,0.06);border-radius:1px;overflow:hidden;margin-top:6px}
+.bar > span{display:block;height:100%;background:var(--y);transition:width 0.4s}
+.results{margin-top:8px}
+.results .row{display:flex;justify-content:space-between;align-items:center;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;color:var(--mute);padding:4px 0}
+.results .row .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.results .row .n{font-variant-numeric:tabular-nums;color:var(--fg)}
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--y);color:#000;padding:12px 24px;font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.25em;text-transform:uppercase;font-weight:700;opacity:0;transition:opacity 0.2s;pointer-events:none;z-index:100}
+.toast.show{opacity:1}
+.body-md h3{margin-top:18px}
+.muted{color:var(--mute);font-size:12px;line-height:1.85}
+.empty{padding:42px 22px;text-align:center;color:var(--mute);font-size:13px;background:var(--card);border:1px dashed rgba(255,255,255,0.08);border-radius:2px;margin:18px 0}
+.empty strong{color:var(--y);font-weight:500}
+.totals{font-family:'Helvetica Neue',Arial,sans-serif;font-size:10px;letter-spacing:0.2em;text-transform:uppercase;color:var(--mute);margin-top:8px}
+footer{margin-top:64px;padding-top:22px;border-top:1px solid rgba(255,255,255,0.06);font-size:10px;letter-spacing:0.1em;color:var(--mute);line-height:1.85}
+@media (max-width:560px){
+  main{padding:32px 18px 56px}
+  h1{font-size:22px}
+  nav{padding:14px 18px}
+}
+</style>
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+</head>
+<body>
+<nav>
+  <a class="brand" href="/">MU</a>
+  <a class="back" href="/vision.html">← Vision</a>
+</nav>
+<main>
+  <div class="eyebrow">MA Council</div>
+  <h1>議題に投票してください。</h1>
+  <p>週 1 着の MA を落札した人 (full member) と入札参加者 (trial member) が、MU brand の方向性を直接決めます。1 council = 1 vote。集計は public。</p>
+
+  <div id="status" class="card">
+    <div class="kv"><span class="k">Loading…</span><span class="v">…</span></div>
+  </div>
+
+  <h2>今週の Brief</h2>
+  <div id="brief"></div>
+
+  <h2>集計 (public)</h2>
+  <p class="muted">集計はリアルタイムで匿名公開。誰が何に投票したかは表示しません。</p>
+  <div id="results"></div>
+
+  <footer>
+    MA Council — wearmu.com<br>
+    投票が反映されない場合はリロードしてください。退会は <a href="mailto:mail@yukihamada.jp?subject=Council unsubscribe">mail@yukihamada.jp</a> まで。
+  </footer>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+const $ = (s) => document.querySelector(s);
+const params = new URLSearchParams(location.search);
+const token = params.get('token') || '';
+const autoVote = params.get('vote'); // "agenda_id:option_index" from email links
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function escapeHtml(s){return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+
+function renderStatus(me) {
+  const tierClass = me.tier === 'full' ? 'full' : 'trial';
+  const tierLabel = me.tier === 'full' ? 'FULL MEMBER' : 'TRIAL';
+  $('#status').innerHTML = `
+    <div class="kv"><span class="k">Member</span><span class="v">${escapeHtml(me.email)}</span></div>
+    <div class="kv"><span class="k">Tier</span><span class="v"><span class="tier-badge ${tierClass}">${tierLabel}</span></span></div>
+    <div class="kv"><span class="k">Votes cast</span><span class="v">${me.votes.length}</span></div>
+  `;
+}
+
+function statusError(msg) {
+  $('#status').innerHTML = `<div class="muted">${escapeHtml(msg)}</div>`;
+}
+
+function mdToHtml(md) {
+  if (!md) return '';
+  return md.split('\n').map(line => {
+    if (line.startsWith('## ')) return `<h3>${escapeHtml(line.slice(3))}</h3>`;
+    if (line.startsWith('- ')) return `<p>• ${escapeHtml(line.slice(2))}</p>`;
+    if (line.trim() === '') return '';
+    return `<p>${escapeHtml(line)}</p>`;
+  }).join('');
+}
+
+async function loadAgenda() {
+  if (!token) {
+    statusError('member token がありません。落札 / 入札時に届いた council リンクから開いてください。');
+    $('#brief').innerHTML = '<div class="empty">トークンがないため議題を表示できません。</div>';
+    return;
+  }
+  let me, agenda;
+  try {
+    const r = await fetch(`/api/council/me?token=${encodeURIComponent(token)}`);
+    if (!r.ok) throw new Error(`me ${r.status}`);
+    me = await r.json();
+    renderStatus(me);
+  } catch (e) {
+    statusError('member 認証に失敗しました。トークンを確認してください。');
+    return;
+  }
+  try {
+    const r = await fetch(`/api/council/agenda?token=${encodeURIComponent(token)}`);
+    if (!r.ok) throw new Error(`agenda ${r.status}`);
+    agenda = await r.json();
+  } catch (e) {
+    $('#brief').innerHTML = '<div class="empty">議題の取得に失敗しました。</div>';
+    return;
+  }
+  if (!agenda.brief) {
+    $('#brief').innerHTML = `<div class="empty"><strong>まだ brief が発行されていません。</strong><br>最初の brief は次の日曜 18:00 JST に届きます。</div>`;
+    return;
+  }
+  const b = agenda.brief;
+  const my = agenda.my_votes || {};
+  let html = `<div class="card gold">
+    <div class="kv"><span class="k">Brief</span><span class="v">${escapeHtml(b.slug)}</span></div>
+    <div class="kv"><span class="k">Week start</span><span class="v">${escapeHtml(b.week_start)}</span></div>
+    <h3 style="margin-top:14px">${escapeHtml(b.title)}</h3>
+    <div class="body-md muted">${mdToHtml(b.body_md)}</div>
+  </div>`;
+  const arr = Array.isArray(b.agendas) ? b.agendas : [];
+  arr.forEach((a, i) => {
+    const voted = (a.id in my) ? my[a.id] : null;
+    html += `<div class="agenda" data-agenda-id="${escapeHtml(a.id)}">
+      <div class="ah">議題 ${i+1}</div>
+      <div class="q">${escapeHtml(a.q || '')}</div>
+      <div class="opts">`;
+    (a.options || []).forEach((opt, idx) => {
+      const cls = (voted === idx) ? 'opt voted' : 'opt';
+      const disabled = (voted !== null) ? 'disabled' : '';
+      html += `<button class="${cls}" ${disabled} data-agenda="${escapeHtml(a.id)}" data-idx="${idx}">${escapeHtml(opt)}</button>`;
+    });
+    html += `</div></div>`;
+  });
+  $('#brief').innerHTML = html;
+  document.querySelectorAll('.opt').forEach(btn => {
+    btn.addEventListener('click', onVote);
+  });
+  // Auto-vote from email link (?vote=a1:2)
+  if (autoVote && /^[a-zA-Z0-9_-]+:\d+$/.test(autoVote)) {
+    const [aid, idx] = autoVote.split(':');
+    const btn = document.querySelector(`.opt[data-agenda="${aid}"][data-idx="${idx}"]`);
+    if (btn && !btn.disabled) btn.click();
+  }
+  loadResults(b.id);
+}
+
+async function onVote(ev) {
+  const btn = ev.currentTarget;
+  if (btn.disabled) return;
+  const agenda_id = btn.dataset.agenda;
+  const option_index = parseInt(btn.dataset.idx, 10);
+  // Optimistic UI — mark this row's siblings as not-voted, mark this one as voted
+  const parent = btn.closest('.agenda');
+  parent.querySelectorAll('.opt').forEach(b => {
+    b.disabled = true;
+    b.classList.remove('voted');
+  });
+  btn.classList.add('voted');
+  try {
+    const r = await fetch('/api/council/vote_token', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token, agenda_id, option_index}),
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`vote ${r.status}: ${txt}`);
+    }
+    const j = await r.json();
+    toast('投票しました');
+    // Refresh tally
+    const brief = parent.closest('main').querySelector('.card.gold');
+    if (brief) {
+      const slug = brief.querySelector('.kv .v')?.textContent;
+      if (slug) loadResults(slug);
+    }
+  } catch (e) {
+    toast('エラー: ' + e.message);
+    // Revert
+    parent.querySelectorAll('.opt').forEach(b => b.disabled = false);
+    btn.classList.remove('voted');
+  }
+}
+
+async function loadResults(briefIdOrSlug) {
+  try {
+    const r = await fetch(`/api/council/results/${encodeURIComponent(briefIdOrSlug)}`);
+    if (!r.ok) throw new Error(`results ${r.status}`);
+    const j = await r.json();
+    const arr = j.agendas || [];
+    if (!arr.length) {
+      $('#results').innerHTML = '<div class="empty">まだ投票がありません。</div>';
+      return;
+    }
+    $('#results').innerHTML = arr.map((a, i) => {
+      const total = a.total || 0;
+      const rows = (a.options || []).map((opt, idx) => {
+        const n = (a.counts && a.counts[idx]) || 0;
+        const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+        return `<div class="row"><span class="name">${escapeHtml(opt)}</span><span class="n">${n} (${pct}%)</span></div>
+                <div class="bar"><span style="width:${pct}%"></span></div>`;
+      }).join('');
+      return `<div class="agenda"><div class="ah">議題 ${i+1}</div>
+        <div class="q">${escapeHtml(a.q || '')}</div>
+        <div class="results">${rows}</div>
+        <div class="totals">${total} votes</div></div>`;
+    }).join('');
+  } catch (e) {
+    $('#results').innerHTML = `<div class="empty">集計取得に失敗: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+loadAgenda();
+</script>
+  <script src="/pt_gate.js" defer></script>
+</body>
+</html>
