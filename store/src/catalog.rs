@@ -13279,6 +13279,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </script>
 {drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<script>(function(){{try{{var b=JSON.stringify({{s:'wearmu.com',k:'click',l:'pdp:{sku}'}});if(navigator.sendBeacon){{navigator.sendBeacon('https://enabler-analytics.fly.dev/api/event',new Blob([b],{{type:'application/json'}}));}}}}catch(e){{}}}})();</script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
         maker_line = maker_line,
