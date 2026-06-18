@@ -6600,6 +6600,14 @@ fn make_html_en(mut h: String) -> String {
         ("📣 シェアして広める", "📣 Share it"),
         ("✏️ あとから編集（位置・説明・価格）", "✏️ Edit later (position · text · price)"),
         ("🎲 もう1案つくる（同じお題で）", "🎲 Another take (same idea)"),
+        // ── だれかに回す (gift / remix) ──
+        ("だれかに回す", "Pass it to someone"),
+        ("🎁 だれかに贈る", "🎁 Give it to someone"),
+        ("相手が住所を入力・金額の出ない明細でお届け", "They enter their own address · delivered with no price on the slip"),
+        ("🎨 相手向けに作り直す", "🎨 Remake it for them"),
+        ("この人向けに一言足して作り直す（例: 母の還暦に / 道場の名前を入れて）", "Add a line and remake it for them (e.g. for mom's 60th · put the dojo's name on it)"),
+        ("作り直しています… 10〜30秒", "Remaking… 10–30s"),
+        ("作り直せませんでした。少し時間をおいて試してください。", "Couldn't remake it. Please try again shortly."),
         ("さっきの案（どれも棚に残っています）", "Earlier takes (all still on the shelf)"),
         ("棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。", "It's on the shelf now. The more you spread it, the more it sells → 10% of every sale goes to you, the maker. "),
         ("クリエイター登録(無料)で売上と報酬を管理 →", "Manage sales &amp; payouts with a free creator account →"),
@@ -7033,6 +7041,17 @@ function renderResult(j,p,ok){
   // 「もう1案」: 実測で1人平均2回生成している=撮り直し欲求。失敗扱いにせず機能にする。
   var retry = '<button class=share id=mkRetry type=button>🎲 もう1案つくる（同じお題で）</button>';
   share += retry;
+  // だれかに回す: 贈る / 相手向けに作り直す(リミックス)。公開済み(auto_approved)のみ。
+  // gift は同じ checkout に &gift=1 を足すだけ(相手が住所入力・金額なし明細)。
+  // remix は /api/design-remix(応答が make 互換)→ renderResult を再利用。
+  var giftHref = (j.auto_approved && buyHref) ? buyHref + (buyHref.indexOf('?')>=0?'&':'?') + 'gift=1' : '';
+  var route = (j.auto_approved && j.sku) ? '<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)">'
+    + '<div style="font-size:12px;color:rgba(245,245,240,.55);margin-bottom:9px">だれかに回す</div>'
+    + (giftHref ? '<a class=share style="text-decoration:none" href="'+giftHref+'" onclick="muEvent(\'cta_click\',{cta:\'make_gift\',sku:\''+j.sku+'\'})">🎁 だれかに贈る<small style="display:block;font-size:11px;opacity:.6;font-weight:400">相手が住所を入力・金額の出ない明細でお届け</small></a>' : '')
+    + '<form onsubmit="return muRemix(event,\''+j.sku+'\')" style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'
+    + '<input name=words maxlength=120 placeholder="この人向けに一言足して作り直す（例: 母の還暦に / 道場の名前を入れて）" style="flex:1;min-width:200px;background:#111;border:1px solid #333;color:#f5f5f0;border-radius:8px;padding:10px 12px;font-size:13px">'
+    + '<button class=share type=submit>🎨 相手向けに作り直す</button>'
+    + '</form></div>' : '';
   // さっきの案: 作り直しても前の案は棚に残る。サムネで戻れるようにする。
   if(!MK_HIST.length||MK_HIST[MK_HIST.length-1].sku!==j.sku)MK_HIST.push({sku:j.sku,img:j.design_url,pdp:j.pdp_url||''});
   var hist = MK_HIST.length>1 ? '<div class=hist><div class=histlead>さっきの案（どれも棚に残っています）</div><div class=histrow>'+MK_HIST.slice(0,-1).map(function(h){return h.pdp?'<a href="'+h.pdp+'" target="_blank" rel="noopener"><img loading=lazy src="'+h.img+'" alt=""></a>':'';}).reverse().join('')+'</div></div>' : '';
@@ -7046,7 +7065,7 @@ function renderResult(j,p,ok){
     +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
     + one
     +'<div class=fitnote id=mkFit>'+(j.auto_approved&&j.kind!=='song'?mkPrep(j.kind):'')+'</div>'
-    + buy + share + spread + nt
+    + buy + route + share + spread + nt
     +'</div></div>'
     +hist
     +(ok?'':claimCardHtml());
@@ -7054,6 +7073,22 @@ function renderResult(j,p,ok){
   $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
   if(!ok) wireClaim(j,p);
   if(j.auto_approved && j.sku && j.kind!=='song') pollFit(j.sku, j.design_url, j.kind);
+}
+// 相手向けに作り直す: 既存デザインを参照に一言足して新デザインを生成(/api/design-remix)。
+// 応答は make 互換(ok/sku/design_url/checkout_url/...)なので renderResult を再利用する。
+async function muRemix(e,sku){
+  e.preventDefault();
+  var f=e.target, inp=f.querySelector('input[name=words]'), w=(inp.value||'').trim();
+  if(!w){inp.focus();return false;}
+  var btn=f.querySelector('button'), old=btn.textContent; btn.disabled=true; btn.textContent='作り直しています… 10〜30秒';
+  muEvent('cta_click',{cta:'make_remix',sku:sku});
+  try{
+    var r=await fetch('/api/design-remix',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'sku='+encodeURIComponent(sku)+'&words='+encodeURIComponent(w)});
+    var j=await r.json();
+    if(!j.ok){btn.disabled=false;btn.textContent=old;alert(j.error||'作り直せませんでした。少し時間をおいて試してください。');return false;}
+    renderResult(j,w,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));
+  }catch(err){btn.disabled=false;btn.textContent=old;alert('通信エラー。もう一度お試しください。');}
+  return false;
 }
 // 名義化カード: デザインは見せた上で「あなたの名義にする」だけをメール認証ゲートに。
 function claimCardHtml(){
