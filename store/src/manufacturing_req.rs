@@ -346,6 +346,37 @@ pub fn check_requirements(
     RequirementReport { ok, gaps, actions }
 }
 
+/// 見積段階（route_request・spec 未入力）向けの軽量チェック。
+/// **spec_floor は見ない**（spec 未入力での floor 不足は『違反』でなく『未入力』なので、
+/// 毎回 ok=false になる誤信号を避ける）。法令(legal)＋供給先条件(supplier_term)の助言のみ返す。
+/// 返り `(compliance_ok, notices)`: compliance_ok=false は『必須法令の対応が要る』。
+pub fn compliance_actions(
+    conn: Option<&Connection>,
+    kind: &str,
+    region: Option<&str>,
+    supplier_id: Option<&str>,
+) -> (bool, Vec<String>) {
+    let mut ok = true;
+    let mut notices: Vec<String> = Vec::new();
+
+    let region_lc = region.map(|r| r.to_lowercase());
+    let group = legal_group_for_kind(kind);
+    for hit in collect_legal(conn, group, region_lc.as_deref()) {
+        if hit.severity == "required" {
+            ok = false;
+        }
+        notices.push(hit.action);
+    }
+    if let Some(sid) = supplier_id {
+        if let Some(term_action) = supplier_term_action(conn, sid) {
+            notices.push(term_action);
+        }
+    }
+    notices.sort();
+    notices.dedup();
+    (ok, notices)
+}
+
 /// spec(JSON) がトップレベルに非空の属性 `attr` を持つか。
 /// 存在し、かつ null / 空文字 / 空配列 / 空オブジェクトでないこと。
 fn spec_has_attr(spec: &Value, attr: &str) -> bool {

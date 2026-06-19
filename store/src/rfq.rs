@@ -316,6 +316,18 @@ pub fn rfq_create(
 /// - `status='received'` の場合 `quoted_unit_jpy` は必須。
 /// - UPDATE では `updated_at=datetime('now')` を手書きする。
 #[allow(clippy::too_many_arguments)]
+/// ゼロ詰め ISO 日付 `YYYY-MM-DD` か。received_quote_for の辞書順足切りの前提を守る。
+/// 月日の範囲までは厳密判定しない（辞書順比較が壊れない形式の保証が目的）。
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[..4].iter().all(u8::is_ascii_digit)
+        && b[5..7].iter().all(u8::is_ascii_digit)
+        && b[8..10].iter().all(u8::is_ascii_digit)
+}
+
 pub fn rfq_record(
     conn: &Connection,
     id: i64,
@@ -347,6 +359,17 @@ pub fn rfq_record(
         }
         if s == "received" && quoted_unit_jpy.is_none() {
             return Err("status='received' には quoted_unit_jpy が必須です".to_string());
+        }
+    }
+
+    // valid_until は received_quote_for が文字列辞書順で足切り（>=date('now')）するため、
+    // ゼロ詰め ISO `YYYY-MM-DD` のみ許可。非ISO/ゼロ詰め欠落は順序比較が破綻するので弾く。
+    if let Some(vu) = valid_until {
+        if !is_iso_date(vu) {
+            return Err(format!(
+                "valid_until は YYYY-MM-DD（ゼロ詰め ISO 日付）で渡してください: '{}'",
+                vu
+            ));
         }
     }
 

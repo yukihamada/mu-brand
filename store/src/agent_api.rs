@@ -1487,6 +1487,14 @@ pub async fn agent_spec(
         Ok(e) => e,
         Err(resp) => return resp,
     };
+    // per-email レート制限（無料登録だけで共有 ¥1M/月 予算を引けないように）。
+    // AI画像生成パスの三重ガードに倣い、最低でも回数を絞る。upload と同じ blog_rate_limit。
+    {
+        let conn = db.lock().unwrap();
+        if !crate::rate_limit_hit_ok(&conn, &format!("spec:{}", email), 30) {
+            return json_err(StatusCode::TOO_MANY_REQUESTS, "spec 生成のレート上限（30/時）に達しました。少し待ってください。");
+        }
+    }
     let prompt = body
         .as_ref()
         .and_then(|b| b.0.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string()))

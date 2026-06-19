@@ -1264,23 +1264,24 @@ pub fn route_request(
         // Phase2+ 読み取り専用注入（conn=Some のときだけ）。表示値のみ・sort key は不変。
         if let Some(c) = conn {
             // (C) RFQ: quote モードで受領済み有効見積があれば表示単価を上書き（順位は据置）。
+            //     表示単価と整合させるため within_budget も実見積で再計算する。
             if s.mode == "quote" {
                 if let Some(q) = crate::rfq::received_quote_for(c, s.id, &kind) {
                     opt["unit_price_jpy"] = serde_json::json!(q);
                     opt["quote_source"] = serde_json::json!("rfq_received");
+                    if let Some(b) = budget {
+                        opt["within_budget"] = serde_json::json!(q <= b);
+                    }
                 }
             }
-            // (A) 要件KB: この供給先/kind/地域での要件サマリを付与。
-            let report = crate::manufacturing_req::check_requirements(
+            // (A) 要件KB: 見積段階なので spec_floor は見ず、法令/供給先の助言のみ付与
+            //     （spec 未入力での floor 不足は『違反』でないため requirements_ok は出さない）。
+            let (compliance_ok, notices) = crate::manufacturing_req::compliance_actions(
                 Some(c), &kind, region_lc.as_deref(), Some(s.id),
-                &serde_json::json!({ "qty": qty }),
             );
-            opt["requirements_ok"] = serde_json::json!(report.ok);
-            if !report.gaps.is_empty() {
-                opt["requirement_gaps"] = serde_json::json!(report.gaps);
-            }
-            if !report.actions.is_empty() {
-                opt["requirement_actions"] = serde_json::json!(report.actions);
+            opt["compliance_ok"] = serde_json::json!(compliance_ok);
+            if !notices.is_empty() {
+                opt["compliance_notices"] = serde_json::json!(notices);
             }
         }
 
