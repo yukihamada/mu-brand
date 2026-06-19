@@ -1,0 +1,107 @@
+<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MU LIVE — いま、Apple M5 Mac でデザインを生成中</title>
+<meta name="description" content="MUのデザインは、クラウドではなく手元のApple M5 Mac上でAIがリアルタイムに生成・採点・改善しています。完全ローカル。">
+<meta property="og:title" content="MU LIVE — AIが手元のMacで今この瞬間デザインしている">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#08080b;color:#ececf1;font:15px/1.6 -apple-system,system-ui,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
+a{color:inherit}
+.hero{padding:46px 22px 26px;text-align:center;background:radial-gradient(900px 460px at 50% -30%,#241844,#08080b 70%);border-bottom:1px solid #1c1c26}
+.kicker{font-size:12px;letter-spacing:3px;color:#a78bff;text-transform:uppercase}
+h1{margin:10px 0 8px;font-size:30px;line-height:1.25;font-weight:800;letter-spacing:-.5px}
+h1 .live{color:#3fb950}h1 .live .d{animation:p 1.4s infinite}@keyframes p{50%{opacity:.2}}
+.lead{max-width:680px;margin:0 auto;color:#b9b9c6;font-size:15px}
+.machine{display:inline-flex;gap:8px;align-items:center;margin-top:14px;padding:7px 14px;border:1px solid #2a2a3a;border-radius:99px;background:#11111a;font-size:13px;color:#cdbcff}
+.stats{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin-top:18px;font-size:12px;color:#8b8b9a}
+.stats b{display:block;color:#fff;font-size:20px;font-weight:800}
+.now{margin-top:14px;font-size:13px;color:#c8b6ff;min-height:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px;padding:22px;max-width:1500px;margin:0 auto}
+.card{background:#101019;border:1px solid #20202c;border-radius:14px;overflow:hidden;animation:in .55s}
+@keyframes in{from{opacity:0;transform:translateY(12px) scale(.98)}}
+.card img{width:100%;display:block;aspect-ratio:1;object-fit:cover;background:#fff;cursor:zoom-in}
+.m{padding:11px 13px}
+.row{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+.cn{font-size:13px;font-weight:700;color:#dcdce6}
+.line{font-size:10px;color:#7a7;background:#152615;padding:1px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:.5px}
+.tag{font-size:10px;color:#7a7;background:#152615;padding:1px 6px;border-radius:4px}.tag.fix{color:#e6b34a;background:#2a2110}
+.wp{font-size:10px;color:#c9a0ff;background:#1c1136;padding:1px 6px;border-radius:4px}
+.tot{font-weight:800;font-size:18px}.tot.hi{color:#3fb950}.tot.mid{color:#d29922}.tot.lo{color:#9a9aa8}
+.delta{font-size:11px;font-weight:700;margin-left:3px}.delta.up{color:#3fb950}.delta.dn{color:#f85149}
+.bars{margin-top:8px;display:flex;flex-direction:column;gap:3px}
+.bar{display:flex;align-items:center;gap:7px;font-size:10px;color:#8a8a98}
+.bar .k{width:16px;color:#666}.bar .t{flex:1;height:5px;background:#1e1e28;border-radius:3px;overflow:hidden}
+.bar .f{height:100%;background:linear-gradient(90deg,#6a4bff,#b14bff)}
+.bar.weak .k{color:#e6b34a}.bar.weak .f{background:linear-gradient(90deg,#e6b34a,#ff5ea0)}
+.why{font-size:11.5px;color:#a79ad6;margin-top:8px;font-style:italic;border-left:2px solid #3a2a6a;padding-left:8px}
+.prov{margin-top:9px;font-size:10.5px;color:#787888;border-top:1px dashed #23232f;padding-top:8px;display:none}
+.prov.open{display:block}
+.prov b{color:#9a9ab0;font-weight:600}
+.prov .pr{color:#8fae8f;word-break:break-word;margin-top:3px}
+.more{font-size:10px;color:#6a6a88;cursor:pointer;margin-top:7px;user-select:none}
+.more:hover{color:#a78bff}
+footer{text-align:center;padding:30px 20px 50px;color:#6a6a7a;font-size:12px;border-top:1px solid #16161e;margin-top:10px}
+.lb{position:fixed;inset:0;background:#000d;display:none;align-items:center;justify-content:center;z-index:99;cursor:zoom-out}
+.lb img{max-width:92vw;max-height:92vh;border-radius:8px}
+</style></head><body>
+<div class="hero">
+  <div class="kicker">MU LIVE LAB</div>
+  <h1>いま、<span class="live">●<span class="d"> </span></span>AIが手元の Mac でデザインしてる</h1>
+  <p class="lead">このページに出るMUのデザインは、クラウドではなく <b>手元の Apple M5 Mac</b> 上で、たった今ローカル生成されています。AIが描き、別のAIが「売れ度・クリック度」など6軸で採点し、弱点を自分で磨き続けています。すべて完全ローカル・¥0。</p>
+  <div class="machine">🖥 <span id="machine">Apple M5 Max</span> ・ 生成 <span id="gm">Z-Image</span> ・ 審査 <span id="jm">nemotron-omni</span></div>
+  <div class="stats">
+    <span><b id="tot">–</b>これまでの生成</span>
+    <span><b id="avg">–</b>平均スコア</span>
+    <span><b id="best">–</b>最高スコア</span>
+    <span><b id="shown">–</b>表示中</span>
+  </div>
+  <div class="now" id="now">接続中…</div>
+</div>
+<div class="grid" id="g"></div>
+<footer>MU — modern Japanese streetwear. デザインは Apple M5 Mac 上で完全ローカル生成（クラウド不使用）。<br>
+🎨 Z-Image-Turbo + MUSOLD LoRA で生成 ・ 🧠 nemotron-omni で採点 ・ 弱点を狙って磨く山登り最適化。</footer>
+<div class="lb" id="lb" onclick="this.style.display='none'"><img id="lbi" src=""></div>
+<script>
+const FEED="https://m5-mu.chatweb.ai/api/feed";
+function jp(a){return({marketability:'売れ度',click_appeal:'クリック度',composition:'構図',originality:'独自性',brand_fit:'ブランド',print_fit:'印刷適性'})[a]||a}
+function wpjp(w){return({sell:'売れ重視',click:'クリック重視',brand:'ブランド重視',balanced:'バランス'})[w]||w}
+function esc(s){return(s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
+function bar(k,l,v,weak){return '<div class="bar'+(weak?' weak':'')+'"><span class="k">'+l+'</span><span class="t"><span class="f" style="width:'+Math.max(2,v)+'%"></span></span><span>'+v+'</span></div>'}
+function abs(u){return u&&u[0]=='/'?('https://m5-mu.chatweb.ai'+u):u}
+async function tick(){
+ try{
+  const d=await(await fetch(FEED+'?ts='+Date.now())).json();
+  document.getElementById('now').textContent=d.status||'';
+  document.getElementById('tot').textContent=d.total;
+  document.getElementById('avg').textContent=d.avg;
+  document.getElementById('best').textContent=d.best;
+  document.getElementById('shown').textContent=(d.designs||[]).length;
+  document.getElementById('gm').textContent='Z-Image-Turbo';
+  document.getElementById('jm').textContent=d.judge_model||'nemotron-omni';
+  document.getElementById('machine').textContent=d.machine||'Apple M5 Max';
+  const g=document.getElementById('g');
+  const head=(d.designs||[]).map(x=>x.url).join(',');
+  if(g.dataset.head===head)return; g.dataset.head=head;
+  g.innerHTML=(d.designs||[]).map(x=>{
+   const a=x.axes||{},t=x.total||0,cls=t>=80?'hi':t>=70?'mid':'lo',fix=x.round>0;
+   const tag=fix?('磨き#'+x.round+'・'+jp(x.weak)):'初稿';
+   let delta=''; if(x.prev!=null){const dd=Math.round((t-x.prev)*10)/10;delta='<span class="delta '+(dd>=0?'up':'dn')+'">'+(dd>=0?'▲+':'▼')+dd+'</span>'}
+   const bars=[['売','marketability'],['ク','click_appeal'],['構','composition'],['独','originality'],['ブ','brand_fit'],['印','print_fit']].map(([l,k])=>bar(k,l,a[k]||0,k===x.weak)).join('');
+   const wp=x.weights?'<span class="wp">🎯'+wpjp(x.weights)+'</span>':'';
+   const prov='<div class="prov"><div><b>モデル</b> 生成: Z-Image-Turbo + MUSOLD LoRA ／ 審査: '+(d.judge_model||'nemotron-omni')+'</div>'
+     +'<div><b>最適化</b> '+(x.weights?wpjp(x.weights):'-')+' ／ seed '+(x.seed||0)+'</div>'
+     +'<div><b>プロンプト</b><div class="pr">'+esc(x.prompt||'')+'</div></div></div>';
+   return '<div class="card"><img loading="lazy" src="'+abs(x.url)+'" onclick="lb(this.src)">'
+    +'<div class="m"><div class="row"><span class="cn">'+esc(x.concept)+' '+wp+' <span class="tag'+(fix?' fix':'')+'">'+tag+'</span></span>'
+    +'<span><span class="tot '+cls+'">'+t+'</span>'+delta+'</span></div>'
+    +'<div class="bars">'+bars+'</div>'
+    +(x.why?'<div class="why">🧠 '+esc(x.why)+'</div>':'')
+    +'<div class="more" onclick="tog(this)">▼ どのモデル・どのプロンプトで？</div>'
+    +prov+'</div></div>';
+  }).join('');
+ }catch(e){document.getElementById('now').textContent='m5に再接続中…'}
+}
+function lb(s){document.getElementById('lbi').src=s;document.getElementById('lb').style.display='flex'}
+function tog(el){const p=el.nextElementSibling;const o=p.classList.toggle('open');el.textContent=o?'▲ プロンプト/モデルを隠す':'▼ どのモデル・どのプロンプトで？'}
+tick();setInterval(tick,4000);
+</script></body></html>
