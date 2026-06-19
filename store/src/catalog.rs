@@ -6100,6 +6100,21 @@ pub async fn subscribe_drop(State(db): State<Db>, axum::Json(q): axum::Json<Drop
     axum::Json(serde_json::json!({"ok":true})).into_response()
 }
 
+/// Idempotently add an email to the newsletter list (no welcome mail).
+/// Used for purchase auto-subscribe + buyer backfill. Skips junk/test addrs.
+pub fn ensure_subscriber(conn: &rusqlite::Connection, email: &str, source: &str) {
+    let e = email.trim().to_lowercase();
+    if e.is_empty() || !e.contains('@') || e.ends_with("@example.com")
+       || e.starts_with("test") || e.ends_with("@mu.test") { return; }
+    let token = format!("{:016x}{:016x}", rand::random::<u64>(), rand::random::<u64>());
+    let now = crate::chrono_now();
+    let _ = conn.execute(
+        "INSERT INTO catalog_subscribers (email, source, unsubscribe_token, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4) ON CONFLICT(email) DO NOTHING",
+        rusqlite::params![&e, source, &token, &now],
+    );
+}
+
 /// MU Drop ウェルカムメール（Resend・オプトイン受領通知）。初回登録時のみ送信。
 pub async fn send_drop_welcome_email(to: String, unsubscribe_token: String) {
     let resend_key = std::env::var("RESEND_API_KEY").unwrap_or_default();
@@ -14689,6 +14704,22 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // 該当 SKU のときだけ .ics を添付した追加メールを購入者へ送る。物理発送
     // (printful_*) は下流でそのまま走る。
     maybe_send_ai_camp_invite(&db, &session, &sku).await;
+
+    // Auto-subscribe the buyer to the newsletter — route-agnostic, runs once per
+    // paid order (INSERT OR IGNORE reservation above guarantees a single pass).
+    // Idempotent (ON CONFLICT DO NOTHING) so existing subscribers / their
+    // source+token are preserved; unsubscribe stays a one-click token link.
+    // Lock is scoped here and never held across an .await.
+    {
+        let buyer_email = session["customer_details"]["email"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
+        if !buyer_email.trim().is_empty() {
+            let conn = db.lock().unwrap();
+            ensure_subscriber(&conn, &buyer_email, "purchase");
+        }
+    }
 
     // Route dispatch. printful_* / gelato_jp / suzuri_jp / manual / digital
     // continue through the existing Printful logic below as a fallback. A new
