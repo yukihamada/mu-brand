@@ -2605,7 +2605,7 @@ review and go live only after an MA-council member approves them.
 Storefront:    https://wearmu.com/shop
 Builder guide: https://wearmu.com/build        (human-friendly onboarding)
 Transparency:  https://wearmu.com/transparency (real revenue/cost numbers)
-MCP server:    https://mcp.wearmu.com          (13 tools, see "MCP" below)
+MCP server:    https://mcp.wearmu.com          (23 tools, see "MCP" below)
 OpenAPI:       https://wearmu.com/openapi.json
 This file:     https://wearmu.com/llms.txt
 
@@ -2809,6 +2809,19 @@ pub async fn well_known_mcp() -> Response {
         }
     });
     Json(v).into_response()
+}
+
+/// GET /.well-known/mcp-registry-auth — domain-ownership proof for the official
+/// MCP Registry (registry.modelcontextprotocol.io). Lets `mcp-publisher login
+/// http --domain wearmu.com` verify control of wearmu.com so `com.wearmu/mu`
+/// can be published. The public key here is useless without the matching
+/// private key (kept off-repo in ~/.config/mu-mcp/). Plain text, one line.
+pub async fn well_known_mcp_registry_auth() -> Response {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "v=MCPv1; k=ed25519; p=xoCFEabrjis5jXv2ikj2+TjBn6BTisECQSCt80sq7Ls=\n",
+    )
+        .into_response()
 }
 
 /// GET /openapi.json — OpenAPI 3.1 of the agent API. Kept concise but valid so
