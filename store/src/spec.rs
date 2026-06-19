@@ -275,12 +275,17 @@ pub async fn draft_spec(
         Err(_) => minimal_spec(prompt),
     };
 
-    // ── ④ kind 未定なら本文から推論で補完 ──
-    if spec.kind.as_deref().map(|k| k.trim().is_empty()).unwrap_or(true) {
-        let inferred = crate::catalog::infer_kind(prompt);
-        if !inferred.trim().is_empty() {
-            spec.kind = Some(inferred);
-        }
+    // ── ④ kind 補完/補正 ──
+    // dog_gi / gi_patch は「犬の道着」「パッチ」等 description で一義に判別できるが、
+    // Gemini は「道着→gi」のように一般化しがち。これらは infer_kind を優先して上書きする。
+    // それ以外は kind 未定のときだけ infer で補完する。
+    let inferred = crate::catalog::infer_kind(prompt);
+    if matches!(inferred.as_str(), "dog_gi" | "gi_patch") {
+        spec.kind = Some(inferred);
+    } else if spec.kind.as_deref().map(|k| k.trim().is_empty()).unwrap_or(true)
+        && !inferred.trim().is_empty()
+    {
+        spec.kind = Some(inferred);
     }
 
     // ── ⑤ 不足判定（A 委譲・フォールバック込み）──
