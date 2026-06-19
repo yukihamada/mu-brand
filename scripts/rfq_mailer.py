@@ -29,6 +29,8 @@ TAG = re.compile(r"\[MU-RFQ-(\d+)\]")
 SUPPLIER_EMAIL = {
     "isami_gi": "info@isami.co.jp",
     "isami_dog_gi": "info@isami.co.jp",
+    # 刺繍ワッペンは ワッペン屋ドットコム(株式会社ユニマーク)。NFC封入は e-garde と分業。
+    "patch_nfc": "support2@wappenya.com",
 }
 
 def secret(name):
