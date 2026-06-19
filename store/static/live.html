@@ -2,7 +2,22 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MU LIVE — いま、Apple M5 Mac でデザインを生成中</title>
 <meta name="description" content="MUのデザインは、クラウドではなく手元のApple M5 Mac上でAIがリアルタイムに生成・採点・改善しています。完全ローカル。">
+<link rel="canonical" href="https://wearmu.com/live">
+<link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/live"><link rel="alternate" hreflang="x-default" href="https://wearmu.com/live">
+<meta name="theme-color" content="#08080b">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MU — wearmu.com">
+<meta property="og:url" content="https://wearmu.com/live">
 <meta property="og:title" content="MU LIVE — AIが手元のMacで今この瞬間デザインしている">
+<meta property="og:description" content="MUのデザインは手元のApple M5 Mac上でAIがリアルタイムに生成・採点・改善。完全ローカル。">
+<meta property="og:image" content="https://wearmu.com/apple-touch-icon.png">
+<meta property="og:locale" content="ja_JP">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="MU LIVE — AIが手元のMacで今この瞬間デザインしている">
+<meta name="twitter:description" content="手元のApple M5 MacでAIがMUデザインをリアルタイム生成・採点・改善。完全ローカル。">
+<meta name="twitter:image" content="https://wearmu.com/apple-touch-icon.png">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"WebPage","name":"MU LIVE — AIが手元のMacで今この瞬間デザインしている","url":"https://wearmu.com/live","inLanguage":"ja","description":"MUのデザインは手元のApple M5 Mac上でAIがリアルタイムに生成・採点・改善しています。完全ローカル。","isPartOf":{"@type":"WebSite","name":"MU","url":"https://wearmu.com/"},"creator":{"@type":"Organization","name":"MU","url":"https://wearmu.com/"}}</script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#08080b;color:#ececf1;font:15px/1.6 -apple-system,system-ui,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
@@ -13,6 +28,10 @@ h1{margin:10px 0 8px;font-size:30px;line-height:1.25;font-weight:800;letter-spac
 h1 .live{color:#3fb950}h1 .live .d{animation:p 1.4s infinite}@keyframes p{50%{opacity:.2}}
 .lead{max-width:680px;margin:0 auto;color:#b9b9c6;font-size:15px}
 .machine{display:inline-flex;gap:8px;align-items:center;margin-top:14px;padding:7px 14px;border:1px solid #2a2a3a;border-radius:99px;background:#11111a;font-size:13px;color:#cdbcff}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:18px}
+.cta a{text-decoration:none;font-weight:700;font-size:14px;padding:11px 20px;border-radius:99px}
+.cta .p{background:linear-gradient(90deg,#6a4bff,#b14bff);color:#fff}
+.cta .s{background:#15151f;color:#cdbcff;border:1px solid #2a2a3a}
 .stats{display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin-top:18px;font-size:12px;color:#8b8b9a}
 .stats b{display:block;color:#fff;font-size:20px;font-weight:800}
 .now{margin-top:14px;font-size:13px;color:#c8b6ff;min-height:20px}
@@ -49,6 +68,10 @@ footer{text-align:center;padding:30px 20px 50px;color:#6a6a7a;font-size:12px;bor
   <h1>いま、<span class="live">●<span class="d"> </span></span>AIが手元の Mac でデザインしてる</h1>
   <p class="lead">このページに出るMUのデザインは、クラウドではなく <b>手元の Apple M5 Mac</b> 上で、たった今ローカル生成されています。AIが描き、別のAIが「売れ度・クリック度」など6軸で採点し、弱点を自分で磨き続けています。すべて完全ローカル・¥0。</p>
   <div class="machine">🖥 <span id="machine">Apple M5 Max</span> ・ 生成 <span id="gm">Z-Image</span> ・ 審査 <span id="jm">nemotron-omni</span></div>
+  <nav class="cta" aria-label="主要導線">
+    <a class="p" href="/make">自分もMUを作る →</a>
+    <a class="s" href="/shop">MUを見る →</a>
+  </nav>
   <div class="stats">
     <span><b id="tot">–</b>これまでの生成</span>
     <span><b id="avg">–</b>平均スコア</span>
@@ -60,7 +83,7 @@ footer{text-align:center;padding:30px 20px 50px;color:#6a6a7a;font-size:12px;bor
 <div class="grid" id="g"></div>
 <footer>MU — modern Japanese streetwear. デザインは Apple M5 Mac 上で完全ローカル生成（クラウド不使用）。<br>
 🎨 Z-Image-Turbo + MUSOLD LoRA で生成 ・ 🧠 nemotron-omni で採点 ・ 弱点を狙って磨く山登り最適化。</footer>
-<div class="lb" id="lb" onclick="this.style.display='none'"><img id="lbi" src=""></div>
+<div class="lb" id="lb" onclick="this.style.display='none'"><img id="lbi" alt="MUデザイン拡大表示" src=""></div>
 <script>
 const FEED="https://m5-mu.chatweb.ai/api/feed";
 function jp(a){return({marketability:'売れ度',click_appeal:'クリック度',composition:'構図',originality:'独自性',brand_fit:'ブランド',print_fit:'印刷適性'})[a]||a}
@@ -91,7 +114,7 @@ async function tick(){
    const prov='<div class="prov"><div><b>モデル</b> 生成: Z-Image-Turbo + MUSOLD LoRA ／ 審査: '+(d.judge_model||'nemotron-omni')+'</div>'
      +'<div><b>最適化</b> '+(x.weights?wpjp(x.weights):'-')+' ／ seed '+(x.seed||0)+'</div>'
      +'<div><b>プロンプト</b><div class="pr">'+esc(x.prompt||'')+'</div></div></div>';
-   return '<div class="card"><img loading="lazy" src="'+abs(x.url)+'" onclick="lb(this.src)">'
+   return '<div class="card"><img loading="lazy" alt="MU MUGEN デザイン '+esc(x.concept)+'（AI生成）" src="'+abs(x.url)+'" onclick="lb(this.src)">'
     +'<div class="m"><div class="row"><span class="cn">'+esc(x.concept)+' '+wp+' <span class="tag'+(fix?' fix':'')+'">'+tag+'</span></span>'
     +'<span><span class="tot '+cls+'">'+t+'</span>'+delta+'</span></div>'
     +'<div class="bars">'+bars+'</div>'
