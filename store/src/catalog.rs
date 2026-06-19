@@ -1126,6 +1126,20 @@ pub(crate) const SUPPLIER_REGISTRY: &[SupplierCapability] = &[
         moq: 1, lead_time_days: 14, est_unit_jpy: Some(19800),
         note: "縁まで全面サブリメーション(waistband/cuffs/collar も)・Printful の2-3倍原価のプレミアム線。docs/CONTRADO_SALES_OUTREACH.md。",
     },
+    SupplierCapability {
+        id: "isami_dog_gi", name: "ISAMI 犬の道着(セミオーダー)",
+        mode: "quote", route: "manual",
+        regions: &["jp"], kinds: &["dog_gi"],
+        moq: 1, lead_time_days: 45, est_unit_jpy: None,
+        note: "犬用BJJ道着・犬の実寸(胴回り/背丈/首回り)からセミオーダー・1着〜。刺繍・帯付き可。試作要。",
+    },
+    SupplierCapability {
+        id: "patch_nfc", name: "刺繍パッチ + NFC(真贋タグ)",
+        mode: "quote", route: "manual",
+        regions: &["jp"], kinds: &["gi_patch"],
+        moq: 30, lead_time_days: 30, est_unit_jpy: None,
+        note: "道着用刺繍ワッペン。任意で NFC タグ封入(真贋/provenance・MUのQR指紋と連携)。縫付け/面ファスナー/アイロン選択。",
+    },
 ];
 
 /// kind が PRODUCT_SPECS の既知 POD kind か。
@@ -1143,6 +1157,9 @@ fn infer_kind_from_text(text: &str) -> Option<&'static str> {
     let t = text.to_lowercase();
     // (キーワード, kind)。先勝ち。
     let table: &[(&[&str], &str)] = &[
+        // 犬の道着は「道着」を含むので gi より先に判定（先勝ち）。
+        (&["犬の道着", "犬用道着", "犬道着", "ドッグ道着", "ドッグギ", "dog gi", "dog_gi", "ペット道着", "ペットギ"], "dog_gi"),
+        (&["パッチ", "ワッペン", "patch", "エンブレム", "刺繍ワッペン"], "gi_patch"),
         (&["道着", "柔術衣", "柔道着", " gi", "ｷﾞ"], "gi"),
         (&["ループウィール", "loopwheel", "吊り編み", "スウェット", "sweat", "トレーナー"], "loopwheel_sweat"),
         (&["無縫製", "ホールガーメント", "wholegarment", "seamless", "ニット", "knit", "セーター"], "seamless_knit"),
@@ -19001,6 +19018,29 @@ mod manufacturing_router_tests {
         assert_eq!(q["request"]["kind"], "gi");
         assert_eq!(q["request"]["inferred"], true);
         assert!(q["options"].as_array().unwrap().iter().any(|o| o["supplier_id"] == "isami_gi"));
+    }
+
+    #[test]
+    fn dog_gi_infers_and_routes_to_isami_dog_gi_moq1() {
+        // 「犬の道着」は gi(道着) に誤マッチせず dog_gi に推論される（先勝ち順序）。
+        let q = route_request(None, Some("4.5kgのビションプー用の犬の道着"), 1, Some("jp"), None, None);
+        assert_eq!(q["request"]["kind"], "dog_gi");
+        assert_eq!(q["makeable"], true);
+        let opts = q["options"].as_array().unwrap();
+        let s = opts.iter().find(|o| o["supplier_id"] == "isami_dog_gi").expect("isami_dog_gi present");
+        assert_eq!(s["mode"], "quote");
+        assert_eq!(s["moq"], 1);
+        assert_eq!(s["meets_moq"], true); // 1着でOK
+    }
+
+    #[test]
+    fn gi_patch_infers_and_routes_to_patch_nfc() {
+        let q = route_request(None, Some("道着につけるNFC付きパッチ"), 30, Some("jp"), None, None);
+        assert_eq!(q["request"]["kind"], "gi_patch");
+        let opts = q["options"].as_array().unwrap();
+        let s = opts.iter().find(|o| o["supplier_id"] == "patch_nfc").expect("patch_nfc present");
+        assert_eq!(s["mode"], "quote");
+        assert_eq!(s["moq"], 30);
     }
 
     #[test]

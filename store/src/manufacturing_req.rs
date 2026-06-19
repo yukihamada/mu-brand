@@ -64,6 +64,10 @@ const SPEC_FLOORS: &[(&str, &[&str])] = &[
     // 道着（ISAMI・刺繍17箇所・IBJJF 準拠）。
     ("gi", &["material", "size_range", "embroidery_spec"]),
     ("gi_embroidery", &["material", "size_range", "embroidery_spec"]),
+    // 犬の道着: 既製サイズでなく犬の実寸が要る（胴回り/背丈/首回り）。
+    ("dog_gi", &["material", "dog_measurements", "belt_color"]),
+    // 道着用パッチ: 寸法・デザイン・取付方式。NFC は任意なので floor に含めない。
+    ("gi_patch", &["size_cm", "design", "attach_method"]),
     // 受注生産（Heritage ループウィール）。素材/サイズ展開/縫製仕様が要る。
     ("loopwheel_sweat", &["material", "size_range", "construction"]),
     ("cut_and_sew", &["material", "size_range", "construction"]),
@@ -199,6 +203,20 @@ const SUPPLIER_ORDER_TERMS: &[SupplierTerm] = &[
         material_note: "縁まで全面サブリメーション・原価は Printful の2-3倍・プレミアム線(¥19,800+)。",
         moq: 1, lead_time_days: 14,
         source_url: "docs/CONTRADO_SALES_OUTREACH.md",
+    },
+    SupplierTerm {
+        supplier_id: "isami_dog_gi",
+        file_formats: &["PDF", "PNG"],
+        material_note: "犬の実寸(胴回り/背丈/首回り)必須・綿( パール織)・帯色指定・1着〜セミオーダー・試作要。",
+        moq: 1, lead_time_days: 45,
+        source_url: "docs/gi-isami-2026-05-12",
+    },
+    SupplierTerm {
+        supplier_id: "patch_nfc",
+        file_formats: &["AI", "PDF", "PNG"],
+        material_note: "刺繍データ(糸色指定)+寸法・取付方式(縫付け/面ファスナー/アイロン)・NFCは任意封入(NTAG215)。",
+        moq: 30, lead_time_days: 30,
+        source_url: "docs/manufacturing-phase2.md",
     },
 ];
 
@@ -709,6 +727,9 @@ mod tests {
         assert!(gi.contains(&"embroidery_spec"));
         assert!(gi.contains(&"size_range"));
         assert!(kind_required_attrs("totally_unknown_kind").is_empty());
+        // 犬の道着は実寸が必須・パッチは取付方式が必須。
+        assert!(kind_required_attrs("dog_gi").contains(&"dog_measurements"));
+        assert!(kind_required_attrs("gi_patch").contains(&"attach_method"));
     }
 
     #[test]
