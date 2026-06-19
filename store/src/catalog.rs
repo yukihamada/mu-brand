@@ -13225,6 +13225,66 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
     }"#.to_string()
     };
 
+    // ── お客様の声 (approved buyer reviews, keyed by sku) ──────────────────
+    // Only approved=1 rows show. Buyer submissions land approved=0 (pending)
+    // until an admin OKs them at /admin/reviews. Render nothing when n=0.
+    let reviews_block: String = {
+        let conn = db.lock().unwrap();
+        // Tolerate a not-yet-migrated reviews table on this connection.
+        let _ = conn.execute("ALTER TABLE reviews ADD COLUMN sku TEXT", []);
+        let rows: Vec<(i64, String, Option<String>, i64, String)> = conn
+            .prepare(
+                "SELECT rating, body, reviewer_name, verified_purchase, created_at
+                 FROM reviews WHERE sku=? AND approved=1
+                 ORDER BY created_at DESC LIMIT 20",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_map(rusqlite::params![&sku], |r| Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                )))
+                .map(|m| m.filter_map(|x| x.ok()).collect::<Vec<_>>())
+            })
+            .unwrap_or_default();
+        if rows.is_empty() {
+            String::new()
+        } else {
+            let n = rows.len() as i64;
+            let sum: i64 = rows.iter().map(|r| r.0).sum();
+            let avg = sum as f64 / n as f64;
+            let mut items = String::new();
+            for (rating, rbody, rname, verified, _created) in &rows {
+                let stars = "★".repeat((*rating).clamp(0, 5) as usize);
+                let name = rname.as_deref().filter(|s| !s.is_empty()).unwrap_or("匿名");
+                let vbadge = if *verified == 1 {
+                    r#" <span class="rv-badge">✓ 購入者</span>"#
+                } else {
+                    ""
+                };
+                items.push_str(&format!(
+                    r#"<div class="rv-item"><div class="rv-top"><span class="rv-stars">{stars}</span> <span class="rv-name">{name}</span>{vbadge}</div><div class="rv-body">{body}</div></div>"#,
+                    stars = stars,
+                    name = crate::html_escape(name),
+                    vbadge = vbadge,
+                    body = crate::html_escape(rbody),
+                ));
+            }
+            format!(
+                r#"<div class="spec reviews">
+<h3>お客様の声</h3>
+<div class="rv-agg"><span class="rv-agg-stars">★</span> {avg:.1} <span class="rv-agg-n">({n}件)</span></div>
+{items}
+</div>"#,
+                avg = avg,
+                n = n,
+                items = items,
+            )
+        }
+    };
+
     let body = format!(
         r##"<!doctype html><html lang="{html_lang_attr}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -13316,6 +13376,15 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .spec, .story{{margin:20px 0;padding:14px 0;border-top:1px solid rgba(255,255,255,0.06)}}
 .spec h3, .story h3{{font-size:10px;letter-spacing:0.3em;color:#ffd700;margin-bottom:8px;font-weight:700;text-transform:uppercase}}
 .spec p, .story p{{font-size:12.5px;line-height:1.85;color:rgba(245,245,240,0.78)}}
+.reviews .rv-agg{{font-size:15px;color:#fff;margin-bottom:12px;font-weight:600}}
+.reviews .rv-agg-stars{{color:#ffd700}}
+.reviews .rv-agg-n{{font-size:12px;color:rgba(245,245,240,0.5);font-weight:400}}
+.reviews .rv-item{{padding:10px 0;border-top:1px solid rgba(255,255,255,0.05)}}
+.reviews .rv-top{{font-size:12px;margin-bottom:4px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}}
+.reviews .rv-stars{{color:#ffd700;letter-spacing:1px}}
+.reviews .rv-name{{color:rgba(245,245,240,0.7)}}
+.reviews .rv-badge{{color:#4caf50;font-size:10.5px;letter-spacing:.05em}}
+.reviews .rv-body{{font-size:12.5px;line-height:1.8;color:rgba(245,245,240,0.82);white-space:pre-wrap}}
 .fx{{font-size:11px;color:rgba(245,245,240,0.45);font-family:monospace;font-weight:400}}
 table.sz{{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}}
 table.sz th, table.sz td{{padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.06);text-align:left;color:rgba(245,245,240,0.82);font-family:monospace}}
@@ -13374,6 +13443,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     {size_chart}
     {shipping_table}
     {story}
+    {reviews}
     <div class="sku">SKU: {sku}</div>
     <a class="back" href="/shop?brand={brand_q}">← {brand} のほかの商品</a>
   </div>
@@ -13481,6 +13551,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         size_chart = if is_apparel_sized { size_chart_html(&kind_guess) } else { String::new() },
         shipping_table = if is_digital || is_device || is_house { String::new() } else { shipping_table_html() },
         story     = story_block,
+        reviews   = reviews_block,
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
         html_lang_attr = html_lang_attr,
