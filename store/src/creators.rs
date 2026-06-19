@@ -937,6 +937,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 }});}})();</script>
 <a class="cta" href="/start?ref=maker_page" data-funnel="cta_click" data-funnel-cta="maker_page_start">あなたも30秒で作って、売れたら10%受け取る →</a>
 <div style="font-size:12px;opacity:.65;margin-top:10px">売上の10%があなたのMUクレジットに(1cr=¥1・¥3,000以上で振込可 — <a href="/credit">仕組み</a>)</div>
+<div style="margin-top:22px;padding:14px 16px;border:1px solid #222;border-radius:12px;background:#0d0d0d;font-size:12.5px;line-height:1.7;opacity:.92">🤖 <b>自分のAIから作る</b>人へ — お使いのClaude等にMUをつなげば、会話だけで一着を作れます。<br><a href="/build?ref=maker" data-funnel="cta_click" data-funnel-cta="maker_page_mcp" style="color:#ffd700">MCPでつなぐ →</a> <code style="opacity:.75">claude mcp add --transport http mu https://mcp.wearmu.com/mcp</code></div>
 <footer>━◯━ MU · <a href="/shop">SHOP</a> · <a href="/make">作る</a> · <a href="/credit">MUクレジットとは</a> · <a href="/kpi">公開KPI</a> · 株式会社イネブラ</footer>
 </div>
 <script defer src="/mu-funnel.js"></script>
