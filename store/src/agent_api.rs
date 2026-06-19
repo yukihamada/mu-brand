@@ -1421,6 +1421,7 @@ pub async fn agent_affiliate(
 // 例: GET /api/agent/quote?kind=tee&qty=1&region=jp&budget=6000
 //     GET /api/agent/quote?description=弟子屈の道場用の道着&qty=20
 pub async fn agent_quote(
+    State(db): State<Db>,
     axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
     let kind = q.get("kind").map(|s| s.as_str());
@@ -1439,7 +1440,198 @@ pub async fn agent_quote(
             "pass `kind` (e.g. tee/gi/seamless_knit) or `description` (free text). optional: qty, region, budget",
         );
     }
-    Json(crate::catalog::route_request(kind, description, qty, region, budget)).into_response()
+    // Phase2+ 注入を有効化（RFQ受領見積の表示反映＋要件サマリ）。read-only。
+    let conn = db.lock().unwrap();
+    Json(crate::catalog::route_request(kind, description, qty, region, budget, Some(&conn))).into_response()
+}
+
+// ─── 製造オーケストレーション Phase2+ ハンドラ（要件チェック / 仕様生成 / RFQ） ──
+// 本体は各モジュール(manufacturing_req / spec / rfq)。ここは parse + 委譲のみ。
+
+/// GET /api/agent/check — 要件チェック（read-only・無認証）。
+/// kind 必須。region/supplier_id 任意。spec は ?spec=JSON か個別属性で渡す。
+pub async fn agent_check(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let Some(kind) = q.get("kind").map(|s| s.as_str()).filter(|s| !s.is_empty()) else {
+        return json_err(StatusCode::BAD_REQUEST, "pass `kind` (e.g. gi/tote/rashguard_ls)");
+    };
+    let region = q.get("region").map(|s| s.as_str());
+    let supplier_id = q.get("supplier_id").map(|s| s.as_str());
+    let spec: serde_json::Value = q
+        .get("spec")
+        .and_then(|s| serde_json::from_str(s).ok())
+        .unwrap_or_else(|| {
+            let mut m = serde_json::Map::new();
+            for k in ["material", "dimensions", "colors", "print_method", "placement", "qty", "region", "size_range", "embroidery_spec"] {
+                if let Some(v) = q.get(k) {
+                    m.insert(k.to_string(), serde_json::json!(v));
+                }
+            }
+            serde_json::Value::Object(m)
+        });
+    let conn = db.lock().unwrap();
+    let report = crate::manufacturing_req::check_requirements(Some(&conn), kind, region, supplier_id, &spec);
+    Json(serde_json::json!({ "ok": true, "kind": kind, "report": report })).into_response()
+}
+
+/// POST /api/agent/spec — 仕様生成（require_email 既定＝無認証 Gemini 課金を防ぐ）。
+pub async fn agent_spec(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    let email = match require_email(&db, &headers, Some(&q)) {
+        Ok(e) => e,
+        Err(resp) => return resp,
+    };
+    let prompt = body
+        .as_ref()
+        .and_then(|b| b.0.get("prompt").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .or_else(|| q.get("prompt").cloned())
+        .unwrap_or_default();
+    if prompt.trim().is_empty() {
+        return json_err(StatusCode::BAD_REQUEST, "pass `prompt`（自然文で作りたいもの）");
+    }
+    match crate::spec::draft_spec(&db, &prompt, Some(&email)).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+/// POST /api/agent/rfq/create — RFQ ドラフト起票（owner-only・送信しない）。
+pub async fn agent_rfq_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    if let Err(e) = crate::agent_owner_or_err(&db, &headers, Some(&q)) {
+        return e;
+    }
+    let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
+    let gets = |k: &str| -> Option<String> {
+        b.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).or_else(|| q.get(k).cloned())
+    };
+    let qty = b.get("qty").and_then(|v| v.as_i64()).or_else(|| q.get("qty").and_then(|s| s.parse().ok())).unwrap_or(1);
+    let supplier_id = gets("supplier_id");
+    let kind = gets("kind");
+    let description = gets("description");
+    let spec_id = gets("spec_id");
+    let product_ref = gets("product_ref");
+    let spec_pack_url = gets("spec_pack_url");
+    let note = gets("note");
+    let conn = db.lock().unwrap();
+    match crate::rfq::rfq_create(
+        &conn, supplier_id.as_deref(), kind.as_deref(), description.as_deref(), qty,
+        spec_id.as_deref(), product_ref.as_deref(), spec_pack_url.as_deref(), note.as_deref(),
+    ) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+/// POST /api/agent/rfq/record — 供給先の返答（価格/MOQ/納期）を記録（owner-only）。
+pub async fn agent_rfq_record(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    if let Err(e) = crate::agent_owner_or_err(&db, &headers, Some(&q)) {
+        return e;
+    }
+    let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
+    let geti = |k: &str| -> Option<i64> {
+        b.get(k).and_then(|v| v.as_i64()).or_else(|| q.get(k).and_then(|s| s.parse().ok()))
+    };
+    let gets = |k: &str| -> Option<String> {
+        b.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).or_else(|| q.get(k).cloned())
+    };
+    let Some(id) = geti("id") else {
+        return json_err(StatusCode::BAD_REQUEST, "pass `id`");
+    };
+    let conn = db.lock().unwrap();
+    match crate::rfq::rfq_record(
+        &conn, id, gets("status").as_deref(), geti("quoted_unit_jpy"), geti("moq"),
+        geti("lead_time_days"), gets("valid_until").as_deref(), gets("note").as_deref(),
+    ) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+/// GET /api/agent/rfq/list — RFQ 一覧（owner-only）。
+pub async fn agent_rfq_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    if let Err(e) = crate::agent_owner_or_err(&db, &headers, Some(&q)) {
+        return e;
+    }
+    let supplier_id = q.get("supplier_id").map(|s| s.as_str());
+    let kind = q.get("kind").map(|s| s.as_str());
+    let status = q.get("status").map(|s| s.as_str());
+    let conn = db.lock().unwrap();
+    Json(crate::rfq::rfq_list(&conn, supplier_id, kind, status)).into_response()
+}
+
+fn admin_token_ok(q: &HashMap<String, String>) -> bool {
+    let expected = std::env::var("ADMIN_TOKEN").unwrap_or_default();
+    !expected.is_empty() && q.get("token").map(|t| t == &expected).unwrap_or(false)
+}
+
+/// POST /admin/requirements/upsert — 要件の手動 upsert（?token=ADMIN_TOKEN）。
+pub async fn admin_requirements_upsert(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    if !admin_token_ok(&q) {
+        return json_err(StatusCode::UNAUTHORIZED, "bad/missing ADMIN_TOKEN");
+    }
+    let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
+    let gets = |k: &str| -> Option<String> {
+        b.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).or_else(|| q.get(k).cloned())
+    };
+    let Some(req_type) = gets("req_type") else {
+        return json_err(StatusCode::BAD_REQUEST, "req_type required (spec_floor|legal|supplier_term)");
+    };
+    let Some(key) = gets("key") else {
+        return json_err(StatusCode::BAD_REQUEST, "key required");
+    };
+    let value_json = gets("value_json").unwrap_or_else(|| "{}".to_string());
+    let severity = gets("severity").unwrap_or_else(|| "required".to_string());
+    let conn = db.lock().unwrap();
+    crate::manufacturing_req::upsert_requirement(
+        &conn, &req_type, gets("kind").as_deref(), gets("region").as_deref(),
+        gets("supplier_id").as_deref(), &key, &value_json, &severity, gets("source_url").as_deref(),
+    );
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+/// GET /admin/requirements/refresh — Gemini 取込（?token=ADMIN_TOKEN）。
+/// 既定 gated: MU_REQ_INGEST_ENABLED!=1 のときはモジュール側が即 Ok(0)（課金なし）。
+pub async fn admin_requirements_refresh(
+    State(db): State<Db>,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    if !admin_token_ok(&q) {
+        return json_err(StatusCode::UNAUTHORIZED, "bad/missing ADMIN_TOKEN");
+    }
+    let Some(kind) = q.get("kind").map(|s| s.to_string()).filter(|s| !s.is_empty()) else {
+        return json_err(StatusCode::BAD_REQUEST, "pass `kind`");
+    };
+    match crate::manufacturing_req::refresh_requirements_via_gemini(&db, &kind).await {
+        Ok(n) => Json(serde_json::json!({
+            "ok": true, "upserted": n,
+            "note": "MU_REQ_INGEST_ENABLED!=1 のときは 0（Gemini 課金なし）",
+        })).into_response(),
+        Err(e) => json_err(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
 }
 
 // ─── MA approval (is_ma_council_email-gated) ────────────────────────────

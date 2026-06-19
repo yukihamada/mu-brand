@@ -1090,7 +1090,7 @@ pub struct SupplierCapability {
 
 /// 初期レジストリ。全エントリ docs 由来で裏取り済（contract 参照）。
 /// 供給先を足す = ここに 1 行（CATALOG_CONTRACT「vendor=1 arm」と同じ思想）。
-const SUPPLIER_REGISTRY: &[SupplierCapability] = &[
+pub(crate) const SUPPLIER_REGISTRY: &[SupplierCapability] = &[
     SupplierCapability {
         id: "printful", name: "Printful (POD)",
         mode: "auto", route: "*",
@@ -1166,6 +1166,12 @@ fn infer_kind_from_text(text: &str) -> Option<&'static str> {
     None
 }
 
+/// `infer_kind_from_text` の String 版（製造モジュール rfq.rs / spec.rs 用）。
+/// 不明時は空文字を返す。
+pub(crate) fn infer_kind(text: &str) -> String {
+    infer_kind_from_text(text).unwrap_or("").to_string()
+}
+
 /// レジストリ全体の JSON（kind 不明時に「何が作れるか」を返すため）。
 pub fn supplier_registry_json() -> serde_json::Value {
     let arr: Vec<serde_json::Value> = SUPPLIER_REGISTRY.iter().map(|s| serde_json::json!({
@@ -1190,6 +1196,9 @@ pub fn route_request(
     qty: i64,
     region: Option<&str>,
     budget: Option<i64>,
+    // Phase2+ 注入用の読み取り専用 conn（None なら Phase1 と完全同一挙動＝後方互換）。
+    // RFQ 受領見積の表示反映と要件サマリ付与にのみ使う。ランキングは変えない。
+    conn: Option<&rusqlite::Connection>,
 ) -> serde_json::Value {
     let qty = qty.max(1);
     let region_lc = region.map(|r| r.to_lowercase());
@@ -1236,7 +1245,7 @@ pub fn route_request(
         };
         let requires_rfq = s.mode == "quote";
 
-        let opt = serde_json::json!({
+        let mut opt = serde_json::json!({
             "supplier_id": s.id,
             "supplier_name": s.name,
             "mode": s.mode,
@@ -1251,6 +1260,29 @@ pub fn route_request(
             "requires_rfq": requires_rfq,
             "note": s.note,
         });
+
+        // Phase2+ 読み取り専用注入（conn=Some のときだけ）。表示値のみ・sort key は不変。
+        if let Some(c) = conn {
+            // (C) RFQ: quote モードで受領済み有効見積があれば表示単価を上書き（順位は据置）。
+            if s.mode == "quote" {
+                if let Some(q) = crate::rfq::received_quote_for(c, s.id, &kind) {
+                    opt["unit_price_jpy"] = serde_json::json!(q);
+                    opt["quote_source"] = serde_json::json!("rfq_received");
+                }
+            }
+            // (A) 要件KB: この供給先/kind/地域での要件サマリを付与。
+            let report = crate::manufacturing_req::check_requirements(
+                Some(c), &kind, region_lc.as_deref(), Some(s.id),
+                &serde_json::json!({ "qty": qty }),
+            );
+            opt["requirements_ok"] = serde_json::json!(report.ok);
+            if !report.gaps.is_empty() {
+                opt["requirement_gaps"] = serde_json::json!(report.gaps);
+            }
+            if !report.actions.is_empty() {
+                opt["requirement_actions"] = serde_json::json!(report.actions);
+            }
+        }
 
         // sort key（昇順で良い順）:
         //  1. auto かつ価格あり かつ予算内(=出せる) を最優先
@@ -18855,7 +18887,7 @@ mod manufacturing_router_tests {
 
     #[test]
     fn pod_kind_returns_printful_auto_with_floor_price() {
-        let q = route_request(Some("tee"), None, 1, Some("jp"), Some(6000));
+        let q = route_request(Some("tee"), None, 1, Some("jp"), Some(6000), None);
         assert_eq!(q["makeable"], true);
         let opts = q["options"].as_array().expect("options");
         assert!(!opts.is_empty());
@@ -18872,14 +18904,14 @@ mod manufacturing_router_tests {
 
     #[test]
     fn aop_kind_routes_to_printful_aop() {
-        let q = route_request(Some("rashguard_ls"), None, 1, None, None);
+        let q = route_request(Some("rashguard_ls"), None, 1, None, None, None);
         let opts = q["options"].as_array().unwrap();
         assert_eq!(opts[0]["fulfillment_route"], "printful_aop");
     }
 
     #[test]
     fn gi_is_quote_only_via_isami() {
-        let q = route_request(Some("gi"), None, 20, Some("jp"), None);
+        let q = route_request(Some("gi"), None, 20, Some("jp"), None, None);
         assert_eq!(q["makeable"], true);
         let opts = q["options"].as_array().unwrap();
         let isami = opts.iter().find(|o| o["supplier_id"] == "isami_gi").expect("isami_gi present");
@@ -18893,7 +18925,7 @@ mod manufacturing_router_tests {
 
     #[test]
     fn description_infers_kind_when_kind_omitted() {
-        let q = route_request(None, Some("弟子屈の道場用の道着がほしい"), 30, Some("jp"), None);
+        let q = route_request(None, Some("弟子屈の道場用の道着がほしい"), 30, Some("jp"), None, None);
         assert_eq!(q["request"]["kind"], "gi");
         assert_eq!(q["request"]["inferred"], true);
         assert!(q["options"].as_array().unwrap().iter().any(|o| o["supplier_id"] == "isami_gi"));
@@ -18901,7 +18933,7 @@ mod manufacturing_router_tests {
 
     #[test]
     fn seamless_knit_quote_has_null_moq_and_price() {
-        let q = route_request(Some("seamless_knit"), None, 1, None, None);
+        let q = route_request(Some("seamless_knit"), None, 1, None, None, None);
         let opts = q["options"].as_array().unwrap();
         let shima = opts.iter().find(|o| o["supplier_id"] == "shima_seamless").expect("shima present");
         assert_eq!(shima["moq"], serde_json::Value::Null);          // -1 → null(要見積)
@@ -18911,14 +18943,14 @@ mod manufacturing_router_tests {
 
     #[test]
     fn unknown_kind_is_not_makeable_but_lists_suppliers() {
-        let q = route_request(Some("spaceship"), None, 1, None, None);
+        let q = route_request(Some("spaceship"), None, 1, None, None, None);
         assert_eq!(q["makeable"], false);
         assert!(q["options"].as_array().unwrap().is_empty());
     }
 
     #[test]
     fn no_kind_no_description_returns_registry() {
-        let q = route_request(None, None, 1, None, None);
+        let q = route_request(None, None, 1, None, None, None);
         assert_eq!(q["makeable"], false);
         assert!(q["all_suppliers"].as_array().unwrap().len() >= 5);
     }
