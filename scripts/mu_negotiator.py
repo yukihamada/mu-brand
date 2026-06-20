@@ -78,6 +78,19 @@ def api_spec(prompt, key):
     except Exception as e:
         return {"_err": str(e)}
 
+def api_post(path, body, key):
+    """MUサーバへ POST（per-agent RFQ をサーバDBにも同期。owner鍵不要・MU_AGENT_KEY）。"""
+    if not key:
+        return None
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(BASE + path, data=data, method="POST",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return json.loads(r.read().decode())
+    except Exception as e:
+        return {"_err": str(e)}
+
 def gog(*args):
     return subprocess.run([GOG, *args], capture_output=True, text=True)
 
@@ -138,9 +151,41 @@ def notify(lines):
     gog("gmail", "send", "--account", ACCOUNT, "--to", NOTIFY_TO,
         "--subject", f"[MU自走] {today_str()} の交渉ダイジェスト", "--body", body)
 
+def agent_key():
+    p = os.path.expanduser("~/.cron_secrets")
+    if os.path.exists(p):
+        ms = re.findall(r'MU_AGENT_KEY\s*=\s*["\']?([^"\'\n]+)', open(p, encoding="utf-8", errors="ignore").read())
+        if ms:
+            return ms[-1].strip()
+    return os.environ.get("MU_AGENT_KEY", "")
+
+def cmd_sync(_):
+    """既存台帳のRFQをサーバDBにバックフィル（server_id付与）。Web/MCPに出すため。"""
+    key = agent_key()
+    if not key:
+        print("MU_AGENT_KEY なし"); return 1
+    ledger = load(LEDGER, {"rfqs": [], "sent_by_day": {}})
+    for rec in ledger["rfqs"]:
+        if rec.get("server_id"):
+            print(f"  skip {rec['id']} (already server #{rec['server_id']})"); continue
+        sres = api_post("/api/agent/rfq/create", {
+            "supplier_id": rec["supplier_id"], "kind": rec.get("kind"), "qty": 30,
+            "note": f"自走ネゴ {rec['id']} (backfill)"}, key)
+        if sres and isinstance(sres.get("rfq"), dict) and sres["rfq"].get("id"):
+            sid = sres["rfq"]["id"]; rec["server_id"] = sid
+            api_post("/api/agent/rfq/record", {"id": sid, "status": "sent"}, key)
+            q = rec.get("quote") or {}
+            if q.get("quoted_unit_jpy"):
+                api_post("/api/agent/rfq/record", {"id": sid, "status": "received",
+                         **{k: v for k, v in q.items() if v is not None}}, key)
+            print(f"  ✓ synced {rec['id']} → server #{sid}")
+        else:
+            print(f"  ✗ sync failed {rec['id']}: {sres}")
+    save(LEDGER, ledger)
+    return 0
+
 def tick():
-    key = (re.findall(r'MU_AGENT_KEY\s*=\s*["\']?([^"\'\n]+)', open(os.path.expanduser("~/.cron_secrets")).read())[-1]
-           if os.path.exists(os.path.expanduser("~/.cron_secrets")) else os.environ.get("MU_AGENT_KEY", "")).strip()
+    key = agent_key()
     ledger = load(LEDGER, {"rfqs": [], "sent_by_day": {}})
     ideas = load(IDEAS, {"queue": []})
     log = []
@@ -177,9 +222,19 @@ def tick():
         thread = gog_send(ALLOWLIST[sid], subj, rfq_body(sid, idea.get("kind", "製品"), idea.get("spec", {})))
         if thread:
             idea["status"] = "rfq_sent"
+            # サーバDBにも per-agent RFQ を起票（面=Web/MCP で見れるように・owner鍵不要）。
+            server_id = None
+            sres = api_post("/api/agent/rfq/create", {
+                "supplier_id": sid, "kind": idea.get("kind"), "qty": idea.get("qty", 30),
+                "spec_id": idea.get("spec_id"), "note": f"自走ネゴ {rid}"}, key)
+            if sres and isinstance(sres.get("rfq"), dict):
+                server_id = sres["rfq"].get("id")
+                # 起票直後に sent へ進める（メール送信済みのため）。
+                if server_id:
+                    api_post("/api/agent/rfq/record", {"id": server_id, "status": "sent"}, key)
             ledger["rfqs"].append({"id": rid, "supplier_id": sid, "to": ALLOWLIST[sid],
                                    "kind": idea.get("kind"), "thread_id": thread, "sent_at": today_str(),
-                                   "status": "sent", "quote": None})
+                                   "status": "sent", "quote": None, "server_id": server_id})
             sent_today += 1
             ledger["sent_by_day"][today_str()] = sent_today
             log.append(f"📤 送信 {rid} → {sid}({ALLOWLIST[sid]})")
@@ -206,6 +261,10 @@ def tick():
             q = parse_quote(body)
             if q.get("quoted_unit_jpy"):
                 rec.update(status="received", quote=q)
+                # サーバDBにも received を記録（Web/MCP に反映）。
+                if rec.get("server_id"):
+                    api_post("/api/agent/rfq/record", {"id": rec["server_id"], "status": "received",
+                             **{k: v for k, v in q.items() if v is not None}}, key)
                 log.append(f"📥 受領 {rid}: ¥{q.get('quoted_unit_jpy')} / 納期{q.get('lead_time_days')}日")
             else:
                 rec["status"] = "replied_unparsed"
@@ -242,4 +301,9 @@ def cmd_status(_):
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "tick"
-    sys.exit(cmd_status(None) if cmd == "status" else tick())
+    if cmd == "status":
+        sys.exit(cmd_status(None))
+    elif cmd == "sync":
+        sys.exit(cmd_sync(None))
+    else:
+        sys.exit(tick())
