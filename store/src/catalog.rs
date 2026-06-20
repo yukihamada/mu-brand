@@ -145,6 +145,25 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
          );
          CREATE INDEX IF NOT EXISTS idx_return_requests_ip
              ON catalog_return_requests(client_ip);
+         -- デマンドゲート: すぐ作れない物(非POD/quote)は「ほしい」が threshold 人
+         -- 集まったら作る。1 行 = 1 つの作りたい(kind+label)、wishes は投票数。
+         CREATE TABLE IF NOT EXISTS catalog_demand (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_key      TEXT NOT NULL UNIQUE,  -- normalize(kind|label)
+            kind          TEXT NOT NULL,
+            label         TEXT NOT NULL,         -- ユーザーが入力した「作りたい」
+            wishes        INTEGER NOT NULL DEFAULT 0,
+            threshold     INTEGER NOT NULL DEFAULT 100,
+            status        TEXT NOT NULL DEFAULT 'gathering',  -- gathering|triggered|in_production|fulfilled
+            created_at    TEXT DEFAULT (datetime('now')),
+            triggered_at  TEXT
+         );
+         CREATE TABLE IF NOT EXISTS catalog_demand_votes (
+            item_key   TEXT NOT NULL,
+            client_ip  TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY(item_key, client_ip)
+         );
          "
     );
 
@@ -5491,6 +5510,9 @@ pub struct MakePageQuery {
     /// ?req=<token> — デザイン依頼リンク。お題をプリフィルし「○○さんのために作成」バナーを出す。
     #[serde(default)]
     pub req: Option<String>,
+    /// ?q=<検索語> — /shop の0件「作りますか?」CTA等から作りたい文をプリフィル。
+    #[serde(default)]
+    pub q: Option<String>,
 }
 
 /// /make A/B/C: 勝者UU到達のしきい値（ユニーク訪問者の作成数）。
@@ -6712,6 +6734,58 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("flag", "フラッグ（全面）"),
 ];
 
+/// POST /api/make/want — デマンドゲート投票。すぐ作れない物(非POD/工場)に
+/// 「ほしい」を1票。client-ip 単位で重複防止。threshold 人到達で status=triggered
+/// にして人間/RFQ へ回す（MVで見せた「100人集まったら作る」の本実装）。
+#[derive(serde::Deserialize)]
+pub struct WantVote { pub kind: String, pub label: String }
+
+pub async fn make_want_vote(
+    State(db): State<Db>,
+    headers: axum::http::HeaderMap,
+    axum::Json(v): axum::Json<WantVote>,
+) -> Response {
+    let kind = v.kind.trim().to_lowercase();
+    let label: String = v.label.trim().chars().take(120).collect();
+    if label.is_empty() {
+        return (StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({"ok":false,"error":"empty"}))).into_response();
+    }
+    let item_key = format!("{}|{}", kind, label.to_lowercase());
+    let ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|x| x.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
+        .unwrap_or_default();
+    let conn = db.lock().unwrap();
+    let _ = conn.execute(
+        "INSERT INTO catalog_demand(item_key,kind,label,wishes,threshold) VALUES(?,?,?,0,100)
+         ON CONFLICT(item_key) DO NOTHING",
+        rusqlite::params![item_key, kind, label]);
+    // 同 IP は1票（空IP=ローカルは加算）
+    let counted = if ip.is_empty() { true } else {
+        conn.execute("INSERT INTO catalog_demand_votes(item_key,client_ip) VALUES(?,?)",
+            rusqlite::params![item_key, ip]).is_ok()
+    };
+    if counted {
+        let _ = conn.execute("UPDATE catalog_demand SET wishes=wishes+1 WHERE item_key=?",
+            rusqlite::params![item_key]);
+    }
+    let (wishes, threshold, status): (i64, i64, String) = conn.query_row(
+        "SELECT wishes,threshold,status FROM catalog_demand WHERE item_key=?",
+        rusqlite::params![item_key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    ).unwrap_or((0, 100, "gathering".into()));
+    if wishes >= threshold && status == "gathering" {
+        let _ = conn.execute(
+            "UPDATE catalog_demand SET status='triggered', triggered_at=datetime('now') WHERE item_key=?",
+            rusqlite::params![item_key]);
+    }
+    axum::Json(serde_json::json!({
+        "ok": true, "wishes": wishes, "threshold": threshold, "counted": counted,
+        "status": if wishes >= threshold { "triggered" } else { "gathering" }
+    })).into_response()
+}
+
 pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakePageQuery>) -> Response {
     // 表示言語: 既定は日本語(日本先行)。英語は明示的な ?lang=en のときだけ。
     // ブラウザの Accept-Language では切り替えない — en ロケールの端末でも日本語の
@@ -6791,6 +6865,13 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
             None => String::new(),
         }
     };
+    // ?q= で作りたい文をプリフィル（/shop の0件「作りますか?」CTA等から流入）。
+    // textarea の中身として html_text でエスケープ。JS は placeholder のみ上書き
+    // するので value は生き残る。
+    let prompt_prefill = q.q.as_deref().map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| html_text(&s.chars().take(300).collect::<String>()))
+        .unwrap_or_default();
     let html = MAKE_HTML
         .replace("__REQ_INJECT__", &req_inject)
         .replace("__LOCAL_GEN__", if local_gen_enabled() { "1" } else { "0" })
@@ -6799,6 +6880,7 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
         .replace("__SERVER_VARIANT__", server_variant)
         .replace("__SEL_KIND__", sel)
         .replace("__SEL_LABEL__", sel_label)
+        .replace("__PROMPT__", &prompt_prefill)
         .replace("__WINNER_LOCKED__", lock_js);
     let html = if en { make_html_en(html) } else { html };
     let mut resp = Html(html).into_response();
@@ -7177,7 +7259,7 @@ button:disabled{opacity:.5;cursor:default}
     </div>
   </div>
   __REQ_INJECT__
-  <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
+  <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ">__PROMPT__</textarea>
   <div class="row" style="margin-top:8px">
     <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
     <span id="attChip" style="display:none;flex:1;min-width:0;align-items:center;gap:8px;font-size:12.5px;color:rgba(245,245,240,.8)"></span>
@@ -7195,6 +7277,16 @@ __KIND_OPTIONS__
     <div style="text-align:center;margin-top:10px"><a href="/design/ask" data-funnel="cta_click" data-funnel-cta="make_ask_someone" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🎁 自分で作らず、誰かに頼む →</a> · <a href="/dojo" data-funnel="cta_click" data-funnel-cta="make_dojo" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🥋 道場の一着を作る →</a></div>
   </div>
   <div class="price-hint">__PRICE_HINT__</div>
+  <div id="demandGate" style="margin-top:14px;padding:13px 15px;background:rgba(255,215,0,.07);border:1px solid rgba(255,215,0,.25);border-radius:12px">
+    <div style="font-size:12.5px;color:rgba(245,245,240,.78)">工場でしか作れない物（道着・特殊素材など）？ <b style="color:#ffd700">ほしい人が集まったら、作って届けます。</b></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-top:9px">
+      <button id="wantBtn" type="button" style="flex:0 0 auto;background:rgba(255,215,0,.28);border:1px solid rgba(255,215,0,.6);color:#ffd700;font-weight:700;padding:9px 16px;border-radius:10px;cursor:pointer">🙋 ほしい！</button>
+      <div style="flex:1;min-width:0">
+        <div style="height:10px;border-radius:6px;background:#1a1a22;overflow:hidden"><div id="wantFill" style="height:100%;width:0;background:linear-gradient(90deg,#b8922f,#ffd700)"></div></div>
+        <div style="font-size:11.5px;color:rgba(245,245,240,.6);margin-top:4px"><b id="wantN" style="color:#ffd700">0</b> / <span id="wantT">100</span> 人</div>
+      </div>
+    </div>
+  </div>
   <div id="engRow" style="display:none;margin:6px 0 0;font-size:12.5px;color:rgba(245,245,240,.75)">
     生成エンジン:
     <label style="margin-left:6px;cursor:pointer"><input type="radio" name="eng" value="gemini" checked> ⚡ 高品質（Gemini）</label>
@@ -7518,6 +7610,20 @@ function wireClaim(j,p){
 }
 $('#go').onclick=runMake;
 $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter')runMake();});
+// デマンドゲート: すぐ作れない物に「ほしい」投票(100人で作る)
+(function(){var wb=document.getElementById('wantBtn'); if(!wb)return;
+  wb.onclick=function(){var k=$('#k').value, p=$('#p').value.trim();
+    if(!p){$('#p').focus();return;}
+    wb.disabled=true;
+    fetch('/api/make/want',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind:k,label:p})})
+      .then(function(r){return r.json();}).then(function(j){wb.disabled=false;
+        if(j&&j.ok){ $('#wantN').textContent=j.wishes; $('#wantT').textContent=j.threshold;
+          document.getElementById('wantFill').style.width=Math.min(100,Math.round(j.wishes/j.threshold*100))+'%';
+          if(j.status==='triggered'){wb.textContent='✦ 作ります！';}
+          if(typeof muEvent==='function')muEvent('cta_click',{cta:'make_want',kind:k,wishes:j.wishes});
+        }}).catch(function(){wb.disabled=false;});
+  };
+})();
 </script>
 <!-- PWA: install as an app (maker entry). Drives re-visits (icon) + sharing. -->
 <div id="muInstall" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:9000;background:#f5f5f0;color:#0a0a0a;font:600 14px/1 -apple-system,system-ui,sans-serif;padding:13px 18px;border-radius:999px;box-shadow:0 6px 24px rgba(0,0,0,.4);cursor:pointer;display:none;align-items:center;gap:8px">📲 アプリにする<span style="opacity:.55;font-weight:400;font-size:12px">ホーム画面に追加</span></div>
@@ -11687,15 +11793,28 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         kind_chips = kind_chips,
         sort_chips = sort_chips,
         body_or_empty = if items.is_empty() {
+            // MISSION の核: Amazonで「0件」になる検索を、MUでは「作りますか?」に変える。
+            // 検索語があるときだけ、その語をプリフィルした /make への金CTAを出す
+            // （種類フィルタだけの0件は除外）。
+            let make_cta = if !q_trim.is_empty() {
+                let enc = urlencoding::encode(&q_trim);
+                let qt = html_text(&q_trim);
+                const ST: &str = "display:inline-block;margin-top:16px;padding:12px 22px;border-radius:12px;background:linear-gradient(180deg,#f4d98a,#b8922f);color:#1a1407;font-weight:800;text-decoration:none;box-shadow:0 8px 22px rgba(216,183,90,.3)";
+                if lang == "en" {
+                    format!(r#"<br><a href="/make?lang=en&q={enc}" style="{ST}">✨ Not on Amazon? Make “{qt}” →</a>"#)
+                } else {
+                    format!(r#"<br><a href="/make?q={enc}" style="{ST}">✨「{qt}」を、作りますか？ →</a>"#)
+                }
+            } else { String::new() };
             if lang == "en" {
                 format!(
-                    r#"<div class="empty">No items match "{}".<br><a href="/shop?lang=en" style="color:#ffd700">Browse all items →</a></div>"#,
-                    html_text(if !q_trim.is_empty() { &q_trim } else { "these filters" })
+                    r#"<div class="empty">No items match "{}".<br><a href="/shop?lang=en" style="color:#ffd700">Browse all items →</a>{}</div>"#,
+                    html_text(if !q_trim.is_empty() { &q_trim } else { "these filters" }), make_cta
                 )
             } else {
                 format!(
-                    r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a></div>"#,
-                    html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" })
+                    r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a>{}</div>"#,
+                    html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" }), make_cta
                 )
             }
         } else {

@@ -2,6 +2,7 @@ import SwiftUI
 
 // 🛍 Shop — 検索 + kind 絞り込みのグリッド。データ源は Live と同じ feed API。
 struct ShopView: View {
+    @EnvironmentObject private var app: AppState
     @State private var products: [FeedProduct] = []
     @State private var page = 1
     @State private var kind: ProductKind = .all
@@ -28,10 +29,34 @@ struct ShopView: View {
                     if loading { ProgressView().padding() }
                     // 空状態 / エラー (初回ロード後・0件のときだけ出す)
                     if !loading && loadedOnce && products.isEmpty {
-                        ContentUnavailableView(
-                            error == nil ? String(localized: "shop.empty") : String(localized: "shop.error"),
-                            systemImage: error == nil ? "magnifyingglass" : "wifi.exclamationmark"
-                        )
+                        VStack(spacing: 18) {
+                            ContentUnavailableView(
+                                error == nil ? String(localized: "shop.empty") : String(localized: "shop.error"),
+                                systemImage: error == nil ? "magnifyingglass" : "wifi.exclamationmark"
+                            )
+                            // MISSION核: 検索0件 → MUでは「作りますか?」。検索語があるときだけ、
+                            // その語から即デザイン生成へ（startMake が Make タブで自動生成）。
+                            if error == nil {
+                                let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if !q.isEmpty {
+                                    let isJa = Locale.current.language.languageCode?.identifier == "ja"
+                                    Button {
+                                        Analytics.track("shop_empty_make")
+                                        app.startMake(q)
+                                    } label: {
+                                        Label(isJa ? "「\(q)」を作る" : "Make “\(q)”",
+                                              systemImage: "sparkles")
+                                            .font(.headline)
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 14)
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(.yellow)
+                                    .foregroundStyle(.black)
+                                    .padding(.horizontal, 24)
+                                }
+                            }
+                        }
                         .padding(.top, 60)
                     }
                 }
