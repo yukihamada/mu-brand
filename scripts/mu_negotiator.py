@@ -204,40 +204,55 @@ def tick():
                     kind=q.get("request", {}).get("kind"), supplier_id=opt.get("supplier_id"), mode=opt.get("mode"))
         log.append(f"🆕 仕様化 {idea['id']}: kind={idea['kind']} → {idea['supplier_id']}({idea['mode']})")
 
-    # ── 2. 交渉: quote × allowlist を自動送信（1日上限） ──
+    # ── 2. 交渉: auto_send=False は『発注準備(保留)』、True は自動送信(1日上限) ──
     for idea in ideas["queue"]:
-        if idea.get("status") != "specced" or idea.get("mode") != "quote":
+        if idea.get("status") not in ("specced", "ready") or idea.get("mode") != "quote":
             continue
         sid = idea.get("supplier_id")
         if sid not in ALLOWLIST:
-            idea["status"] = "needs_manual"
-            log.append(f"✋ {idea['id']} 供給先 {sid} はallowlist外({MANUAL_ONLY.get(sid,'連絡先未確定')})→手動")
+            if idea.get("status") != "needs_manual":
+                idea["status"] = "needs_manual"
+                log.append(f"✋ {idea['id']} 供給先 {sid} はallowlist外({MANUAL_ONLY.get(sid,'連絡先未確定')})→手動")
             continue
-        if not ENABLED:
-            log.append(f"⏸ {idea['id']} 送信OFF(MU_NEGOTIATE_ENABLED!=1)"); continue
-        if sent_today >= DAILY_CAP:
-            log.append(f"🛑 1日上限{DAILY_CAP}通到達→{idea['id']}は明日"); continue
         rid = idea["id"]
-        subj = rfq_subject(rid, idea.get("kind", "製品"))
-        thread = gog_send(ALLOWLIST[sid], subj, rfq_body(sid, idea.get("kind", "製品"), idea.get("spec", {})))
-        if thread:
-            idea["status"] = "rfq_sent"
-            # サーバDBにも per-agent RFQ を起票（面=Web/MCP で見れるように・owner鍵不要）。
-            server_id = None
+        # サーバに per-agent RFQ を起票（無ければ）。発注前は drafted で『面』に出す。
+        if not idea.get("server_id"):
             sres = api_post("/api/agent/rfq/create", {
                 "supplier_id": sid, "kind": idea.get("kind"), "qty": idea.get("qty", 30),
                 "spec_id": idea.get("spec_id"), "note": f"自走ネゴ {rid}"}, key)
             if sres and isinstance(sres.get("rfq"), dict):
-                server_id = sres["rfq"].get("id")
-                # 起票直後に sent へ進める（メール送信済みのため）。
-                if server_id:
-                    api_post("/api/agent/rfq/record", {"id": server_id, "status": "sent"}, key)
-            ledger["rfqs"].append({"id": rid, "supplier_id": sid, "to": ALLOWLIST[sid],
-                                   "kind": idea.get("kind"), "thread_id": thread, "sent_at": today_str(),
-                                   "status": "sent", "quote": None, "server_id": server_id})
+                idea["server_id"] = sres["rfq"].get("id")
+            if not any(r["id"] == rid for r in ledger["rfqs"]):
+                ledger["rfqs"].append({"id": rid, "supplier_id": sid, "to": ALLOWLIST[sid],
+                    "kind": idea.get("kind"), "thread_id": None, "sent_at": None,
+                    "status": "drafted", "quote": None, "server_id": idea.get("server_id")})
+        # 保留（発注まだ）: ready のまま送信しない。`order <id>` で auto_send=True にすると発注。
+        if not idea.get("auto_send", True):
+            if idea.get("status") != "ready":
+                idea["status"] = "ready"
+                log.append(f"🟡 発注準備OK（保留） {rid} → {sid}（`order {rid}` で発注）")
+            continue
+        # 発注（auto_send=True / order で解放）:
+        if not ENABLED:
+            log.append(f"⏸ {rid} 送信OFF(MU_NEGOTIATE_ENABLED!=1)"); continue
+        if sent_today >= DAILY_CAP:
+            log.append(f"🛑 1日上限{DAILY_CAP}通到達→{rid}は明日"); continue
+        subj = rfq_subject(rid, idea.get("kind", "製品"))
+        thread = gog_send(ALLOWLIST[sid], subj, rfq_body(sid, idea.get("kind", "製品"), idea.get("spec", {})))
+        if thread:
+            idea["status"] = "rfq_sent"
+            if idea.get("server_id"):
+                api_post("/api/agent/rfq/record", {"id": idea["server_id"], "status": "sent"}, key)
+            rec = next((r for r in ledger["rfqs"] if r["id"] == rid), None)
+            if rec:
+                rec.update(status="sent", thread_id=thread, sent_at=today_str())
+            else:
+                ledger["rfqs"].append({"id": rid, "supplier_id": sid, "to": ALLOWLIST[sid],
+                    "kind": idea.get("kind"), "thread_id": thread, "sent_at": today_str(),
+                    "status": "sent", "quote": None, "server_id": idea.get("server_id")})
             sent_today += 1
             ledger["sent_by_day"][today_str()] = sent_today
-            log.append(f"📤 送信 {rid} → {sid}({ALLOWLIST[sid]})")
+            log.append(f"📤 発注送信 {rid} → {sid}({ALLOWLIST[sid]})")
 
     # ── 3. 受信: 返信を解析して received に ──
     # -from:me で自分の送信控えを除外（供給先からの返信だけ拾う）。
@@ -299,11 +314,27 @@ def cmd_status(_):
     for r in ledger["rfqs"]:
         print(f"  [{r['id']}] {r['supplier_id']} {r['status']} quote={r.get('quote')}")
 
+def cmd_order(idea_id):
+    """保留中(ready)のアイデアを発注解放（auto_send=True）→ その場で tick して発注メールを送る。"""
+    ideas = load(IDEAS, {"queue": []})
+    hit = [i for i in ideas["queue"] if str(i["id"]) == str(idea_id)]
+    if not hit:
+        print(f"idea {idea_id} が見つかりません（status コマンドで一覧）"); return 1
+    for i in hit:
+        i["auto_send"] = True
+    save(IDEAS, ideas)
+    print(f"🚀 発注解放 {idea_id} → 送信します…")
+    return tick()
+
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "tick"
     if cmd == "status":
         sys.exit(cmd_status(None))
     elif cmd == "sync":
         sys.exit(cmd_sync(None))
+    elif cmd == "order":
+        if len(sys.argv) < 3:
+            print("使い方: mu_negotiator.py order <idea_id>"); sys.exit(1)
+        sys.exit(cmd_order(sys.argv[2]))
     else:
         sys.exit(tick())
