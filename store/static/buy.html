@@ -285,7 +285,11 @@ footer{
     var s=id.visitor_id,h=0;
     for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;
     var q=new URLSearchParams(location.search).get('ab');
-    var v=(q==='a'||q==='b')?q:['a','b'][h%2];
+    // 2026-06-20: 実測(analytics get_converter_pages)で /buy はCV者の64%が通る最重要動線。
+    // 旧/buy診断「滞在9秒・大半がCTA到達前に離脱」の対策(カード前倒し+sticky常時CTA)は
+    // variant b に実装済みだったが 50/50 で半分にしか出ていなかった。→ b を既定(100%)に昇格。
+    // 計測は data-ab で継続。?ab=a で旧版を強制でき比較は残す。
+    var v=(q==='a'||q==='b')?q:'b';
     document.body.setAttribute('data-ab',v);
     window.MU_BUY_AB=v;
   }catch(_){ window.MU_BUY_AB='a'; }
