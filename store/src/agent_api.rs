@@ -1510,15 +1510,33 @@ pub async fn agent_spec(
 }
 
 /// POST /api/agent/rfq/create — RFQ ドラフト起票（owner-only・送信しない）。
+/// 呼び出し元のメールと「管理者(owner/MA council)か」を返す。require_email 必須。
+/// per-agent: 一般エージェントは自分のRFQのみ、管理者は全件。
+fn rfq_caller(
+    db: &Db,
+    headers: &HeaderMap,
+    q: &HashMap<String, String>,
+) -> Result<(String, bool), Response> {
+    let email = require_email(db, headers, Some(q))?;
+    let raw = std::env::var("ADMIN_EMAIL").unwrap_or_else(|_| "mail@yukihamada.jp".into());
+    let is_admin = raw.split(',').any(|e| e.trim().eq_ignore_ascii_case(&email)) || {
+        let conn = db.lock().unwrap();
+        is_ma_council_email(&conn, &email)
+    };
+    Ok((email, is_admin))
+}
+
+/// POST /api/agent/rfq/create — RFQ ドラフト起票（要鍵・呼び手が所有者）。送信しない。
 pub async fn agent_rfq_create(
     State(db): State<Db>,
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
     body: Option<Json<serde_json::Value>>,
 ) -> Response {
-    if let Err(e) = crate::agent_owner_or_err(&db, &headers, Some(&q)) {
-        return e;
-    }
+    let (email, _admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
     let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
     let gets = |k: &str| -> Option<String> {
         b.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).or_else(|| q.get(k).cloned())
@@ -1535,22 +1553,24 @@ pub async fn agent_rfq_create(
     match crate::rfq::rfq_create(
         &conn, supplier_id.as_deref(), kind.as_deref(), description.as_deref(), qty,
         spec_id.as_deref(), product_ref.as_deref(), spec_pack_url.as_deref(), note.as_deref(),
+        Some(&email),
     ) {
         Ok(v) => Json(v).into_response(),
         Err(e) => json_err(StatusCode::BAD_REQUEST, &e),
     }
 }
 
-/// POST /api/agent/rfq/record — 供給先の返答（価格/MOQ/納期）を記録（owner-only）。
+/// POST /api/agent/rfq/record — 供給先の返答を記録（要鍵・自分のRFQのみ／管理者は全件）。
 pub async fn agent_rfq_record(
     State(db): State<Db>,
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
     body: Option<Json<serde_json::Value>>,
 ) -> Response {
-    if let Err(e) = crate::agent_owner_or_err(&db, &headers, Some(&q)) {
-        return e;
-    }
+    let (email, admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
     let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
     let geti = |k: &str| -> Option<i64> {
         b.get(k).and_then(|v| v.as_i64()).or_else(|| q.get(k).and_then(|s| s.parse().ok()))
@@ -1562,6 +1582,13 @@ pub async fn agent_rfq_record(
         return json_err(StatusCode::BAD_REQUEST, "pass `id`");
     };
     let conn = db.lock().unwrap();
+    // 認可: 管理者でなければ自分が所有するRFQのみ更新可。
+    if !admin {
+        match crate::rfq::rfq_owner_email(&conn, id) {
+            Some(o) if o.eq_ignore_ascii_case(&email) => {}
+            _ => return json_err(StatusCode::FORBIDDEN, "このRFQは別の所有者のものです"),
+        }
+    }
     match crate::rfq::rfq_record(
         &conn, id, gets("status").as_deref(), geti("quoted_unit_jpy"), geti("moq"),
         geti("lead_time_days"), gets("valid_until").as_deref(), gets("note").as_deref(),
@@ -1571,20 +1598,90 @@ pub async fn agent_rfq_record(
     }
 }
 
-/// GET /api/agent/rfq/list — RFQ 一覧（owner-only）。
+/// GET /api/agent/rfq/list — RFQ 一覧（要鍵・自分のRFQ／管理者は全件）。JSON。
 pub async fn agent_rfq_list(
     State(db): State<Db>,
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
-    if let Err(e) = crate::agent_owner_or_err(&db, &headers, Some(&q)) {
-        return e;
-    }
+    let (email, admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
     let supplier_id = q.get("supplier_id").map(|s| s.as_str());
     let kind = q.get("kind").map(|s| s.as_str());
     let status = q.get("status").map(|s| s.as_str());
+    let owner = if admin { None } else { Some(email.as_str()) };
     let conn = db.lock().unwrap();
-    Json(crate::rfq::rfq_list(&conn, supplier_id, kind, status)).into_response()
+    Json(crate::rfq::rfq_list(&conn, supplier_id, kind, status, owner)).into_response()
+}
+
+/// GET /api/agent/rfq/page — RFQ 一覧の「面」（要鍵・HTML）。
+/// 一般エージェント=自分のRFQ（ユーザーページ）、管理者=全件（管理者ページ）。
+pub async fn agent_rfq_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let (email, admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let owner = if admin { None } else { Some(email.as_str()) };
+    let data = {
+        let conn = db.lock().unwrap();
+        crate::rfq::rfq_list(&conn, None, None, None, owner)
+    };
+    axum::response::Html(render_rfq_page(&email, admin, &data)).into_response()
+}
+
+fn render_rfq_page(email: &str, admin: bool, data: &serde_json::Value) -> String {
+    let empty = vec![];
+    let rfqs = data.get("rfqs").and_then(|v| v.as_array()).unwrap_or(&empty);
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let st_ja = |s: &str| -> (String, &'static str) {
+        match s {
+            "sent" => ("送信済・返信待ち".to_string(), "#f59e0b"),
+            "received" => ("見積受領".to_string(), "#22c55e"),
+            "drafted" => ("下書き".to_string(), "#71717a"),
+            "expired" => ("期限切れ".to_string(), "#52525b"),
+            other => (other.to_string(), "#7c8cff"),
+        }
+    };
+    let mut rows = String::new();
+    for r in rfqs {
+        let g = |k: &str| r.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let gi = |k: &str| r.get(k).and_then(|v| v.as_i64());
+        let id = r.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let (label, color) = st_ja(&g("status"));
+        let quote = match gi("quoted_unit_jpy") {
+            Some(p) => format!("¥{} / MOQ{} / {}日", p, gi("moq").map(|x| x.to_string()).unwrap_or("—".into()), gi("lead_time_days").map(|x| x.to_string()).unwrap_or("—".into())),
+            None => "—".to_string(),
+        };
+        rows.push_str(&format!(
+            "<tr><td class=mono>#{}</td><td>{}</td><td>{}</td><td><span class=pill style=\"background:{}22;color:{}\">{}</span></td><td>{}</td><td class=sub>{}</td></tr>",
+            id, esc(&g("kind")), esc(&g("supplier_id")), color, color, label, esc(&quote), esc(&g("created_at"))
+        ));
+    }
+    if rows.is_empty() {
+        rows = "<tr><td colspan=6 class=sub>まだRFQがありません</td></tr>".to_string();
+    }
+    let title = if admin { "MU 交渉（管理者・全件）" } else { "あなたの交渉（RFQ）" };
+    format!(
+        "<!DOCTYPE html><html lang=ja><head><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><meta name=robots content=noindex><meta http-equiv=refresh content=90><title>{title}</title><style>\
+        *{{box-sizing:border-box}}body{{margin:0;background:#0b0c0f;color:#e8eaf0;font-family:-apple-system,system-ui,sans-serif;line-height:1.6}}\
+        .wrap{{max-width:880px;margin:0 auto;padding:30px 18px}}h1{{font-size:22px;margin:0 0 2px}}.lede{{color:#71717a;font-size:13px;margin:0 0 20px}}\
+        table{{width:100%;border-collapse:collapse;font-size:13.5px;background:#14161b;border:1px solid #262a33;border-radius:14px;overflow:hidden}}\
+        th,td{{text-align:left;padding:11px 13px;border-bottom:1px solid #262a33}}th{{font:600 11px/1 ui-monospace,monospace;color:#71717a;text-transform:uppercase}}\
+        tr:last-child td{{border-bottom:none}}.mono{{font-family:ui-monospace,monospace;font-size:12px}}.sub{{color:#71717a;font-size:11.5px}}\
+        .pill{{display:inline-block;font:700 11px/1 ui-monospace,monospace;padding:5px 9px;border-radius:999px}}</style></head><body><div class=wrap>\
+        <h1>🤝 {title}</h1><p class=lede>{who} ・ 90秒ごと自動更新 ・ 受信→解析→更新は自走</p>\
+        <table><tr><th>ID</th><th>品目</th><th>供給先</th><th>状態</th><th>見積</th><th>起票日</th></tr>{rows}</table>\
+        </div></body></html>",
+        title = title,
+        who = if admin { format!("管理者: {}", esc(email)) } else { esc(email) },
+        rows = rows
+    )
 }
 
 fn admin_token_ok(q: &HashMap<String, String>) -> bool {

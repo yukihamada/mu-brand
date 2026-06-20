@@ -250,6 +250,7 @@ pub fn rfq_create(
     product_ref: Option<&str>,
     spec_pack_url: Option<&str>,
     note: Option<&str>,
+    owner_email: Option<&str>,
 ) -> Result<Value, String> {
     let qty = qty.max(1);
 
@@ -284,8 +285,8 @@ pub fn rfq_create(
 
     conn.execute(
         "INSERT INTO quote_requests \
-            (supplier_id, kind, spec_id, product_ref, qty, spec_pack_url, status, note, draft_subject, draft_body) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'drafted', ?7, ?8, ?9)",
+            (supplier_id, kind, spec_id, product_ref, qty, spec_pack_url, status, note, draft_subject, draft_body, owner_email) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'drafted', ?7, ?8, ?9, ?10)",
         params![
             resolved_supplier,
             resolved_kind,
@@ -295,7 +296,8 @@ pub fn rfq_create(
             spec_pack_url,
             note,
             subject,
-            body
+            body,
+            owner_email
         ],
     )
     .map_err(|e| format!("insert quote_requests: {}", e))?;
@@ -326,6 +328,17 @@ fn is_iso_date(s: &str) -> bool {
         && b[..4].iter().all(u8::is_ascii_digit)
         && b[5..7].iter().all(u8::is_ascii_digit)
         && b[8..10].iter().all(u8::is_ascii_digit)
+}
+
+/// RFQ の所有者メール（per-agent 認可チェック用）。行が無い/未設定なら None。
+pub fn rfq_owner_email(conn: &Connection, id: i64) -> Option<String> {
+    conn.query_row(
+        "SELECT owner_email FROM quote_requests WHERE id=?1",
+        params![id],
+        |r| r.get::<_, Option<String>>(0),
+    )
+    .ok()
+    .flatten()
 }
 
 pub fn rfq_record(
@@ -424,10 +437,16 @@ pub fn rfq_list(
     supplier_id: Option<&str>,
     kind: Option<&str>,
     status: Option<&str>,
+    // Some(email)=その所有者のRFQのみ（ユーザーページ）。None=全件（管理者）。
+    owner_email: Option<&str>,
 ) -> Value {
     let mut where_clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+    if let Some(o) = owner_email.filter(|x| !x.trim().is_empty()) {
+        where_clauses.push(format!("owner_email=?{}", binds.len() + 1));
+        binds.push(Box::new(o.to_string()));
+    }
     if let Some(s) = supplier_id.filter(|x| !x.trim().is_empty()) {
         where_clauses.push(format!("supplier_id=?{}", binds.len() + 1));
         binds.push(Box::new(s.to_string()));
@@ -536,6 +555,7 @@ mod tests {
             None,
             None,
             Some("test"),
+            None,
         )
         .unwrap();
         let id = created["rfq"]["id"].as_i64().unwrap();
@@ -566,7 +586,7 @@ mod tests {
     fn received_quote_with_past_valid_until_returns_none() {
         let conn = setup();
         let created =
-            rfq_create(&conn, Some("isami_gi"), Some("gi"), None, 10, None, None, None, None)
+            rfq_create(&conn, Some("isami_gi"), Some("gi"), None, 10, None, None, None, None, None)
                 .unwrap();
         let id = created["rfq"]["id"].as_i64().unwrap();
         rfq_record(
@@ -586,7 +606,7 @@ mod tests {
     #[test]
     fn list_filters_by_supplier_kind_status() {
         let conn = setup();
-        rfq_create(&conn, Some("isami_gi"), Some("gi"), None, 10, None, None, None, None).unwrap();
+        rfq_create(&conn, Some("isami_gi"), Some("gi"), None, 10, None, None, None, None, None).unwrap();
         rfq_create(
             &conn,
             Some("heritage_loopwheel"),
@@ -597,13 +617,14 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
-        let all = rfq_list(&conn, None, None, None);
+        let all = rfq_list(&conn, None, None, None, None);
         assert_eq!(all["count"].as_i64().unwrap(), 2);
 
-        let only_gi = rfq_list(&conn, Some("isami_gi"), None, None);
+        let only_gi = rfq_list(&conn, Some("isami_gi"), None, None, None);
         assert_eq!(only_gi["count"].as_i64().unwrap(), 1);
         assert_eq!(only_gi["rfqs"][0]["supplier_id"], "isami_gi");
         // supplier_name 補完。
@@ -612,9 +633,9 @@ mod tests {
             .unwrap()
             .contains("ISAMI"));
 
-        let drafted = rfq_list(&conn, None, None, Some("drafted"));
+        let drafted = rfq_list(&conn, None, None, Some("drafted"), None);
         assert_eq!(drafted["count"].as_i64().unwrap(), 2);
-        let received = rfq_list(&conn, None, None, Some("received"));
+        let received = rfq_list(&conn, None, None, Some("received"), None);
         assert_eq!(received["count"].as_i64().unwrap(), 0);
     }
 
@@ -647,6 +668,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(created["rfq"]["supplier_id"], "heritage_loopwheel");
@@ -657,12 +679,12 @@ mod tests {
     fn seed_rfq_drafts_is_idempotent() {
         let conn = setup();
         seed_rfq_drafts(&conn);
-        let first = rfq_list(&conn, None, None, Some("drafted"));
+        let first = rfq_list(&conn, None, None, Some("drafted"), None);
         let n1 = first["count"].as_i64().unwrap();
         assert!(n1 >= 4, "expected >=4 seeded drafts, got {}", n1);
         // 2回目で増えない。
         seed_rfq_drafts(&conn);
-        let second = rfq_list(&conn, None, None, Some("drafted"));
+        let second = rfq_list(&conn, None, None, Some("drafted"), None);
         assert_eq!(second["count"].as_i64().unwrap(), n1);
     }
 }

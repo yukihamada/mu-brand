@@ -97,4 +97,10 @@ pub fn ensure_manufacturing_schema(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_quote_requests_spec ON quote_requests(spec_id);
         ",
     );
+    // per-agent 所有者列（後付け・既存テーブルにも足す）。重複時エラーは握り潰す。
+    let _ = conn.execute("ALTER TABLE quote_requests ADD COLUMN owner_email TEXT", []);
+    let _ = conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_quote_requests_owner ON quote_requests(owner_email)",
+        [],
+    );
 }
