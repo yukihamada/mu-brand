@@ -10,3 +10,4 @@ export MU_NEGOTIATE_ENABLED="${MU_NEGOTIATE_ENABLED:-1}"
 LOG="$HOME/.config/mu-negotiator/cron.log"
 echo "==== $(date) ====" >> "$LOG"
 cd "$HOME/workspace/mu-mfg-impl" && /usr/bin/python3 scripts/mu_negotiator.py tick >> "$LOG" 2>&1
+/usr/bin/python3 scripts/rfq_dashboard.py >> "$LOG" 2>&1
