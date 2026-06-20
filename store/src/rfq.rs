@@ -469,7 +469,7 @@ pub fn rfq_list(
     let sql = format!(
         "SELECT id, supplier_id, kind, spec_id, product_ref, qty, spec_pack_url, status, \
                 quoted_unit_jpy, moq, lead_time_days, valid_until, note, \
-                draft_subject, draft_body, created_at, updated_at \
+                draft_subject, draft_body, created_at, updated_at, owner_email \
          FROM quote_requests{} ORDER BY id DESC",
         where_sql
     );
@@ -481,7 +481,7 @@ pub fn rfq_list(
     let bind_refs: Vec<&dyn rusqlite::ToSql> = binds.iter().map(|b| b.as_ref()).collect();
     let rows: Vec<Value> = stmt
         .query_map(bind_refs.as_slice(), |r| {
-            Ok(row_to_json(
+            let mut j = row_to_json(
                 r.get(0)?,
                 &r.get::<_, String>(1)?,
                 &r.get::<_, String>(2)?,
@@ -499,7 +499,16 @@ pub fn rfq_list(
                 r.get(14)?,
                 r.get(15)?,
                 r.get(16)?,
-            ))
+            );
+            // 発注者（owner_email）を付与。管理者ページで「誰が発注しているか」を表示するため。
+            let owner: Option<String> = r.get(17)?;
+            if let Value::Object(ref mut m) = j {
+                m.insert(
+                    "owner_email".to_string(),
+                    owner.map(Value::String).unwrap_or(Value::Null),
+                );
+            }
+            Ok(j)
         })
         .map(|it| it.filter_map(|x| x.ok()).collect())
         .unwrap_or_default();

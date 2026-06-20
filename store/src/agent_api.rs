@@ -1623,16 +1623,19 @@ pub async fn agent_rfq_page(
     headers: HeaderMap,
     axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
 ) -> Response {
-    let (email, admin) = match rfq_caller(&db, &headers, &q) {
+    let (email, is_admin) = match rfq_caller(&db, &headers, &q) {
         Ok(x) => x,
         Err(e) => return e,
     };
-    let owner = if admin { None } else { Some(email.as_str()) };
+    // ?view=mine で管理者も「自分のRFQ（ユーザービュー）」を見れる。既定は admin=全件 / user=自分。
+    let force_mine = q.get("view").map(|v| v == "mine").unwrap_or(false);
+    let admin_view = is_admin && !force_mine;
+    let owner = if admin_view { None } else { Some(email.as_str()) };
     let data = {
         let conn = db.lock().unwrap();
         crate::rfq::rfq_list(&conn, None, None, None, owner)
     };
-    axum::response::Html(render_rfq_page(&email, admin, &data)).into_response()
+    axum::response::Html(render_rfq_page(&email, admin_view, &data)).into_response()
 }
 
 fn render_rfq_page(email: &str, admin: bool, data: &serde_json::Value) -> String {
@@ -1658,13 +1661,20 @@ fn render_rfq_page(email: &str, admin: bool, data: &serde_json::Value) -> String
             Some(p) => format!("¥{} / MOQ{} / {}日", p, gi("moq").map(|x| x.to_string()).unwrap_or("—".into()), gi("lead_time_days").map(|x| x.to_string()).unwrap_or("—".into())),
             None => "—".to_string(),
         };
+        // 発注者(owner_email)は管理者ビューでのみ列表示（誰が発注しているか）。
+        let owner_td = if admin {
+            format!("<td class=sub>{}</td>", esc(&g("owner_email")))
+        } else {
+            String::new()
+        };
         rows.push_str(&format!(
-            "<tr><td class=mono>#{}</td><td>{}</td><td>{}</td><td><span class=pill style=\"background:{}22;color:{}\">{}</span></td><td>{}</td><td class=sub>{}</td></tr>",
-            id, esc(&g("kind")), esc(&g("supplier_id")), color, color, label, esc(&quote), esc(&g("created_at"))
+            "<tr><td class=mono>#{}</td><td>{}</td><td>{}</td>{}<td><span class=pill style=\"background:{}22;color:{}\">{}</span></td><td>{}</td><td class=sub>{}</td></tr>",
+            id, esc(&g("kind")), esc(&g("supplier_id")), owner_td, color, color, label, esc(&quote), esc(&g("created_at"))
         ));
     }
+    let owner_th = if admin { "<th>発注者</th>" } else { "" };
     if rows.is_empty() {
-        rows = "<tr><td colspan=6 class=sub>まだRFQがありません</td></tr>".to_string();
+        rows = format!("<tr><td colspan={} class=sub>まだRFQがありません</td></tr>", if admin { 7 } else { 6 });
     }
     let title = if admin { "MU 交渉（管理者・全件）" } else { "あなたの交渉（RFQ）" };
     format!(
@@ -1676,10 +1686,11 @@ fn render_rfq_page(email: &str, admin: bool, data: &serde_json::Value) -> String
         tr:last-child td{{border-bottom:none}}.mono{{font-family:ui-monospace,monospace;font-size:12px}}.sub{{color:#71717a;font-size:11.5px}}\
         .pill{{display:inline-block;font:700 11px/1 ui-monospace,monospace;padding:5px 9px;border-radius:999px}}</style></head><body><div class=wrap>\
         <h1>🤝 {title}</h1><p class=lede>{who} ・ 90秒ごと自動更新 ・ 受信→解析→更新は自走</p>\
-        <table><tr><th>ID</th><th>品目</th><th>供給先</th><th>状態</th><th>見積</th><th>起票日</th></tr>{rows}</table>\
+        <table><tr><th>ID</th><th>品目</th><th>供給先</th>{owner_th}<th>状態</th><th>見積</th><th>起票日</th></tr>{rows}</table>\
         </div></body></html>",
         title = title,
-        who = if admin { format!("管理者: {}", esc(email)) } else { esc(email) },
+        who = if admin { format!("管理者ビュー（全ユーザーのRFQ）: {}", esc(email)) } else { format!("あなた: {}", esc(email)) },
+        owner_th = owner_th,
         rows = rows
     )
 }
