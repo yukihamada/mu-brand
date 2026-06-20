@@ -285,11 +285,19 @@ footer{
     var s=id.visitor_id,h=0;
     for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;
     var q=new URLSearchParams(location.search).get('ab');
-    // 2026-06-20: 実測(analytics get_converter_pages)で /buy はCV者の64%が通る最重要動線。
-    // 旧/buy診断「滞在9秒・大半がCTA到達前に離脱」の対策(カード前倒し+sticky常時CTA)は
-    // variant b に実装済みだったが 50/50 で半分にしか出ていなかった。→ b を既定(100%)に昇格。
-    // 計測は data-ab で継続。?ab=a で旧版を強制でき比較は残す。
-    var v=(q==='a'||q==='b')?q:'b';
+    // 2026-06-20: /buy 多変量(A/B/C/D/E)テスト。実測(get_converter_pages)で /buy はCV者の64%が通る最重要動線。
+    //   a=対照(従来) / b=カード前倒し+sticky / c=b+短いコピー / d=c+レイアウト簡素化 / e=超ミニマル(商品一点)。
+    //   文字数(lede)とレイアウト(補助ブロック)を変えてCVRを比較する。data-ab で計測。?ab=c 等で固定可。
+    // 収束: window.MU_BUY_AB_WEIGHTS(またはこの既定)の重みを CVR勝者に寄せると割当が寄る(=勝者へ収束)。
+    var VS=['a','b','c','d','e'];
+    var WEIGHTS=(window.MU_BUY_AB_WEIGHTS)||{a:1,b:1,c:1,d:1,e:1};
+    var v;
+    if(VS.indexOf(q)>=0){ v=q; }
+    else{
+      var tot=0; VS.forEach(function(k){tot+=(WEIGHTS[k]||0);}); if(tot<=0){tot=1;}
+      var r=(h%1000)/1000*tot, acc=0; v='b';
+      for(var vi=0;vi<VS.length;vi++){ acc+=(WEIGHTS[VS[vi]]||0); if(r<acc){ v=VS[vi]; break; } }
+    }
     document.body.setAttribute('data-ab',v);
     window.MU_BUY_AB=v;
   }catch(_){ window.MU_BUY_AB='a'; }
@@ -615,7 +623,8 @@ footer{
 // Variant b activation — DOM 前倒し + sticky CTA + YouTube ブリッジ。
 // 全て try/catch で囲い、失敗しても variant a 相当の表示に劣化するだけにする。
 (function(){
-  if(window.MU_BUY_AB!=='b')return;
+  var AB=window.MU_BUY_AB||'a';
+  if(AB==='a')return; // a=対照。b/c/d/e=treatment(下で差分適用)
   var isJa=/^ja/.test(navigator.language||'');
   // ① 商品カード(画像+価格+購入ボタン)を h1 直後 = ファーストビューへ前倒し。
   //    哲学(lede)より商品写真が先 (/buy/today の 2026-05-09 診断と同方針)。
@@ -628,6 +637,21 @@ footer{
     var lede=document.getElementById('buy-lede');
     if(card&&lede&&lede.parentNode)lede.parentNode.insertBefore(card,lede);
   }catch(_){}
+  // ①' コピー短縮 (c/d/e) — 文字数を削って CTA 到達までを短く
+  try{ if(AB==='c'||AB==='d'||AB==='e'){
+    var ld=document.getElementById('buy-lede');
+    if(ld)ld.innerHTML=isJa
+      ?'<strong>1 時間に 1 着</strong>。 気温が決める一点もの、 早いほど安い。 完売で終わり。'
+      :'<strong>One per hour.</strong> A temperature-seeded one-of-one — earlier is cheaper, gone when it sells out.';
+  }}catch(_){}
+  // ①'' レイアウト簡素化 (d/e) — 補助ブロックを畳んで商品カードに集中
+  try{ if(AB==='d'||AB==='e'){
+    document.querySelectorAll('.specs,.bullet-list,.trust').forEach(function(el){el.style.display='none';});
+  }}catch(_){}
+  // ①''' 超ミニマル (e) — eyebrow も隠し、商品カード一点に絞る
+  try{ if(AB==='e'){
+    var ey=document.getElementById('eyebrow'); if(ey)ey.style.display='none';
+  }}catch(_){}
   // ② sticky 購入バー表示 + 表示計測 (CTR = cta_click/cta_view の cta を揃える)
   try{
     var bar=document.getElementById('sticky-cta');
