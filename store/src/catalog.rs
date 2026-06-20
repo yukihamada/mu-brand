@@ -6850,6 +6850,13 @@ fn make_html_en(mut h: String) -> String {
         // ── nav ──
         (r#"<a href="/make?lang=en" style="opacity:.6">EN</a>"#, r#"<a href="/make" style="opacity:.6">日本語</a>"#),
         (">作って売る</a>", ">Make &amp; sell</a>"),
+        // ── developer / MCP section ──
+        ("🤖 開発者・AIから作る（API / MCP）", "🤖 For developers &amp; AI agents (API / MCP)"),
+        ("人が打たなくても、あなたのAIや自分のアプリから直接MUに作れます。MCP対応なので、お使いのAI（Claude等）につなぐだけ。",
+         "No human typing needed — create on MU straight from your AI or your own app. It's MCP-native: just connect your AI (Claude, etc.)."),
+        ("REST APIでも、登録→デザイン生成→販売まで全部できます。",
+         "Or hit the REST API directly: register → generate designs → sell, end to end."),
+        ("使い方とツール一覧 → /build", "Docs &amp; tool list → /build"),
         // ── A/B/C バリアント (JS内・長い方から) ──
         ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>（<a href=\"/credit\" style=\"color:#ffd700\">仕組み</a>）。",
          "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone's shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b> (<a href=\"/credit\" style=\"color:#ffd700\">how it works</a>)."),
@@ -7201,6 +7208,13 @@ __KIND_OPTIONS__
   <div class="recent" id="recent" hidden>
     <h2>みんなが、さっき作った一着</h2>
     <div class="rgrid" id="rgrid"></div>
+  </div>
+  <div class="devbox" style="margin:30px auto 6px;max-width:600px;text-align:left;background:#101012;border:1px solid #2a2a2a;border-radius:14px;padding:18px 20px">
+    <div style="font-size:12px;letter-spacing:.1em;color:#ffd700;font-weight:700;margin-bottom:8px">🤖 開発者・AIから作る（API / MCP）</div>
+    <div style="font-size:13.5px;line-height:1.85;opacity:.85;margin-bottom:10px">人が打たなくても、あなたのAIや自分のアプリから直接MUに作れます。MCP対応なので、お使いのAI（Claude等）につなぐだけ。</div>
+    <code style="display:block;background:#000;border:1px solid #333;border-radius:8px;padding:10px 12px;font-size:12px;color:#9bd97a;overflow-x:auto">claude mcp add --transport http mu https://mcp.wearmu.com/mcp</code>
+    <div style="font-size:13px;line-height:1.85;margin-top:10px;opacity:.85">REST APIでも、登録→デザイン生成→販売まで全部できます。</div>
+    <div style="font-size:13px;margin-top:8px"><a href="/build" style="color:#ffd700;text-decoration:none" data-funnel="cta_click" data-funnel-cta="make_dev_build">使い方とツール一覧 → /build</a> · <a href="/llms.txt" style="color:#ffd700;text-decoration:none">/llms.txt</a> · <a href="https://mcp.wearmu.com" style="color:#ffd700;text-decoration:none">mcp.wearmu.com</a></div>
   </div>
 </div>
 <script>
