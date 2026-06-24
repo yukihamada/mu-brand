@@ -15163,13 +15163,13 @@ async fn product_sku_page(
     // The latter is the canonical public URL form per existing /p/{serial_code} links.
     let row: Option<(i64, String, i64, String, Option<String>, Option<String>, i64, String, String, Option<String>, i64, i64)> = {
         let conn = db.lock().unwrap();
-        let sql_by_id = "SELECT id, COALESCE(brand,''), COALESCE(drop_num,0), COALESCE(name,''), design_url, mockup_url, COALESCE(price_jpy,0),
-                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url,
-                                COALESCE(inventory,0), COALESCE(sold,0)
+        let sql_by_id = "SELECT CAST(id AS INTEGER), COALESCE(brand,''), CAST(COALESCE(drop_num,0) AS INTEGER), COALESCE(name,''), CAST(design_url AS TEXT), CAST(mockup_url AS TEXT), CAST(COALESCE(price_jpy,0) AS INTEGER),
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), CAST(suzuri_url AS TEXT),
+                                CAST(COALESCE(inventory,0) AS INTEGER), CAST(COALESCE(sold,0) AS INTEGER)
                          FROM products WHERE id=?";
-        let sql_by_sc = "SELECT id, COALESCE(brand,''), COALESCE(drop_num,0), COALESCE(name,''), design_url, mockup_url, COALESCE(price_jpy,0),
-                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), suzuri_url,
-                                COALESCE(inventory,0), COALESCE(sold,0)
+        let sql_by_sc = "SELECT CAST(id AS INTEGER), COALESCE(brand,''), CAST(COALESCE(drop_num,0) AS INTEGER), COALESCE(name,''), CAST(design_url AS TEXT), CAST(mockup_url AS TEXT), CAST(COALESCE(price_jpy,0) AS INTEGER),
+                                COALESCE(color, 'BLK'), COALESCE(size, 'M'), CAST(suzuri_url AS TEXT),
+                                CAST(COALESCE(inventory,0) AS INTEGER), CAST(COALESCE(sold,0) AS INTEGER)
                          FROM products WHERE serial_code=?";
         let map = |r: &rusqlite::Row| Ok((
             r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?, r.get::<_, String>(3)?,
