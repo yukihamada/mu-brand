@@ -11037,12 +11037,13 @@ fn shop_drop_cards(conn: &rusqlite::Connection, only: Option<&str>, lang: &str) 
         let Some((id, name, mockup, price, inventory, sold, current_bid)) = row else {
             continue;
         };
-        // MA は入札体験ごと /ma へ。muon/mugen は canonical の /p/:id。
+        // MA は入札体験ごと /ma へ。muon/mugen は /products/:brand/:id (生きてるcanonical。
+        // /p/:id は drop 行で 404 になるため使わない — 2026-06 修正)。
         let (brand_label, badge, href) = match (slug, lang) {
-            ("muon", "en") => ("MUON", "Today's drop".to_string(), format!("/p/{id}")),
-            ("muon", _) => ("MUON 無音", "今日の一枚 · 1日1ドロップ".to_string(), format!("/p/{id}")),
-            ("mugen", "en") => ("MUGEN", "MUGEN drop".to_string(), format!("/p/{id}")),
-            ("mugen", _) => ("MUGEN 無限", "MUGEN ドロップ".to_string(), format!("/p/{id}")),
+            ("muon", "en") => ("MUON", "Today's drop".to_string(), format!("/products/{slug}/{id}")),
+            ("muon", _) => ("MUON 無音", "今日の一枚 · 1日1ドロップ".to_string(), format!("/products/{slug}/{id}")),
+            ("mugen", "en") => ("MUGEN", "MUGEN drop".to_string(), format!("/products/{slug}/{id}")),
+            ("mugen", _) => ("MUGEN 無限", "MUGEN ドロップ".to_string(), format!("/products/{slug}/{id}")),
             (_, "en") => ("MA — 間", "Live auction".to_string(), "/ma".to_string()),
             _ => ("間 MA", "オークション開催中".to_string(), "/ma".to_string()),
         };
