@@ -5464,6 +5464,10 @@ pub struct MakeQuery {
     /// 売れたら apply_maker_commission がこの率で作者に支払う。
     #[serde(default)]
     pub royalty: Option<i64>,
+    /// 流入元タグ。"suggest" = 提案カード経由の生成。専用の月予算(¥100,000)で頭打ちにし、
+    /// 店全体の月予算(¥1,000,000)とは別枠で観測・制限する。spend の reason に刻む。
+    #[serde(default)]
+    pub src: Option<String>,
 }
 
 /// 印税率 (10〜50%) に応じた価格自動調整。プラットフォーム粗利を10%時と
@@ -7390,12 +7394,50 @@ function kindLabel(k){var m={tee:'Tシャツ',tee_white:'白T',hoodie:'パーカ
       if($('#p'))$('#p').value=s.design_brief||s.title||q0;
       if(s.kind){try{$('#k').value=s.kind;}catch(e){}}
       muEvent('cta_click',{cta:'make_idea_pick',kind:s.kind});
-      runMake();
+      runMakePair(s.design_brief||s.title||q0, s.kind);
     };});
   }).catch(function(){});
 })();
 // 「次は何を作る?」: 直前の提案(補完案＋別案)から次の一手を出す。生成完了後に renderResult が差す。
-function muPickNext(i){var s=(window.MU_NEXT||[])[i]; if(!s)return; muEvent('cta_click',{cta:'make_next',kind:s.kind}); if($('#p'))$('#p').value=s.design_brief||s.title||''; if(s.kind){try{$('#k').value=s.kind;}catch(e){}} runMake();}
+function muPickNext(i){var s=(window.MU_NEXT||[])[i]; if(!s)return; muEvent('cta_click',{cta:'make_next',kind:s.kind}); if($('#p'))$('#p').value=s.design_brief||s.title||''; if(s.kind){try{$('#k').value=s.kind;}catch(e){}} runMakePair(s.design_brief||s.title||'', s.kind);}
+// 2案を同時(並列)に生成して「買う方」を選ばせる。提案/次は? 経由はこちら(src=suggest=¥100k枠・両方ストック)。
+async function runMakePair(brief,kind){
+  if(!brief){return;}
+  var k=kind||($('#k')&&$('#k').value)||'';
+  var go=$('#go'); if(go){go.disabled=true;go.innerHTML='<span class=spin></span>2案つくっています…';}
+  var genDone=genTheater(brief);
+  var note=document.querySelector('.gnote'); if(note)note.textContent='2案を同時に生成中 — 良い方（買う方）を選べます。どちらも棚に残ります。だいたい30秒。';
+  function one(){return fetch('/api/make?prompt='+encodeURIComponent(brief)+(k?'&kind='+encodeURIComponent(k):'')+'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):'')+'&src=suggest',{method:'POST'}).then(function(r){return r.json();}).catch(function(){return {ok:false};});}
+  var seq=++RUNSEQ;
+  try{
+    var res=await Promise.all([one(),one()]);
+    if(seq!==RUNSEQ)return;
+    genDone();
+    var oks=res.filter(function(j){return j&&j.ok;});
+    if(!oks.length){$('#out').innerHTML='<div class=err>'+((res[0]&&res[0].error)||'うまく作れませんでした。もう一度どうぞ。')+'</div>';}
+    else if(oks.length===1){renderResult(oks[0],brief,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));}
+    else{renderPair(oks,brief);}
+  }catch(e){if(seq!==RUNSEQ)return;genDone();$('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>';}
+  if(go){go.disabled=false;go.textContent='つくる';}
+}
+// 2案を横並びで見せ、それぞれ「これを買う」。選ばれなかった方も棚(catalog)に残る=ストック。
+function renderPair(arr,p){
+  var head='<div class=own><b>あなたの言葉</b>から、2案できました。<span class=pq>気に入った方（買う方）を選んでください。どちらも棚に残ります。</span></div>';
+  var cards=arr.map(function(j){
+    var buyHref=j.checkout_url||j.buy_url;
+    return '<div class="card reveal" style="flex:1;min-width:230px"><img src="'+j.design_url+'" alt=""><div class=meta>'
+      +'<div class=nm>'+(j.display||'')+'</div>'
+      +'<div style="font-size:12.5px;color:rgba(245,245,240,.7);margin:2px 0 6px">'+(j.hook||'')+'</div>'
+      +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
+      +(buyHref?'<a class=buy href="'+buyHref+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy_pair\',sku:\''+j.sku+'\'})">これを買う ¥'+yen(j.retail_jpy)+' →<small>サイズ・お届け先はお会計画面で</small></a>':'')
+      +(j.pdp_url?'<div style="text-align:center;margin-top:6px"><a href="'+j.pdp_url+'" style="color:rgba(245,245,240,.55);font-size:12px">商品ページ →</a></div>':'')
+      +'</div></div>';
+  }).join('');
+  var next='';
+  if(window.MU_SUGGEST){var sg=window.MU_SUGGEST,ns=[];if(sg.complement&&(sg.complement.design_brief||sg.complement.title))ns.push(sg.complement);(sg.suggestions||[]).forEach(function(s){if(ns.length<3&&(s.design_brief||'')!==p)ns.push(s);});window.MU_NEXT=ns;if(ns.length){next='<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)"><div style="font-size:12px;color:rgba(245,245,240,.55);margin-bottom:9px">次は何を作る?</div>'+ns.map(function(s,i){return '<button class=share type=button onclick="muPickNext('+i+')">'+escHtml(s.title||'もう一案')+' →</button>';}).join(' ')+'</div>';}}
+  $('#out').innerHTML=head+'<div style="display:flex;gap:12px;flex-wrap:wrap">'+cards+'</div>'+next;
+  $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 // 生成シアター: お題のエコー + 物語のステータス + 進捗バー。戻り値で停止。
 function genTheater(p){
   var msgs=['お題を、読み解いています…','筆を、とりました','線を一本、引いています…','色を、えらんでいます…','余白と、相談しています…','布にのせて、確かめています…','タグに名前を入れています…','棚をあけて、待っています…'];
@@ -9056,6 +9098,8 @@ pub async fn make_suggest(Query(q): Query<std::collections::HashMap<String, Stri
          3)その人が着る/使う商品を必ず3案(kind と、目的やアイデンティティを表現する気の利いたデザイン)。\
          用途が曖昧・推論しきれないときも、角度を変えて(そのままミニマル意匠化/別解釈/王道グッズ)必ず3案出す。\
          4)併せて欲しくなる補完案を1つ。\n\
+         # 最重要: 『いいの』＝実際に買われるもの。人が金を出して着る/使う、売れるコマーシャルな\
+         デザインを狙う(トレンド・ブランドらしさ・ギフト適性)。自己満足の難解アートにしない。\n\
          # 厳守: 検索語の文字をそのまま大きく載せた商品は禁止(誰も着ない)。化学構造式・英名・図解・\
          コンセプト化はOK。着られる/使える美意識。ダサい直訳をしない。日本語で。\n\
          # 出力(JSONのみ・前後に文やコードフェンス禁止):\n\
@@ -9268,7 +9312,22 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
     // ローカル生成・持ち込み画像は API 課金ゼロ → 予算台帳は ¥0 で記録だけ残す(観測のため)。
     let gen_cost = if user_design_url.is_some() || use_local { 0 } else { GEMINI_IMAGE_COST_JPY };
-    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &format!("public_make sku={} engine={}", sku, if user_design_url.is_some() { "upload" } else if use_local { "local" } else { "gemini" }), Some(&sku)) };
+    // 提案カード(src=suggest)経由の生成は専用の月¥100,000枠で頭打ち。店全体の¥1,000,000とは別枠。
+    let from_suggest = q.src.as_deref() == Some("suggest");
+    const SUGGEST_BUDGET_JPY: i64 = 100_000;
+    if from_suggest && gen_cost > 0 {
+        let conn = db.lock().unwrap();
+        let spent: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_spend \
+             WHERE reason LIKE '%src=suggest%' AND strftime('%Y-%m', created_at) = strftime('%Y-%m','now')",
+            [], |r| r.get(0)).unwrap_or(0);
+        if spent + gen_cost > SUGGEST_BUDGET_JPY {
+            return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"今月の提案からの生成枠（¥100,000）が上限に達しました。"}))).into_response();
+        }
+    }
+    let engine_tag = if user_design_url.is_some() { "upload" } else if use_local { "local" } else { "gemini" };
+    let reason = format!("public_make sku={} engine={}{}", sku, engine_tag, if from_suggest { " src=suggest" } else { "" });
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &reason, Some(&sku)) };
     if !charged {
         return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
     }
