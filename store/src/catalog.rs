@@ -7189,6 +7189,7 @@ button:disabled{opacity:.5;cursor:default}
   </div>
   __REQ_INJECT__
   <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ">__PROMPT__</textarea>
+  <div id="ideas" hidden></div>
   <div class="row" style="margin-top:8px">
     <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
     <span id="attChip" style="display:none;flex:1;min-width:0;align-items:center;gap:8px;font-size:12.5px;color:rgba(245,245,240,.8)"></span>
@@ -7365,6 +7366,36 @@ fetch('/api/make/recent').then(r=>r.json()).then(j=>{
   $('#rgrid').innerHTML=j.items.map(it=>'<a href="/shop/'+encodeURIComponent(it.sku)+'"><img loading=lazy src="'+it.img+'" alt=""><div class=rl>'+(it.label||'')+'</div><div class=rp>¥'+(it.price||'')+'</div></a>').join('');
   $('#recent').hidden=false;
 }).catch(()=>{});
+// 検索語から用途・人物像を推論して「買いそうな商品」を提案（?q= で来たとき）。
+// Gemini 無/失敗/空は黙ってスキップ→通常フローにフォールバック。文字直貼りはサーバ側で禁止済み。
+function kindLabel(k){var m={tee:'Tシャツ',tee_white:'白T',hoodie:'パーカー',crewneck:'スウェット',long_sleeve_tee:'ロンT',tank:'タンク',mug:'マグ',mug_black:'黒マグ',tote:'トート',sticker:'ステッカー',rashguard_ls:'ラッシュガード',rashguard_black:'ラッシュガード(黒)',poster:'ポスター',apron:'エプロン',bottle:'ボトル',canvas:'キャンバス',phone_case:'スマホケース',leggings:'レギンス'};return m[k]||'グッズ';}
+(function(){
+  var q0=(($('#p')&&$('#p').value)||'').trim(); if(!q0) return;
+  fetch('/api/make/suggest?q='+encodeURIComponent(q0)).then(function(r){return r.json();}).then(function(j){
+    if(!j||!j.suggestions||!j.suggestions.length) return;
+    window.MU_SUGGEST=j;
+    var box=$('#ideas'); if(!box) return;
+    box.innerHTML='<div style="font-size:13px;color:rgba(255,215,0,.9);font-weight:800;margin:14px 0 6px">この言葉なら、こういうのはどう?</div>'
+      +(j.identity?'<div style="font-size:12.5px;color:rgba(245,245,240,.72);margin-bottom:10px;line-height:1.5">🤔 '+escHtml(j.identity)+'</div>':'')
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">'
+      +j.suggestions.map(function(s,i){return '<button type=button data-i="'+i+'" style="text-align:left;background:#111;border:1px solid #333;border-radius:12px;padding:11px;cursor:pointer;color:#f5f5f0;display:flex;flex-direction:column;gap:5px">'
+        +'<span style="font-size:11px;color:rgba(255,215,0,.85)">'+escHtml(kindLabel(s.kind))+'</span>'
+        +'<span style="font-size:13px;font-weight:700;line-height:1.3">'+escHtml(s.title||'')+'</span>'
+        +'<span style="font-size:11.5px;color:rgba(245,245,240,.6);line-height:1.4">'+escHtml(s.why||'')+'</span>'
+        +'<span style="margin-top:3px;font-size:12px;font-weight:800;color:#1a1407;background:linear-gradient(180deg,#f4d98a,#b8922f);border-radius:8px;padding:6px 0;text-align:center">✨ これを作る</span></button>';}).join('')
+      +'</div>';
+    box.hidden=false;
+    box.querySelectorAll('button[data-i]').forEach(function(b){b.onclick=function(){
+      var s=j.suggestions[+b.dataset.i]; if(!s) return;
+      if($('#p'))$('#p').value=s.design_brief||s.title||q0;
+      if(s.kind){try{$('#k').value=s.kind;}catch(e){}}
+      muEvent('cta_click',{cta:'make_idea_pick',kind:s.kind});
+      runMake();
+    };});
+  }).catch(function(){});
+})();
+// 「次は何を作る?」: 直前の提案(補完案＋別案)から次の一手を出す。生成完了後に renderResult が差す。
+function muPickNext(i){var s=(window.MU_NEXT||[])[i]; if(!s)return; muEvent('cta_click',{cta:'make_next',kind:s.kind}); if($('#p'))$('#p').value=s.design_brief||s.title||''; if(s.kind){try{$('#k').value=s.kind;}catch(e){}} runMake();}
 // 生成シアター: お題のエコー + 物語のステータス + 進捗バー。戻り値で停止。
 function genTheater(p){
   var msgs=['お題を、読み解いています…','筆を、とりました','線を一本、引いています…','色を、えらんでいます…','余白と、相談しています…','布にのせて、確かめています…','タグに名前を入れています…','棚をあけて、待っています…'];
@@ -7454,6 +7485,19 @@ function renderResult(j,p,ok){
   var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。'+(j.affiliate_link?'<a href="'+j.affiliate_link+'" style="color:#ffd700">あなたの紹介リンクで広める →</a>':'<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a>')+'</div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
+  // 次は何を作る?: さっきの意図推論(補完案＋別案)から、続けて作れるものを提案。
+  var next='';
+  if(window.MU_SUGGEST){
+    var sg=window.MU_SUGGEST, ns=[];
+    if(sg.complement&&(sg.complement.design_brief||sg.complement.title)) ns.push(sg.complement);
+    (sg.suggestions||[]).forEach(function(s){ if(ns.length<3 && (s.design_brief||'')!==p) ns.push(s); });
+    window.MU_NEXT=ns;
+    if(ns.length){
+      next='<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)"><div style="font-size:12px;color:rgba(245,245,240,.55);margin-bottom:9px">次は何を作る?</div>'
+        +ns.map(function(s,i){return '<button class=share type=button onclick="muPickNext('+i+')">'+escHtml(s.title||'もう一案')+' →</button>';}).join(' ')
+        +'</div>';
+    }
+  }
   $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
     +'<div class=nm>'+(j.display||'')+'</div>'
     +'<div class=by>DESIGNED BY YOU × MU</div>'
@@ -7461,7 +7505,7 @@ function renderResult(j,p,ok){
     +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
     + one
     +'<div class=fitnote id=mkFit>'+(j.auto_approved&&j.kind!=='song'?mkPrep(j.kind):'')+'</div>'
-    + buy + route + share + spread + nt
+    + buy + route + next + share + spread + nt
     +'</div></div>'
     +hist
     +(ok?'':claimCardHtml());
@@ -8976,6 +9020,49 @@ mod sound_tee_tests {
         assert!(make_wants_sound("着ると音の鳴るパーカー"));
         assert!(!make_wants_sound("ただの猫Tシャツ"));
     }
+}
+
+/// GET /api/make/suggest?q=<語> — 検索語から「裏の目的・人物像」を推論し、その人が実際に
+/// 着る/使う商品案(kind×design_brief)を数件＋補完案を返す。文字の直貼りはさせない
+/// (化学構造式・図解・コンセプト化はOK)。Gemini キー無し/失敗/解釈不能なら空(no-op)で返し、
+/// フロントは通常の「作りますか?」CTA にフォールバックする。作る系のみ＝戦略ゲート非該当。
+pub async fn make_suggest(Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
+    let word: String = q.get("q").map(|s| s.trim()).unwrap_or("").chars().take(80).collect();
+    let empty = || axum::Json(serde_json::json!({"ok": true, "suggestions": []})).into_response();
+    if word.is_empty() { return empty(); }
+    let prompt = format!(
+        "あなたは MU(オンデマンドでTシャツやグッズをAI生成するブランド)の商品プランナー。\
+         ユーザーが検索/入力した言葉から、その人の『裏の目的・関心・人物像』まで推論し、\
+         その人が実際に身につける/使いたくなる商品アイデアを設計する。\n\
+         # 思考: 1)この言葉は何か同定 2)なぜ検索したか・裏の目的・人物像を推論 \
+         3)その人が着る/使う商品を3〜4件(kind と、目的やアイデンティティを表現する気の利いたデザイン) \
+         4)併せて欲しくなる補完案を1つ。\n\
+         # 厳守: 検索語の文字をそのまま大きく載せた商品は禁止(誰も着ない)。化学構造式・英名・図解・\
+         コンセプト化はOK。着られる/使える美意識。ダサい直訳をしない。日本語で。\n\
+         # 出力(JSONのみ・前後に文やコードフェンス禁止):\n\
+         {{\"identity\":\"推論した人物像/目的(1文)\",\"reasoning\":\"なぜそう考えたか(1文)\",\
+         \"suggestions\":[{{\"kind\":\"tee|tee_white|hoodie|mug|tote|sticker|rashguard_ls|poster|apron\",\
+         \"title\":\"短い商品名(日本語)\",\"design_brief\":\"AIに渡す具体的なデザイン指示(英語可)\",\
+         \"why\":\"この人が買う理由(1文)\"}}],\
+         \"complement\":{{\"title\":\"併せて欲しい案\",\"design_brief\":\"...\",\"why\":\"...\"}}}}\n\
+         言葉: \"{}\"", word);
+    let raw = match crate::gemini::call_gemini_text(&prompt).await { Ok(s) => s, Err(_) => return empty() };
+    let json_str: String = raw.find('{')
+        .and_then(|i| raw[i..].rfind('}').map(|j| raw[i..i + j + 1].to_string()))
+        .unwrap_or(raw);
+    let mut parsed: serde_json::Value = match serde_json::from_str(&json_str) { Ok(v) => v, Err(_) => return empty() };
+    // kind を販売可能リストに正規化(不正/未知は tee)。最大5件。
+    const OK_KINDS: &[&str] = &["tee","tee_white","hoodie","crewneck","long_sleeve_tee","tank","rashguard_ls","rashguard_black","leggings","apron","tote","sticker","mug","mug_black","phone_case","bottle","poster","canvas"];
+    if let Some(arr) = parsed.get_mut("suggestions").and_then(|v| v.as_array_mut()) {
+        arr.truncate(5);
+        for s in arr.iter_mut() {
+            let k = s.get("kind").and_then(|v| v.as_str()).unwrap_or("tee");
+            let safe = if OK_KINDS.contains(&k) { k } else { "tee" };
+            s["kind"] = serde_json::Value::String(safe.to_string());
+        }
+    }
+    parsed["ok"] = serde_json::Value::Bool(true);
+    axum::Json(parsed).into_response()
 }
 
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
