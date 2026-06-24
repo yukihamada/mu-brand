@@ -15120,6 +15120,35 @@ async fn admin_product_detail(
     }
 }
 
+/// 商品が見つからない時の、ちゃんとしたエラーページ(素テキスト"product not found"の置き換え)。
+/// MUの暗色トーン・SHOPへ戻る導線つき。/p/:sku と /shop/:sku の404で共用。
+pub fn product_not_found_page() -> Response {
+    let html = r#"<!DOCTYPE html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>見つかりませんでした — MU SHOP</title>
+<meta name="robots" content="noindex">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0a0e;color:#f6f6f8;font-family:-apple-system,"Hiragino Sans",system-ui,sans-serif;
+    min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;line-height:1.8}
+  .wrap{max-width:480px;text-align:center}
+  .emo{font-size:56px}
+  h1{font-size:clamp(22px,5vw,30px);font-weight:800;margin:14px 0 8px}
+  p{color:#a9b0bb;font-size:14.5px;margin-bottom:22px}
+  .btn{display:inline-block;margin:6px;padding:13px 26px;border-radius:999px;text-decoration:none;font-weight:800}
+  .btn.primary{background:#e6c449;color:#0a0a0a}
+  .btn.ghost{background:rgba(255,255,255,.07);color:#f6f6f8;border:1px solid #2a2f3a}
+</style></head>
+<body><div class="wrap">
+  <div class="emo">🔍</div>
+  <h1>この商品は、見つかりませんでした。</h1>
+  <p>リンクが古いか、商品が入れ替わったのかもしれません。<br>MUでは毎日、新しい一着が生まれています。SHOPから探してみてください。</p>
+  <a class="btn primary" href="/shop">🛍 SHOPを見る</a>
+  <a class="btn ghost" href="/">MU トップへ</a>
+</div></body></html>"#;
+    (StatusCode::NOT_FOUND, axum::response::Html(html)).into_response()
+}
+
 /// GET /p/:sku — minimal SSR product detail page with a 6-color swatch picker.
 /// Looks up the product by `id` (numeric sku) and renders a tiny HTML page
 /// with the design image, name, price, and 6 color circles. Clicking a
@@ -15157,7 +15186,18 @@ async fn product_sku_page(
     };
     let (id, brand, drop_num, name, design_url, mockup_url, price_jpy, default_color, _size, suzuri_url, inventory, sold) = match row {
         Some(v) => v,
-        None => return (StatusCode::NOT_FOUND, "product not found").into_response(),
+        None => {
+            // 旧productsに無くても、catalog商品(sku)なら正規URL /shop/:sku へ誘導
+            let cat: Option<String> = {
+                let conn = db.lock().unwrap();
+                conn.query_row("SELECT sku FROM catalog_products WHERE sku=? AND status='live'",
+                    params![sku.as_str()], |r| r.get(0)).ok()
+            };
+            if let Some(s) = cat {
+                return axum::response::Redirect::to(&format!("/shop/{}", urlencoding::encode(&s))).into_response();
+            }
+            return product_not_found_page();
+        }
     };
 
     // ── Reviews (Phase 1) ────────────────────────────────────────────────
