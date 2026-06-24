@@ -12140,7 +12140,7 @@ pub async fn shop_pdp(
     };
     let Some((sku, brand, label, desc, price_jpy, mockup_main, mockup_ext, suzuri, price_id, meta_json, desc_en)) = row
     else {
-        return (StatusCode::NOT_FOUND, "product not found").into_response();
+        return crate::product_not_found_page();
     };
     // Full-EN body: when ?lang=en and a Gemini translation exists, the entire
     // PDP copy (rendered from `desc`) switches to English; otherwise JA.
