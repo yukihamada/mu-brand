@@ -5491,6 +5491,9 @@ pub struct MakePageQuery {
     /// ?req=<token> — デザイン依頼リンク。お題をプリフィルし「○○さんのために作成」バナーを出す。
     #[serde(default)]
     pub req: Option<String>,
+    /// ?q=<検索語> — /shop の0件「作りますか?」CTA等から作りたい文をプリフィル。
+    #[serde(default)]
+    pub q: Option<String>,
 }
 
 /// /make A/B/C: 勝者UU到達のしきい値（ユニーク訪問者の作成数）。
@@ -6791,6 +6794,13 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
             None => String::new(),
         }
     };
+    // ?q= で作りたい文をプリフィル（/shop の0件「作りますか?」CTA等から流入）。
+    // textarea の中身として html_text でエスケープ。JS は placeholder のみ上書き
+    // するので value は生き残る（6938/6972 行参照）。
+    let prompt_prefill = q.q.as_deref().map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| html_text(&s.chars().take(300).collect::<String>()))
+        .unwrap_or_default();
     let html = MAKE_HTML
         .replace("__REQ_INJECT__", &req_inject)
         .replace("__LOCAL_GEN__", if local_gen_enabled() { "1" } else { "0" })
@@ -6799,6 +6809,7 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
         .replace("__SERVER_VARIANT__", server_variant)
         .replace("__SEL_KIND__", sel)
         .replace("__SEL_LABEL__", sel_label)
+        .replace("__PROMPT__", &prompt_prefill)
         .replace("__WINNER_LOCKED__", lock_js);
     let html = if en { make_html_en(html) } else { html };
     let mut resp = Html(html).into_response();
@@ -7177,7 +7188,7 @@ button:disabled{opacity:.5;cursor:default}
     </div>
   </div>
   __REQ_INJECT__
-  <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ"></textarea>
+  <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ">__PROMPT__</textarea>
   <div class="row" style="margin-top:8px">
     <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
     <span id="attChip" style="display:none;flex:1;min-width:0;align-items:center;gap:8px;font-size:12.5px;color:rgba(245,245,240,.8)"></span>
@@ -11687,15 +11698,28 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         kind_chips = kind_chips,
         sort_chips = sort_chips,
         body_or_empty = if items.is_empty() {
+            // MISSION の核: Amazonで「0件」になる検索を、MUでは「作りますか?」に変える。
+            // 検索語があるときだけ、その語をプリフィルした /make への金CTAを出す
+            // （種類フィルタだけの0件は除外）。
+            let make_cta = if !q_trim.is_empty() {
+                let enc = urlencoding::encode(&q_trim);
+                let qt = html_text(&q_trim);
+                const ST: &str = "display:inline-block;margin-top:16px;padding:12px 22px;border-radius:12px;background:linear-gradient(180deg,#f4d98a,#b8922f);color:#1a1407;font-weight:800;text-decoration:none;box-shadow:0 8px 22px rgba(216,183,90,.3)";
+                if lang == "en" {
+                    format!(r#"<br><a href="/make?lang=en&q={enc}" style="{ST}">✨ Not on Amazon? Make “{qt}” →</a>"#)
+                } else {
+                    format!(r#"<br><a href="/make?q={enc}" style="{ST}">✨「{qt}」を、作りますか？ →</a>"#)
+                }
+            } else { String::new() };
             if lang == "en" {
                 format!(
-                    r#"<div class="empty">No items match "{}".<br><a href="/shop?lang=en" style="color:#ffd700">Browse all items →</a></div>"#,
-                    html_text(if !q_trim.is_empty() { &q_trim } else { "these filters" })
+                    r#"<div class="empty">No items match "{}".<br><a href="/shop?lang=en" style="color:#ffd700">Browse all items →</a>{}</div>"#,
+                    html_text(if !q_trim.is_empty() { &q_trim } else { "these filters" }), make_cta
                 )
             } else {
                 format!(
-                    r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a></div>"#,
-                    html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" })
+                    r#"<div class="empty">「{}」に一致する商品が見つかりませんでした。<br><a href="/shop" style="color:#ffd700">すべての商品を見る →</a>{}</div>"#,
+                    html_text(if !q_trim.is_empty() { &q_trim } else { "この条件" }), make_cta
                 )
             }
         } else {
