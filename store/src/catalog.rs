@@ -9023,19 +9023,38 @@ mod sound_tee_tests {
 }
 
 /// GET /api/make/suggest?q=<語> — 検索語から「裏の目的・人物像」を推論し、その人が実際に
-/// 着る/使う商品案(kind×design_brief)を数件＋補完案を返す。文字の直貼りはさせない
-/// (化学構造式・図解・コンセプト化はOK)。Gemini キー無し/失敗/解釈不能なら空(no-op)で返し、
-/// フロントは通常の「作りますか?」CTA にフォールバックする。作る系のみ＝戦略ゲート非該当。
+/// 着る/使う商品案(kind×design_brief)を返す。文字の直貼りはさせない(構造式/図解/コンセプト化はOK)。
+/// 🔴絶対に取りこぼさない: クエリがある限り必ず3案以上返す。Gemini が失敗/解釈不能でも、
+/// 角度を変えたローカル3案にフォールバック(0件・行き止まりを作らない)。作る系のみ=戦略ゲート非該当。
 pub async fn make_suggest(Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
     let word: String = q.get("q").map(|s| s.trim()).unwrap_or("").chars().take(80).collect();
-    let empty = || axum::Json(serde_json::json!({"ok": true, "suggestions": []})).into_response();
-    if word.is_empty() { return empty(); }
+    if word.is_empty() {
+        // クエリ自体が無いときだけ空(提案する対象がない)。
+        return axum::Json(serde_json::json!({"ok": true, "suggestions": []})).into_response();
+    }
+    const OK_KINDS: &[&str] = &["tee","tee_white","hoodie","crewneck","long_sleeve_tee","tank","rashguard_ls","rashguard_black","leggings","apron","tote","sticker","mug","mug_black","phone_case","bottle","poster","canvas"];
+    // 推論できないとき/Gemini失敗時の保険: 角度を変えた3案。どれも検索語を大きく直貼りしない。
+    // これで「毎回3・絶対取りこぼさない」を保証する。
+    let fallback = |w: &str| -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"kind":"tee","title":"ミニマル意匠のTシャツ",
+                "design_brief": format!("A minimal, tasteful graphic inspired by the concept of \"{}\" — iconographic or single-line, NOT a big literal text label, on a black tee", w),
+                "why":"まずは王道の一枚で、その世界観を身につける"}),
+            serde_json::json!({"kind":"tote","title":"シンボル柄トート",
+                "design_brief": format!("Everyday canvas tote with an abstract/symbolic motif evoking \"{}\", clean and wearable, no literal big label", w),
+                "why":"日常使いでさりげなく好きを表す"}),
+            serde_json::json!({"kind":"mug","title":"エンブレムのマグ",
+                "design_brief": format!("Simple elegant mug with a small refined emblem/icon inspired by \"{}\"", w),
+                "why":"毎日の手元に置いて気分を上げる"}),
+        ]
+    };
     let prompt = format!(
         "あなたは MU(オンデマンドでTシャツやグッズをAI生成するブランド)の商品プランナー。\
          ユーザーが検索/入力した言葉から、その人の『裏の目的・関心・人物像』まで推論し、\
          その人が実際に身につける/使いたくなる商品アイデアを設計する。\n\
          # 思考: 1)この言葉は何か同定 2)なぜ検索したか・裏の目的・人物像を推論 \
-         3)その人が着る/使う商品を3〜4件(kind と、目的やアイデンティティを表現する気の利いたデザイン) \
+         3)その人が着る/使う商品を必ず3案(kind と、目的やアイデンティティを表現する気の利いたデザイン)。\
+         用途が曖昧・推論しきれないときも、角度を変えて(そのままミニマル意匠化/別解釈/王道グッズ)必ず3案出す。\
          4)併せて欲しくなる補完案を1つ。\n\
          # 厳守: 検索語の文字をそのまま大きく載せた商品は禁止(誰も着ない)。化学構造式・英名・図解・\
          コンセプト化はOK。着られる/使える美意識。ダサい直訳をしない。日本語で。\n\
@@ -9046,23 +9065,40 @@ pub async fn make_suggest(Query(q): Query<std::collections::HashMap<String, Stri
          \"why\":\"この人が買う理由(1文)\"}}],\
          \"complement\":{{\"title\":\"併せて欲しい案\",\"design_brief\":\"...\",\"why\":\"...\"}}}}\n\
          言葉: \"{}\"", word);
-    let raw = match crate::gemini::call_gemini_text(&prompt).await { Ok(s) => s, Err(_) => return empty() };
-    let json_str: String = raw.find('{')
-        .and_then(|i| raw[i..].rfind('}').map(|j| raw[i..i + j + 1].to_string()))
-        .unwrap_or(raw);
-    let mut parsed: serde_json::Value = match serde_json::from_str(&json_str) { Ok(v) => v, Err(_) => return empty() };
-    // kind を販売可能リストに正規化(不正/未知は tee)。最大5件。
-    const OK_KINDS: &[&str] = &["tee","tee_white","hoodie","crewneck","long_sleeve_tee","tank","rashguard_ls","rashguard_black","leggings","apron","tote","sticker","mug","mug_black","phone_case","bottle","poster","canvas"];
-    if let Some(arr) = parsed.get_mut("suggestions").and_then(|v| v.as_array_mut()) {
-        arr.truncate(5);
-        for s in arr.iter_mut() {
-            let k = s.get("kind").and_then(|v| v.as_str()).unwrap_or("tee");
-            let safe = if OK_KINDS.contains(&k) { k } else { "tee" };
-            s["kind"] = serde_json::Value::String(safe.to_string());
+    // Gemini で推論。失敗/解釈不能でも下で fallback 補完するので、ここでは Option に倒すだけ。
+    let parsed_opt: Option<serde_json::Value> = match crate::gemini::call_gemini_text(&prompt).await {
+        Ok(raw) => {
+            let json_str: String = raw.find('{')
+                .and_then(|i| raw[i..].rfind('}').map(|j| raw[i..i + j + 1].to_string()))
+                .unwrap_or(raw);
+            serde_json::from_str(&json_str).ok()
+        }
+        Err(_) => None,
+    };
+    let mut result = parsed_opt.unwrap_or_else(|| serde_json::json!({}));
+    // suggestions を取り出して kind 正規化。
+    let mut sugg: Vec<serde_json::Value> =
+        result.get("suggestions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for s in sugg.iter_mut() {
+        let k = s.get("kind").and_then(|v| v.as_str()).unwrap_or("tee");
+        let safe = if OK_KINDS.contains(&k) { k.to_string() } else { "tee".to_string() };
+        s["kind"] = serde_json::Value::String(safe);
+    }
+    sugg.truncate(5);
+    // 🔴 絶対3案: 足りなければ角度違いの fallback で必ず3まで埋める。
+    if sugg.len() < 3 {
+        for f in fallback(&word) {
+            if sugg.len() >= 3 { break; }
+            sugg.push(f);
         }
     }
-    parsed["ok"] = serde_json::Value::Bool(true);
-    axum::Json(parsed).into_response()
+    result["suggestions"] = serde_json::Value::Array(sugg);
+    if result.get("identity").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        result["identity"] =
+            serde_json::Value::String("ぴったりの用途が読み切れなかったので、違う切り口で3案出しました".to_string());
+    }
+    result["ok"] = serde_json::Value::Bool(true);
+    axum::Json(result).into_response()
 }
 
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
