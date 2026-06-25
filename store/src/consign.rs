@@ -592,20 +592,25 @@ pub(crate) struct VerifyQuery {
 pub(crate) async fn verify_page(State(db): State<Db>, Query(q): Query<VerifyQuery>) -> Response {
     let token = q.token.trim();
     let now = now_s();
+    const VERIFY_TTL_SECS: i64 = 3600; // マジックリンクは60分で失効 (UI「期限切れ」表記と実装を一致させる)
     let ok_email: Option<String> = if token.len() >= 16 {
         let c = db.lock().unwrap();
-        // token から email を引く (verified_at 未設定でも済でも対象 = 冪等)。
-        let email: Option<String> = c.query_row(
-            "SELECT email FROM consign_email_verifications WHERE token=?",
-            params![token], |r| r.get::<_, String>(0),
+        // token から email + 発行時刻を引く (verified_at 未設定でも済でも対象 = 冪等)。
+        let row: Option<(String, i64)> = c.query_row(
+            "SELECT email, created_at FROM consign_email_verifications WHERE token=?",
+            params![token], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
         ).ok();
-        if email.is_some() {
-            let _ = c.execute(
-                "UPDATE consign_email_verifications SET verified_at=COALESCE(verified_at,?) WHERE token=?",
-                params![now, token],
-            );
+        match row {
+            // 発行から60分以内のみ確認成立。超過は期限切れ扱い (UIの「期限切れ」表記と一致)。
+            Some((email, created)) if now - created <= VERIFY_TTL_SECS => {
+                let _ = c.execute(
+                    "UPDATE consign_email_verifications SET verified_at=COALESCE(verified_at,?) WHERE token=?",
+                    params![now, token],
+                );
+                Some(email)
+            }
+            _ => None,
         }
-        email
     } else { None };
 
     let (title, msg, color) = match ok_email {
