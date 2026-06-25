@@ -154,6 +154,12 @@ button.submit:disabled{opacity:.45;cursor:default}
 
     <button class="submit" id="submitBtn" disabled>出し方を選んでください</button>
     <div class="err" id="err"></div>
+    <!-- メール所有確認: 買取で未検証のとき案内 + 「確認メールを送る」導線 -->
+    <div class="verifybox" id="verifybox" style="display:none;margin-top:14px;padding:14px 16px;border:1px solid rgba(255,215,0,0.35);border-radius:12px;background:rgba(255,215,0,0.06);font-size:13px;line-height:1.8">
+      <div id="verifyMsg" style="margin-bottom:10px">買取で残高を受け取るには、メールアドレスの確認が必要です。</div>
+      <button class="cta" id="verifyBtn" style="margin:0">確認メールを送る</button>
+      <div id="verifyDone" style="display:none;margin-top:10px;color:#9fdf9f"></div>
+    </div>
     <div class="done" id="done"></div>
   </div>
 
@@ -254,13 +260,41 @@ function pick(c){
   $('submitBtn').disabled = false;
 }
 
+// メール所有確認: 「確認メールを送る」→ /api/consign/verify/request
+$('verifyBtn').addEventListener('click', function(){
+  if(!emailOk($('email').value)){ $('err').textContent='メールアドレスを入力してください'; return; }
+  $('verifyBtn').disabled=true; $('verifyBtn').textContent='送信中…';
+  fetch('/api/consign/verify/request',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:$('email').value.trim()})})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.error){ $('verifyBtn').disabled=false; $('verifyBtn').textContent='確認メールを送る'; $('err').textContent=d.error; return; }
+    $('verifyBtn').style.display='none';
+    $('verifyDone').textContent = d.verified
+      ? 'このメールは確認済みです。もう一度「いますぐ買取」を押してください。'
+      : (d.message || '確認メールを送りました。メール内のリンクを押してから、もう一度「いますぐ買取」を押してください。');
+    $('verifyDone').style.display='block';
+  })
+  .catch(function(e){ $('verifyBtn').disabled=false; $('verifyBtn').textContent='確認メールを送る'; $('err').textContent='通信エラー：'+e; });
+});
+
 $('submitBtn').addEventListener('click', function(){
   if(!chosen || !quote) return;
-  $('submitBtn').disabled=true; $('err').textContent='';
+  $('submitBtn').disabled=true; $('err').textContent=''; $('verifybox').style.display='none';
   fetch('/api/consign/submit',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({quote_id:quote.quote_id, intent:chosen, email:$('email').value.trim()})})
   .then(function(r){return r.json();})
   .then(function(d){
+    // メール所有確認が必要（買取・未検証）: 確認導線を出す。quote は消費されていない。
+    if(d.need_verify){
+      $('submitBtn').disabled=false;
+      $('verifyMsg').textContent = d.message || 'buyで残高を受け取るには、メールアドレスの確認が必要です。';
+      $('verifyBtn').style.display='inline-block'; $('verifyBtn').disabled=false; $('verifyBtn').textContent='確認メールを送る';
+      $('verifyDone').style.display='none';
+      $('verifybox').style.display='block';
+      $('verifybox').scrollIntoView({behavior:'smooth',block:'center'});
+      return;
+    }
     if(d.error){ $('submitBtn').disabled=false; $('err').textContent=d.error; return; }
     if(d.gated){
       $('done').innerHTML='<b>準備中</b>：'+ (d.message||'提携古物商の登録が完了するまで、買取・委託はお受けできません。お預かりとして受け付けました。') +'<br>受付ID: '+d.item_id;

@@ -107,6 +107,17 @@ pub(crate) fn init_db(conn: &Connection) {
             created_at  INTEGER NOT NULL,
             consumed_at INTEGER                  -- submit で消費済 (NULL=未使用)
         );
+        -- メール所有確認 (マジックリンク)。残高付与 (sell) は verified_at が
+        -- 立っている email にのみ行う = なりすまし付与を塞ぐ。token は推測不能・
+        -- 1回踏めば verified_at が立ち、以降そのメールは検証済み扱い。
+        -- 出金/換金は無いので token に強い PII は乗らない (email のみ)。
+        CREATE TABLE IF NOT EXISTS consign_email_verifications (
+            email       TEXT PRIMARY KEY,        -- 小文字正規化。1メール1行 (upsert)
+            token       TEXT NOT NULL,           -- 推測不能なマジックリンク token (踏むと検証)
+            created_at  INTEGER NOT NULL,        -- token 発行時刻
+            verified_at INTEGER                  -- 検証完了時刻 (NULL=未検証)
+        );
+        CREATE INDEX IF NOT EXISTS idx_consign_emailverif_token ON consign_email_verifications(token);
         CREATE INDEX IF NOT EXISTS idx_consign_ledger_email ON consign_balance_ledger(email, expires_at);
         CREATE INDEX IF NOT EXISTS idx_consign_intents_item ON consign_intents(item_id);"
     );
@@ -163,6 +174,26 @@ fn valid_email(s: &str) -> bool {
     let mut it = s.splitn(2, '@');
     let (local, domain) = match (it.next(), it.next()) { (Some(l), Some(d)) => (l, d), _ => return false };
     !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
+}
+
+/// 当該 email がメール所有確認済みか (verified_at が立っているか)。
+/// 残高付与 (sell) の前提条件。未検証なら付与しない (なりすまし防止)。
+fn email_verified(conn: &Connection, email: &str) -> bool {
+    let email_lc = email.trim().to_lowercase();
+    conn.query_row(
+        "SELECT verified_at FROM consign_email_verifications WHERE email=?",
+        params![email_lc],
+        |r| r.get::<_, Option<i64>>(0),
+    ).ok().flatten().is_some()
+}
+
+/// 推測不能な検証トークン (32 hex)。SystemTime 由来のエントロピー + rand。
+fn rand_token() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let a: u64 = rng.gen();
+    let b: u64 = rng.gen();
+    format!("{:016x}{:016x}", a, b)
 }
 
 fn esc(s: &str) -> String {
@@ -310,7 +341,9 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
         return Json(json!({"error":"不正な選択です"})).into_response();
     }
     // must-fix 3: メール必須 + quote のメールと一致を要求 (他人のメールへの付与を防ぐ)。
-    // TODO(所有確認): 本番ではマジックリンク等でメール所有を検証してから付与する (MVPは未実装)。
+    // 所有確認: マジックリンク (consign_email_verifications.verified_at) で
+    // メール所有を検証済みの場合のみ、残高付与 (sell) を許可する。検証は
+    // POST /api/consign/verify/request → メール内リンク GET /consign/verify で完了。
     let email = b.email.trim().to_lowercase();
     if !valid_email(&email) {
         return (StatusCode::BAD_REQUEST, Json(json!({"error":"メールアドレスを入力してください"}))).into_response();
@@ -337,6 +370,18 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
     // must-fix 3: メール不一致は拒否。
     if quote_email.trim().to_lowercase() != email {
         return (StatusCode::BAD_REQUEST, Json(json!({"error":"査定時とメールアドレスが一致しません"}))).into_response();
+    }
+
+    // 所有確認: 残高付与に到達しうる sell は、検証済みメールに限定する。
+    // 未検証なら 403 を返し、quote は消費しない (検証後にそのまま再提出できる)。
+    // consign/store は残高を即時付与しないため検証不要 (sell が唯一の mint 経路)。
+    if intent == "sell" && !email_verified(&c, &email) {
+        return (StatusCode::FORBIDDEN, Json(json!({
+            "error":"メール確認が必要です",
+            "need_verify": true,
+            "message":"買取で残高を受け取るには、メールアドレスの確認が必要です。確認メールのリンクを押してから、もう一度「いますぐ買取」を選んでください。",
+            "verify_endpoint":"/api/consign/verify/request"
+        }))).into_response();
     }
 
     let now = now_s();
@@ -440,6 +485,154 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
             Json(json!({"ok": true, "item_id": item_id})).into_response()
         }
     }
+}
+
+// ── POST /api/consign/verify/request ──────────────────────────────────
+// メール所有確認の起点。email を受け、推測不能 token を発行 (DB保存) し、
+// /consign/verify?token=... へのマジックリンクをメール送信する。
+// 既存の Resend (RESEND_API_KEY) を使う。鍵未設定なら 503 (黙って通さない)。
+#[derive(serde::Deserialize)]
+pub(crate) struct VerifyReqBody {
+    #[serde(default)] email: String,
+}
+
+pub(crate) async fn api_verify_request(State(db): State<Db>, Json(b): Json<VerifyReqBody>) -> Response {
+    let email = b.email.trim().to_lowercase();
+    if !valid_email(&email) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"メールアドレスを入力してください"}))).into_response();
+    }
+    let now = now_s();
+    let token = rand_token();
+    {
+        let c = db.lock().unwrap();
+        // レート制限: 1メール 5/h + 全体 300/h (inbox爆撃・Resendコスト/レピュ防御)。
+        // 既存の rate_limit_hit_ok (blog_rate_limit) を流用。
+        if !crate::rate_limit_hit_ok(&c, &format!("consignverify:{}", email), 5) {
+            return (StatusCode::TOO_MANY_REQUESTS, Json(json!({
+                "error":"確認メールの送信が多すぎます。1時間ほどおいて再度お試しください"
+            }))).into_response();
+        }
+        if !crate::rate_limit_hit_ok(&c, "consignverify:_global", 300) {
+            return (StatusCode::TOO_MANY_REQUESTS, Json(json!({"error":"混み合っています。少し待って再度お試しください"}))).into_response();
+        }
+        // 既に検証済みなら再送せず ok を返す (冪等)。未検証 or 別tokenなら upsert。
+        let already = email_verified(&c, &email);
+        if already {
+            return Json(json!({"ok": true, "verified": true,
+                "message":"このメールアドレスは確認済みです。そのまま出品できます。"})).into_response();
+        }
+        // 新しい token を保存 (毎回ローテ = 古いリンクは無効化)。verified_at はクリア。
+        let _ = c.execute(
+            "INSERT INTO consign_email_verifications (email, token, created_at, verified_at)
+             VALUES (?,?,?,NULL)
+             ON CONFLICT(email) DO UPDATE SET token=excluded.token, created_at=excluded.created_at, verified_at=NULL",
+            params![email, token, now],
+        );
+    }
+    // メール送信 (既存 Resend パターンを流用)。鍵未設定なら 503。
+    let key = std::env::var("RESEND_API_KEY").unwrap_or_default();
+    if key.is_empty() {
+        // TODO: 本番では RESEND_API_KEY を必ず設定する。鍵が無い間は検証を完了できない。
+        eprintln!("[consign/verify] RESEND_API_KEY 未設定 — token は保存したがメール未送信 (email={})", email);
+        return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({
+            "error":"メール送信が設定されていません。運営にお問い合わせください"
+        }))).into_response();
+    }
+    let base = std::env::var("MU_BASE").unwrap_or_else(|_| "https://wearmu.com".into());
+    let verify_url = format!("{}/consign/verify?token={}",
+        base.trim_end_matches('/'), urlencoding::encode(&token));
+    let body_html = format!(r#"<div style="background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;padding:32px 0;margin:0">
+<div style="max-width:540px;margin:0 auto;padding:0 32px">
+<div style="font-size:22px;font-weight:700;letter-spacing:0.45em;margin-bottom:22px">━◯━ MU</div>
+<div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;color:#ffd700;opacity:0.85;margin-bottom:8px">出品代行 メール確認</div>
+<h2 style="font-size:19px;font-weight:600;line-height:1.5;margin:0 0 14px">このメールアドレスの確認をお願いします</h2>
+<p style="font-size:13px;line-height:1.9;opacity:0.78;margin:0 0 22px">下のボタンを押すと確認が完了し、買取の残高をこのアドレスで受け取れるようになります。心当たりがない場合はこのメールを無視してください。</p>
+<div style="text-align:center;margin:26px 0">
+<a href="{url}" style="display:inline-block;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:15px;padding:14px 30px;border-radius:99px">メールアドレスを確認する →</a></div>
+<p style="font-size:11px;color:#666;word-break:break-all;margin-top:18px">{url}</p>
+<p style="font-size:11px;line-height:1.85;opacity:0.55;margin:24px 0 0;border-top:1px solid #222;padding-top:18px">MU · wearmu.com · 株式会社イネブラ<br>お問い合わせ: <a href="mailto:info@enablerdao.com" style="color:#ffd700">info@enablerdao.com</a></p>
+</div></div>"#, url = verify_url);
+    let payload = json!({
+        "from": "━◯━ MU 出品代行 <info@enablerdao.com>",
+        "to": [email],
+        "subject": "MU 出品代行 — メールアドレスの確認",
+        "html": body_html,
+    });
+    match reqwest::Client::new()
+        .post("https://api.resend.com/emails")
+        .bearer_auth(&key)
+        .json(&payload)
+        .send().await
+    {
+        Ok(r) if r.status().is_success() => {
+            Json(json!({"ok": true, "verified": false,
+                "message":"確認メールを送りました。メール内のリンクを押すと出品できます。"})).into_response()
+        }
+        Ok(r) => {
+            let st = r.status();
+            let txt = r.text().await.unwrap_or_default();
+            eprintln!("[consign/verify] resend {} email={} → {}", st, email, txt.chars().take(300).collect::<String>());
+            (StatusCode::BAD_GATEWAY, Json(json!({"error":"確認メールの送信に失敗しました。少し待って再度お試しください"}))).into_response()
+        }
+        Err(e) => {
+            eprintln!("[consign/verify] resend http error email={}: {}", email, e);
+            (StatusCode::BAD_GATEWAY, Json(json!({"error":"確認メールの送信に失敗しました。少し待って再度お試しください"}))).into_response()
+        }
+    }
+}
+
+// ── GET /consign/verify?token=... ─────────────────────────────────────
+// マジックリンクの着地点。token を引き、当該行の verified_at を立てる。
+// 成功で「確認できました」、不正/期限切れで案内を返す (HTMLページ)。
+#[derive(serde::Deserialize)]
+pub(crate) struct VerifyQuery {
+    #[serde(default)] token: String,
+}
+
+pub(crate) async fn verify_page(State(db): State<Db>, Query(q): Query<VerifyQuery>) -> Response {
+    let token = q.token.trim();
+    let now = now_s();
+    let ok_email: Option<String> = if token.len() >= 16 {
+        let c = db.lock().unwrap();
+        // token から email を引く (verified_at 未設定でも済でも対象 = 冪等)。
+        let email: Option<String> = c.query_row(
+            "SELECT email FROM consign_email_verifications WHERE token=?",
+            params![token], |r| r.get::<_, String>(0),
+        ).ok();
+        if email.is_some() {
+            let _ = c.execute(
+                "UPDATE consign_email_verifications SET verified_at=COALESCE(verified_at,?) WHERE token=?",
+                params![now, token],
+            );
+        }
+        email
+    } else { None };
+
+    let (title, msg, color) = match ok_email {
+        Some(e) => (
+            "確認できました ✓",
+            format!("<b>{}</b> のメールアドレスを確認しました。<br>出品ページに戻って「いますぐ買取」を選ぶと、このアドレスの残高に反映されます。", esc(&e)),
+            "#9fdf9f",
+        ),
+        None => (
+            "リンクが無効です",
+            "このリンクは無効か、期限切れです。出品ページからもう一度「確認メールを送る」をお試しください。".to_string(),
+            "#e89a9a",
+        ),
+    };
+    let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title} — MU 出品代行</title>
+<style>body{{margin:0;background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:24px}}
+.card{{max-width:480px;text-align:center}}
+.brand{{font-size:20px;font-weight:700;letter-spacing:0.42em;margin-bottom:26px}}
+h1{{font-size:22px;font-weight:600;margin:0 0 14px;color:{color}}}
+p{{font-size:14px;line-height:1.9;opacity:0.82;margin:0 0 26px}}
+a.cta{{display:inline-block;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:700;font-size:15px;padding:13px 28px;border-radius:99px}}</style></head>
+<body><div class="card"><div class="brand">━◯━ MU</div><h1>{title}</h1><p>{msg}</p>
+<a class="cta" href="/consign">出品ページに戻る →</a></div></body></html>"##,
+        title = esc(title), color = color, msg = msg);
+    Html(html).into_response()
 }
 
 fn fmt_date(epoch: i64) -> String {
