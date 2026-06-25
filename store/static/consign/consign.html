@@ -80,7 +80,7 @@ button.submit:disabled{opacity:.45;cursor:default}
 <nav><a class="brand" href="/">MU</a><a href="/consign/balance">残高 →</a></nav>
 <div class="wrap">
   <h1>写真で、出品。</h1>
-  <p class="sub">持ち物を撮るだけ。AIがその場で査定して、3つの出し方から選べます。受け取りはMU内で使える残高。</p>
+  <p class="sub">持ち物を撮るだけ。その場で自動概算（参考値）を出して、3つの出し方から選べます。受け取りはMU内で使える残高。</p>
 
   <!-- __GATE_BANNER__ : partner gate が閉じているとき .gatewall を、開いていれば空文字を注入 -->
   __GATE_BANNER__
@@ -106,11 +106,15 @@ button.submit:disabled{opacity:.45;cursor:default}
     </select>
     <input class="note" id="memo" placeholder="ブランド・型番・状態など（任意）" maxlength="120">
   </div>
-  <button class="cta" id="quoteBtn" disabled>査定する</button>
+  <div class="row">
+    <input class="note" id="email" type="email" inputmode="email" autocomplete="email"
+           placeholder="メールアドレス（残高の受け取り先・必須）" maxlength="254" style="flex:1">
+  </div>
+  <button class="cta" id="quoteBtn" disabled>自動概算する</button>
 
   <!-- 査定中ゲージ -->
   <div class="gen" id="gen">
-    <div class="gtitle"><span class="spin"></span>AIが査定しています…</div>
+    <div class="gtitle"><span class="spin"></span>自動で概算しています…</div>
     <div class="bar"><i id="barfill"></i></div>
     <div class="steps" id="steps">画像を解析中…</div>
   </div>
@@ -118,12 +122,12 @@ button.submit:disabled{opacity:.45;cursor:default}
   <!-- 査定結果 + 3択 -->
   <div id="result">
     <div class="qcard">
-      <div class="qlabel">AI査定額（参考）</div>
+      <div class="qlabel">自動概算額（参考値）</div>
       <div class="qamt" id="qamt">¥0</div>
       <div class="qrange" id="qrange"></div>
       <div class="qreason" id="qreason"></div>
       <div class="disclaim">
-        ※ <b>査定額は確約ではありません。</b>実物の状態確認後に最終額が決まります。<br>
+        ※ <b>この金額はカテゴリと記入内容からの自動概算（参考値）で、確約ではありません。</b>画像は確認しておらず、実物の状態確認後に最終額が決まります。<br>
         ※ <b>「いますぐ買取」は早さと引き換えに減額（査定額の目安70%）が前提です。</b><br>
         ※ 委託は売れたときに手数料（販売価格の20%）を差し引いてお渡しします。手数料は明示します。<br>
         ※ お受け取りは<b>MU内で使える残高（付与日から6ヶ月有効）</b>です。現金での払い戻し・換金はできません。
@@ -167,6 +171,9 @@ button.submit:disabled{opacity:.45;cursor:default}
 var PARTNER_OPEN = "__PARTNER_OPEN__" === "1";
 var fileB64 = null, quote = null, chosen = null;
 var $ = function(id){return document.getElementById(id);};
+function emailOk(v){ v=(v||'').trim(); return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+function refreshQuoteBtn(){ $('quoteBtn').disabled = !(fileB64 && emailOk($('email').value)); }
+$('email').addEventListener('input', refreshQuoteBtn);
 
 $('drop').addEventListener('dragover', function(e){e.preventDefault();$('drop').classList.add('hot');});
 $('drop').addEventListener('dragleave', function(){$('drop').classList.remove('hot');});
@@ -180,7 +187,7 @@ function handleFile(f){
     fileB64 = r.result; // data:image/...;base64,xxxx
     $('pimg').src = fileB64;
     $('preview').style.display='block';
-    $('quoteBtn').disabled=false;
+    refreshQuoteBtn();
     $('err').textContent='';
   };
   r.readAsDataURL(f);
@@ -190,10 +197,11 @@ $('quoteBtn').addEventListener('click', runQuote);
 
 function runQuote(){
   if(!fileB64) return;
+  if(!emailOk($('email').value)){ $('err').textContent='メールアドレスを入力してください'; return; }
   $('err').textContent=''; $('result').style.display='none';
   $('gen').style.display='block'; $('quoteBtn').disabled=true;
   // 進捗ゲージ（演出。実レスポンスを待ちつつ 0→90% へ、到着で 100%）
-  var pct=0; var steps=['画像を解析中…','ブランド・状態を推定中…','相場と照合中…','査定額を算出中…'];
+  var pct=0; var steps=['記入内容を確認中…','カテゴリ相場と照合中…','概算を算出中…','まとめ中…'];
   var si=0;
   var t=setInterval(function(){
     pct=Math.min(90,pct+Math.random()*16);
@@ -202,15 +210,15 @@ function runQuote(){
   },420);
 
   fetch('/api/consign/quote',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({image:fileB64,category:$('cat').value,memo:$('memo').value})})
+    body:JSON.stringify({image:fileB64,category:$('cat').value,memo:$('memo').value,email:$('email').value.trim()})})
   .then(function(r){return r.json();})
   .then(function(d){
     clearInterval(t); $('barfill').style.width='100%'; $('steps').textContent='完了';
-    if(d.error){ $('gen').style.display='none'; $('quoteBtn').disabled=false; $('err').textContent='査定に失敗しました：'+d.error; return; }
+    if(d.error){ $('gen').style.display='none'; refreshQuoteBtn(); $('err').textContent='概算に失敗しました：'+d.error; return; }
     quote=d;
     setTimeout(showResult, 350);
   })
-  .catch(function(e){ clearInterval(t); $('gen').style.display='none'; $('quoteBtn').disabled=false; $('err').textContent='通信エラー：'+e; });
+  .catch(function(e){ clearInterval(t); $('gen').style.display='none'; refreshQuoteBtn(); $('err').textContent='通信エラー：'+e; });
 }
 
 function yen(n){ return '¥'+Number(n||0).toLocaleString('ja-JP'); }
@@ -250,7 +258,7 @@ $('submitBtn').addEventListener('click', function(){
   if(!chosen || !quote) return;
   $('submitBtn').disabled=true; $('err').textContent='';
   fetch('/api/consign/submit',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({quote_id:quote.quote_id, intent:chosen})})
+    body:JSON.stringify({quote_id:quote.quote_id, intent:chosen, email:$('email').value.trim()})})
   .then(function(r){return r.json();})
   .then(function(d){
     if(d.error){ $('submitBtn').disabled=false; $('err').textContent=d.error; return; }

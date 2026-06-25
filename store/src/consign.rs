@@ -80,6 +80,9 @@ pub(crate) fn init_db(conn: &Connection) {
         );
         -- 残高は付与ロット単位。expires_at で 6ヶ月失効。spent_jpy で消し込み。
         -- 出金/換金カラムは意図的に持たない (資金移動業回避)。
+        -- 付与時に同額を mu_credits にも積む (= MU 内購入で実際に使える本物の残高)。
+        -- 失効は consign_balance_lazy_expire() が expires_at 経過ロットの未使用分を
+        -- mu_credits から差し引き、swept_at を立てる (6ヶ月失効をコードで強制)。
         CREATE TABLE IF NOT EXISTS consign_balance_ledger (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             email       TEXT NOT NULL,
@@ -88,9 +91,11 @@ pub(crate) fn init_db(conn: &Connection) {
             spent_jpy   INTEGER NOT NULL DEFAULT 0,
             source      TEXT NOT NULL,           -- 'sell' | 'consign_sold'
             granted_at  INTEGER NOT NULL,
-            expires_at  INTEGER NOT NULL         -- granted_at + 6ヶ月 (必須)
+            expires_at  INTEGER NOT NULL,        -- granted_at + 6ヶ月 (必須)
+            swept_at    INTEGER                  -- 失効処理済の時刻 (NULL=未失効)
         );
-        -- 査定の一時保存 (submit が quote_id を引くため。submit は再計算せずこれを信頼)
+        -- 査定の一時保存 (submit が quote_id を引くため。submit は再計算せずこれを信頼)。
+        -- consumed_at: submit で使用済みになると立つ。二重 submit (= 残高の無限 mint) を防ぐ。
         CREATE TABLE IF NOT EXISTS consign_quotes (
             id          TEXT PRIMARY KEY,
             email       TEXT NOT NULL DEFAULT '',
@@ -99,15 +104,65 @@ pub(crate) fn init_db(conn: &Connection) {
             image_ref   TEXT NOT NULL DEFAULT '',
             estimate_jpy INTEGER NOT NULL,
             reason      TEXT NOT NULL DEFAULT '',
-            created_at  INTEGER NOT NULL
+            created_at  INTEGER NOT NULL,
+            consumed_at INTEGER                  -- submit で消費済 (NULL=未使用)
         );
         CREATE INDEX IF NOT EXISTS idx_consign_ledger_email ON consign_balance_ledger(email, expires_at);
         CREATE INDEX IF NOT EXISTS idx_consign_intents_item ON consign_intents(item_id);"
     );
+    // 既存DBへの後方互換マイグレーション (列が無ければ足す。ある場合のエラーは無視)。
+    let _ = conn.execute("ALTER TABLE consign_balance_ledger ADD COLUMN swept_at INTEGER", []);
+    let _ = conn.execute("ALTER TABLE consign_quotes ADD COLUMN consumed_at INTEGER", []);
+}
+
+/// 失効処理 (遅延): expires_at を過ぎた未失効ロットの「まだ使われていない分」を
+/// mu_credits から差し引き、swept_at を立てる。残高表示・付与・submit のたびに呼ぶ。
+///
+/// 不変条件 #1 (6ヶ月失効) をコードで強制する本体。付与は mu_credit_apply(+) で
+/// 即 MU 内購入に使える本物の残高にしてあるので、失効は「未使用の付与分を回収」する形。
+/// clawback は現在の mu_credits 残高を下限 0 でキャップ (他で稼いだ残高は削らない)。
+fn consign_balance_lazy_expire(conn: &Connection, email: &str) {
+    let now = now_s();
+    let email_lc = email.to_lowercase();
+    // 失効すべきロット: 期限切れ かつ 未失効 かつ 未使用残 (amount - spent) > 0。
+    let mut stmt = match conn.prepare(
+        "SELECT id, amount_jpy, spent_jpy FROM consign_balance_ledger
+         WHERE LOWER(email)=? AND expires_at <= ? AND swept_at IS NULL"
+    ) { Ok(s) => s, Err(_) => return };
+    let lots: Vec<(i64, i64, i64)> = stmt.query_map(params![email_lc, now], |r| {
+        Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+    }).map(|it| it.flatten().collect()).unwrap_or_default();
+    drop(stmt);
+    for (id, amount, spent) in lots {
+        let unused = (amount - spent).max(0);
+        // mu_credits から未使用分を回収 (現残高を超えない = 他収入は守る)。
+        if unused > 0 {
+            let bal = crate::mu_credit_balance(conn, &email_lc);
+            let claw = unused.min(bal.max(0));
+            if claw > 0 {
+                let _ = crate::mu_credit_apply(
+                    conn, &email_lc, -claw,
+                    &format!("consign_expire:{}", id), Some(&format!("consign-expire-{}", id)));
+            }
+        }
+        // ロットを失効済に: spent=amount にして残ゼロ、swept_at を記録。
+        let _ = conn.execute(
+            "UPDATE consign_balance_ledger SET spent_jpy = amount_jpy, swept_at = ? WHERE id = ?",
+            params![now, id]);
+    }
 }
 
 fn now_s() -> i64 {
     crate::chrono_now().parse().unwrap_or(0)
+}
+
+/// 最低限のメール形式チェック (空・@無し・ドメイン無しを弾く)。所有確認ではない。
+fn valid_email(s: &str) -> bool {
+    let s = s.trim();
+    if s.len() < 5 || s.len() > 254 || s.contains(char::is_whitespace) { return false; }
+    let mut it = s.splitn(2, '@');
+    let (local, domain) = match (it.next(), it.next()) { (Some(l), Some(d)) => (l, d), _ => return false };
+    !local.is_empty() && domain.contains('.') && !domain.starts_with('.') && !domain.ends_with('.')
 }
 
 fn esc(s: &str) -> String {
@@ -176,12 +231,22 @@ pub(crate) async fn api_quote(State(db): State<Db>, Json(b): Json<QuoteBody>) ->
     if b.image.len() < 64 {
         return Json(json!({"error":"画像が必要です"})).into_response();
     }
+    // must-fix 3: メール必須。誰の残高か紐づけ、submit で一致を要求するため quote 時に確定。
+    // TODO(所有確認): 本番ではマジックリンク等でメール所有を検証してから付与すること
+    //   (現状は形式チェックのみ = なりすまし可能。MVP として明示)。
+    let email = b.email.trim().to_lowercase();
+    if !valid_email(&email) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"メールアドレスを入力してください"}))).into_response();
+    }
     // 1) 画像を保存 (実装者: 既存の store_mockup_bytes 等で R2/volume に。生base64はDBに入れない)。
     //    ここでは image_ref はプレースホルダ。
     let image_ref = format!("consign/{}", rand_id(""));
 
-    // 2) AI査定。gemini.rs を使う。重ければ簡易ロジック fallback。理由(reason)は必ず返す。
-    let (estimate, reason) = ai_quote(&b.category, &b.memo, &b.image).await;
+    // 2) 自動概算 (参考値)。現状は画像を見ず、カテゴリ+メモから決定論で算出する。
+    //    Gemini 画像査定は未接続 (gemini.rs に画像→テキスト査定関数が無く、
+    //    既存 call_gemini_with_image は画像 URL を受け画像を返す = 査定用途に不適)。
+    //    景表法配慮: 「AI査定」と謳わず「自動概算(参考値)」と表示し、表示と実装を一致させる。
+    let (estimate, reason) = auto_estimate(&b.category, &b.memo);
 
     // 3) quote を一時保存 (submit が引く)。
     let qid = rand_id("q_");
@@ -189,9 +254,9 @@ pub(crate) async fn api_quote(State(db): State<Db>, Json(b): Json<QuoteBody>) ->
     {
         let c = db.lock().unwrap();
         let _ = c.execute(
-            "INSERT INTO consign_quotes (id,email,category,memo,image_ref,estimate_jpy,reason,created_at)
-             VALUES (?,?,?,?,?,?,?,?)",
-            params![qid, b.email, b.category, b.memo, image_ref, estimate, reason, now],
+            "INSERT INTO consign_quotes (id,email,category,memo,image_ref,estimate_jpy,reason,created_at,consumed_at)
+             VALUES (?,?,?,?,?,?,?,?,NULL)",
+            params![qid, email, b.category, b.memo, image_ref, estimate, reason, now],
         );
     }
     let low = (estimate as f64 * RANGE_LOW) as i64;
@@ -209,14 +274,11 @@ pub(crate) async fn api_quote(State(db): State<Db>, Json(b): Json<QuoteBody>) ->
     })).into_response()
 }
 
-/// AI査定。gemini::call_gemini_with_image で画像から推定。失敗時は簡易ヒューリスティック。
+/// 自動概算 (参考値)。カテゴリ+メモから決定論で算出。画像は見ない。
 /// 戻り: (estimate_jpy, reason)。reason は景表法・UX両面で必須。
-async fn ai_quote(category: &str, memo: &str, _image_data_url: &str) -> (i64, String) {
-    // 実装者向け:
-    //   let prompt = format!("この画像の中古品を日本の二次流通相場で査定。カテゴリ={category} メモ={memo}。\
-    //       JSONのみ: {{\"estimate_jpy\":<整数>,\"reason\":\"<状態と相場の根拠を1-2文>\"}}");
-    //   gemini::call_gemini_text や画像対応関数に投げ、JSONをparse。
-    //   ここでは外部依存なしで動くカテゴリ別の簡易ロジックを置く (重い/未設定でも落ちない)。
+/// NOTE: 実画像査定 (Gemini) を入れる場合は表示コピーも「AI査定」に戻すこと
+///       (表示と実装の一致を必ず維持する = 景表法)。
+fn auto_estimate(category: &str, memo: &str) -> (i64, String) {
     let base = match category {
         "watch" => 18000,
         "bag" => 9000,
@@ -227,7 +289,7 @@ async fn ai_quote(category: &str, memo: &str, _image_data_url: &str) -> (i64, St
         _ => 3000,
     };
     let reason = format!(
-        "カテゴリ「{}」の中古相場とご記入内容（{}）から算出した参考値です。状態確認後に最終額が決まります。",
+        "カテゴリ「{}」の中古相場とご記入内容（{}）から自動算出した概算（参考値）です。画像は確認していません。状態確認後に最終額が決まります。",
         if category.is_empty() { "その他" } else { category },
         if memo.trim().is_empty() { "記載なし" } else { memo.trim() }
     );
@@ -247,21 +309,48 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
     if !matches!(intent, "sell" | "consign" | "store") {
         return Json(json!({"error":"不正な選択です"})).into_response();
     }
+    // must-fix 3: メール必須 + quote のメールと一致を要求 (他人のメールへの付与を防ぐ)。
+    // TODO(所有確認): 本番ではマジックリンク等でメール所有を検証してから付与する (MVPは未実装)。
+    let email = b.email.trim().to_lowercase();
+    if !valid_email(&email) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"メールアドレスを入力してください"}))).into_response();
+    }
     let c = db.lock().unwrap();
+    // 付与の前に失効処理を走らせ、期限切れ残高が温存されないようにする (不変条件 #1)。
+    consign_balance_lazy_expire(&c, &email);
 
     // quote を引く (submit は再計算しない。改ざん防止のためサーバ保存値を信頼)。
-    let q: Option<(String, String, String, i64, String)> = c.query_row(
-        "SELECT category,memo,image_ref,estimate_jpy,reason FROM consign_quotes WHERE id=?",
+    // must-fix 3: quote 作成時の email と submit の email が一致しないと拒否。
+    let q: Option<(String, String, String, i64, String, String, Option<i64>)> = c.query_row(
+        "SELECT category,memo,image_ref,estimate_jpy,reason,email,consumed_at FROM consign_quotes WHERE id=?",
         params![b.quote_id],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
     ).ok();
-    let (category, memo, image_ref, estimate, reason) = match q {
+    let (category, memo, image_ref, estimate, reason, quote_email, consumed_at) = match q {
         Some(x) => x,
         None => return Json(json!({"error":"査定が見つかりません。もう一度査定してください"})).into_response(),
     };
+    // must-fix 2: 既に消費済みの quote は二度と使えない (残高の無限 mint を防ぐ)。
+    if consumed_at.is_some() {
+        return Json(json!({"error":"この査定は既に使用済みです。もう一度査定してください"})).into_response();
+    }
+    // must-fix 3: メール不一致は拒否。
+    if quote_email.trim().to_lowercase() != email {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"査定時とメールアドレスが一致しません"}))).into_response();
+    }
 
     let now = now_s();
     let item_id = rand_id("i_");
+
+    // must-fix 2: quote を原子的に消費済みに。consumed_at IS NULL 条件付き UPDATE が
+    // 1 行だけ成功する = この submit だけが付与を行える。0 行なら別 submit が先行した。
+    let consumed = c.execute(
+        "UPDATE consign_quotes SET consumed_at=? WHERE id=? AND consumed_at IS NULL",
+        params![now, b.quote_id],
+    ).unwrap_or(0);
+    if consumed != 1 {
+        return Json(json!({"error":"この査定は既に使用済みです。もう一度査定してください"})).into_response();
+    }
 
     // 不変条件 #2: 売り系は partner gate を通る場合のみ受理。閉じていれば store にダウングレード。
     let gate_open = partner_gate_open(&c);
@@ -272,7 +361,7 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
         let _ = c.execute(
             "INSERT INTO consign_items (id,email,category,memo,image_ref,estimate_jpy,reason,status,created_at)
              VALUES (?,?,?,?,?,?,?,'stored',?)",
-            params![item_id, b.email, category, memo, image_ref, estimate, reason, now],
+            params![item_id, email, category, memo, image_ref, estimate, reason, now],
         );
         let _ = c.execute(
             "INSERT INTO consign_intents (item_id,intent,partner_id,gated,amount_jpy,created_at)
@@ -294,7 +383,7 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
             let _ = c.execute(
                 "INSERT INTO consign_items (id,email,category,memo,image_ref,estimate_jpy,reason,status,created_at)
                  VALUES (?,?,?,?,?,?,?,'bought',?)",
-                params![item_id, b.email, category, memo, image_ref, estimate, reason, now],
+                params![item_id, email, category, memo, image_ref, estimate, reason, now],
             );
             let _ = c.execute(
                 "INSERT INTO consign_intents (item_id,intent,partner_id,gated,amount_jpy,created_at)
@@ -302,11 +391,19 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
                 params![item_id, intent, pid, credited, now],
             );
             let expires = now + BALANCE_TTL_SECS;
+            // 失効監査用ロットを記録 (expires_at が 6ヶ月失効の真実)。
             let _ = c.execute(
-                "INSERT INTO consign_balance_ledger (email,item_id,amount_jpy,spent_jpy,source,granted_at,expires_at)
-                 VALUES (?,?,?,0,'sell',?,?)",
-                params![b.email, item_id, credited, now, expires],
+                "INSERT INTO consign_balance_ledger (email,item_id,amount_jpy,spent_jpy,source,granted_at,expires_at,swept_at)
+                 VALUES (?,?,?,0,'sell',?,?,NULL)",
+                params![email, item_id, credited, now, expires],
             );
+            // must-fix 1: 同額を mu_credits に積む = MU 内購入 (MU PAY redeem / collab 等)
+            // で実際に減る本物の残高。これが無いと特商法ページの「MU内で使える残高」が嘘になる。
+            // 失効は consign_balance_lazy_expire() が expires_at 経過時に未使用分を回収する。
+            if credited > 0 {
+                let _ = crate::mu_credit_apply(
+                    &c, &email, credited, "consign_sell", Some(&item_id));
+            }
             Json(json!({
                 "ok": true, "item_id": item_id, "credited_jpy": credited,
                 "expires_at": fmt_date(expires)
@@ -319,7 +416,7 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
             let _ = c.execute(
                 "INSERT INTO consign_items (id,email,category,memo,image_ref,estimate_jpy,reason,status,created_at)
                  VALUES (?,?,?,?,?,?,?,'listed',?)",
-                params![item_id, b.email, category, memo, image_ref, estimate, reason, now],
+                params![item_id, email, category, memo, image_ref, estimate, reason, now],
             );
             let _ = c.execute(
                 "INSERT INTO consign_intents (item_id,intent,partner_id,gated,amount_jpy,created_at)
@@ -333,7 +430,7 @@ pub(crate) async fn api_submit(State(db): State<Db>, Json(b): Json<SubmitBody>) 
             let _ = c.execute(
                 "INSERT INTO consign_items (id,email,category,memo,image_ref,estimate_jpy,reason,status,created_at)
                  VALUES (?,?,?,?,?,?,?,'stored',?)",
-                params![item_id, b.email, category, memo, image_ref, estimate, reason, now],
+                params![item_id, email, category, memo, image_ref, estimate, reason, now],
             );
             let _ = c.execute(
                 "INSERT INTO consign_intents (item_id,intent,partner_id,gated,amount_jpy,created_at)
@@ -359,7 +456,7 @@ pub(crate) struct BalanceQuery {
 }
 
 pub(crate) async fn balance_page(State(db): State<Db>, Query(q): Query<BalanceQuery>) -> Response {
-    let email = q.email.trim().to_string();
+    let email = q.email.trim().to_lowercase();
     if email.is_empty() {
         // 未照会: メール入力フォームのみ。
         let html = BALANCE_HTML
@@ -369,9 +466,13 @@ pub(crate) async fn balance_page(State(db): State<Db>, Query(q): Query<BalanceQu
     }
     let now = now_s();
     let c = db.lock().unwrap();
+    // 失効処理を先に走らせる (期限切れロットを mu_credits から回収)。表示を真実に。
+    consign_balance_lazy_expire(&c, &email);
+    // 実際に使える残高 = mu_credits の残高 (= 購入時に減る本物の値)。
+    let spendable = crate::mu_credit_balance(&c, &email);
     let mut stmt = c.prepare(
         "SELECT amount_jpy, spent_jpy, source, granted_at, expires_at
-         FROM consign_balance_ledger WHERE email=? ORDER BY expires_at ASC"
+         FROM consign_balance_ledger WHERE LOWER(email)=? ORDER BY expires_at ASC"
     ).unwrap();
     let rows = stmt.query_map(params![email], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?,
@@ -403,9 +504,12 @@ pub(crate) async fn balance_page(State(db): State<Db>, Query(q): Query<BalanceQu
     if lots.is_empty() {
         lots = r##"<div class="empty">有効な残高はありません。<a href="/consign" style="color:#ffd700">出品する →</a></div>"##.to_string();
     }
+    // 「利用できる残高」= mu_credits の実残高 (= 購入時に実際に減る本物の値)。
+    // 出品代行で付与した分はこの中に含まれ、MU 内購入 (MU PAY redeem 等) で使える。
+    let _ = total_live; // 内訳は下のロット明細で表示 (失効分は回収済)。
     let block = format!(
-        r##"<div class="bigbox"><div class="lbl">利用できる残高</div><div class="amt">{total}</div><a class="use" href="/shop">MUで使う →</a></div><h2>内訳（有効期限つき）</h2>{lots}"##,
-        total = yen(total_live), lots = lots
+        r##"<div class="bigbox"><div class="lbl">利用できる残高（MU内購入で使えます）</div><div class="amt">{total}</div><a class="use" href="/shop">MUで使う →</a></div><h2>出品代行ぶんの内訳（有効期限つき）</h2>{lots}"##,
+        total = yen(spendable), lots = lots
     );
     let html = BALANCE_HTML
         .replace("__LOOKUP_DISPLAY__", "none")
