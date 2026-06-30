@@ -5464,6 +5464,10 @@ pub struct MakeQuery {
     /// 売れたら apply_maker_commission がこの率で作者に支払う。
     #[serde(default)]
     pub royalty: Option<i64>,
+    /// 流入元タグ。"suggest" = 提案カード経由の生成。専用の月予算(¥100,000)で頭打ちにし、
+    /// 店全体の月予算(¥1,000,000)とは別枠で観測・制限する。spend の reason に刻む。
+    #[serde(default)]
+    pub src: Option<String>,
 }
 
 /// 印税率 (10〜50%) に応じた価格自動調整。プラットフォーム粗利を10%時と
@@ -7189,6 +7193,7 @@ button:disabled{opacity:.5;cursor:default}
   </div>
   __REQ_INJECT__
   <textarea id="p" aria-label="作りたいものを言葉で入力（例：富士山をミニマルな一本線で描いた黒Tシャツ）" maxlength="300" placeholder="例：富士山をミニマルな一本線で描いた黒Tシャツ">__PROMPT__</textarea>
+  <div id="ideas" hidden></div>
   <div class="row" style="margin-top:8px">
     <label style="flex:0 0 auto;min-width:0;background:transparent;border:1px dashed rgba(255,215,0,.45);color:rgba(255,215,0,.9);font-weight:600;padding:10px 14px;border-radius:10px;font-size:13px;cursor:pointer">📎 画像・曲をのせる<input id="attF" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/ogg,.mp3,.m4a,.wav,.ogg" hidden></label>
     <span id="attChip" style="display:none;flex:1;min-width:0;align-items:center;gap:8px;font-size:12.5px;color:rgba(245,245,240,.8)"></span>
@@ -7365,6 +7370,74 @@ fetch('/api/make/recent').then(r=>r.json()).then(j=>{
   $('#rgrid').innerHTML=j.items.map(it=>'<a href="/shop/'+encodeURIComponent(it.sku)+'"><img loading=lazy src="'+it.img+'" alt=""><div class=rl>'+(it.label||'')+'</div><div class=rp>¥'+(it.price||'')+'</div></a>').join('');
   $('#recent').hidden=false;
 }).catch(()=>{});
+// 検索語から用途・人物像を推論して「買いそうな商品」を提案（?q= で来たとき）。
+// Gemini 無/失敗/空は黙ってスキップ→通常フローにフォールバック。文字直貼りはサーバ側で禁止済み。
+function kindLabel(k){var m={tee:'Tシャツ',tee_white:'白T',hoodie:'パーカー',crewneck:'スウェット',long_sleeve_tee:'ロンT',tank:'タンク',mug:'マグ',mug_black:'黒マグ',tote:'トート',sticker:'ステッカー',rashguard_ls:'ラッシュガード',rashguard_black:'ラッシュガード(黒)',poster:'ポスター',apron:'エプロン',bottle:'ボトル',canvas:'キャンバス',phone_case:'スマホケース',leggings:'レギンス'};return m[k]||'グッズ';}
+(function(){
+  var q0=(($('#p')&&$('#p').value)||'').trim(); if(!q0) return;
+  fetch('/api/make/suggest?q='+encodeURIComponent(q0)).then(function(r){return r.json();}).then(function(j){
+    if(!j||!j.suggestions||!j.suggestions.length) return;
+    window.MU_SUGGEST=j;
+    var box=$('#ideas'); if(!box) return;
+    box.innerHTML='<div style="font-size:13px;color:rgba(255,215,0,.9);font-weight:800;margin:14px 0 6px">この言葉なら、こういうのはどう?</div>'
+      +(j.identity?'<div style="font-size:12.5px;color:rgba(245,245,240,.72);margin-bottom:10px;line-height:1.5">🤔 '+escHtml(j.identity)+'</div>':'')
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px">'
+      +j.suggestions.map(function(s,i){return '<button type=button data-i="'+i+'" style="text-align:left;background:#111;border:1px solid #333;border-radius:12px;padding:11px;cursor:pointer;color:#f5f5f0;display:flex;flex-direction:column;gap:5px">'
+        +'<span style="font-size:11px;color:rgba(255,215,0,.85)">'+escHtml(kindLabel(s.kind))+'</span>'
+        +'<span style="font-size:13px;font-weight:700;line-height:1.3">'+escHtml(s.title||'')+'</span>'
+        +'<span style="font-size:11.5px;color:rgba(245,245,240,.6);line-height:1.4">'+escHtml(s.why||'')+'</span>'
+        +'<span style="margin-top:3px;font-size:12px;font-weight:800;color:#1a1407;background:linear-gradient(180deg,#f4d98a,#b8922f);border-radius:8px;padding:6px 0;text-align:center">✨ これを作る</span></button>';}).join('')
+      +'</div>';
+    box.hidden=false;
+    box.querySelectorAll('button[data-i]').forEach(function(b){b.onclick=function(){
+      var s=j.suggestions[+b.dataset.i]; if(!s) return;
+      if($('#p'))$('#p').value=s.design_brief||s.title||q0;
+      if(s.kind){try{$('#k').value=s.kind;}catch(e){}}
+      muEvent('cta_click',{cta:'make_idea_pick',kind:s.kind});
+      runMakePair(s.design_brief||s.title||q0, s.kind);
+    };});
+  }).catch(function(){});
+})();
+// 「次は何を作る?」: 直前の提案(補完案＋別案)から次の一手を出す。生成完了後に renderResult が差す。
+function muPickNext(i){var s=(window.MU_NEXT||[])[i]; if(!s)return; muEvent('cta_click',{cta:'make_next',kind:s.kind}); if($('#p'))$('#p').value=s.design_brief||s.title||''; if(s.kind){try{$('#k').value=s.kind;}catch(e){}} runMakePair(s.design_brief||s.title||'', s.kind);}
+// 2案を同時(並列)に生成して「買う方」を選ばせる。提案/次は? 経由はこちら(src=suggest=¥100k枠・両方ストック)。
+async function runMakePair(brief,kind){
+  if(!brief){return;}
+  var k=kind||($('#k')&&$('#k').value)||'';
+  var go=$('#go'); if(go){go.disabled=true;go.innerHTML='<span class=spin></span>2案つくっています…';}
+  var genDone=genTheater(brief);
+  var note=document.querySelector('.gnote'); if(note)note.textContent='2案を同時に生成中 — 良い方（買う方）を選べます。どちらも棚に残ります。だいたい30秒。';
+  function one(){return fetch('/api/make?prompt='+encodeURIComponent(brief)+(k?'&kind='+encodeURIComponent(k):'')+'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):'')+'&src=suggest',{method:'POST'}).then(function(r){return r.json();}).catch(function(){return {ok:false};});}
+  var seq=++RUNSEQ;
+  try{
+    var res=await Promise.all([one(),one()]);
+    if(seq!==RUNSEQ)return;
+    genDone();
+    var oks=res.filter(function(j){return j&&j.ok;});
+    if(!oks.length){$('#out').innerHTML='<div class=err>'+((res[0]&&res[0].error)||'うまく作れませんでした。もう一度どうぞ。')+'</div>';}
+    else if(oks.length===1){renderResult(oks[0],brief,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));}
+    else{renderPair(oks,brief);}
+  }catch(e){if(seq!==RUNSEQ)return;genDone();$('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>';}
+  if(go){go.disabled=false;go.textContent='つくる';}
+}
+// 2案を横並びで見せ、それぞれ「これを買う」。選ばれなかった方も棚(catalog)に残る=ストック。
+function renderPair(arr,p){
+  var head='<div class=own><b>あなたの言葉</b>から、2案できました。<span class=pq>気に入った方（買う方）を選んでください。どちらも棚に残ります。</span></div>';
+  var cards=arr.map(function(j){
+    var buyHref=j.checkout_url||j.buy_url;
+    return '<div class="card reveal" style="flex:1;min-width:230px"><img src="'+j.design_url+'" alt=""><div class=meta>'
+      +'<div class=nm>'+(j.display||'')+'</div>'
+      +'<div style="font-size:12.5px;color:rgba(245,245,240,.7);margin:2px 0 6px">'+(j.hook||'')+'</div>'
+      +'<div class=pr>¥'+yen(j.retail_jpy)+'</div>'
+      +(buyHref?'<a class=buy href="'+buyHref+'" onclick="muEvent(\'cta_click\',{cta:\'make_buy_pair\',sku:\''+j.sku+'\'})">これを買う ¥'+yen(j.retail_jpy)+' →<small>サイズ・お届け先はお会計画面で</small></a>':'')
+      +(j.pdp_url?'<div style="text-align:center;margin-top:6px"><a href="'+j.pdp_url+'" style="color:rgba(245,245,240,.55);font-size:12px">商品ページ →</a></div>':'')
+      +'</div></div>';
+  }).join('');
+  var next='';
+  if(window.MU_SUGGEST){var sg=window.MU_SUGGEST,ns=[];if(sg.complement&&(sg.complement.design_brief||sg.complement.title))ns.push(sg.complement);(sg.suggestions||[]).forEach(function(s){if(ns.length<3&&(s.design_brief||'')!==p)ns.push(s);});window.MU_NEXT=ns;if(ns.length){next='<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)"><div style="font-size:12px;color:rgba(245,245,240,.55);margin-bottom:9px">次は何を作る?</div>'+ns.map(function(s,i){return '<button class=share type=button onclick="muPickNext('+i+')">'+escHtml(s.title||'もう一案')+' →</button>';}).join(' ')+'</div>';}}
+  $('#out').innerHTML=head+'<div style="display:flex;gap:12px;flex-wrap:wrap">'+cards+'</div>'+next;
+  $('#out').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
 // 生成シアター: お題のエコー + 物語のステータス + 進捗バー。戻り値で停止。
 function genTheater(p){
   var msgs=['お題を、読み解いています…','筆を、とりました','線を一本、引いています…','色を、えらんでいます…','余白と、相談しています…','布にのせて、確かめています…','タグに名前を入れています…','棚をあけて、待っています…'];
@@ -7454,6 +7527,19 @@ function renderResult(j,p,ok){
   var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。'+(j.affiliate_link?'<a href="'+j.affiliate_link+'" style="color:#ffd700">あなたの紹介リンクで広める →</a>':'<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a>')+'</div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
+  // 次は何を作る?: さっきの意図推論(補完案＋別案)から、続けて作れるものを提案。
+  var next='';
+  if(window.MU_SUGGEST){
+    var sg=window.MU_SUGGEST, ns=[];
+    if(sg.complement&&(sg.complement.design_brief||sg.complement.title)) ns.push(sg.complement);
+    (sg.suggestions||[]).forEach(function(s){ if(ns.length<3 && (s.design_brief||'')!==p) ns.push(s); });
+    window.MU_NEXT=ns;
+    if(ns.length){
+      next='<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,.12)"><div style="font-size:12px;color:rgba(245,245,240,.55);margin-bottom:9px">次は何を作る?</div>'
+        +ns.map(function(s,i){return '<button class=share type=button onclick="muPickNext('+i+')">'+escHtml(s.title||'もう一案')+' →</button>';}).join(' ')
+        +'</div>';
+    }
+  }
   $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
     +'<div class=nm>'+(j.display||'')+'</div>'
     +'<div class=by>DESIGNED BY YOU × MU</div>'
@@ -7461,7 +7547,7 @@ function renderResult(j,p,ok){
     +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
     + one
     +'<div class=fitnote id=mkFit>'+(j.auto_approved&&j.kind!=='song'?mkPrep(j.kind):'')+'</div>'
-    + buy + route + share + spread + nt
+    + buy + route + next + share + spread + nt
     +'</div></div>'
     +hist
     +(ok?'':claimCardHtml());
@@ -8978,6 +9064,87 @@ mod sound_tee_tests {
     }
 }
 
+/// GET /api/make/suggest?q=<語> — 検索語から「裏の目的・人物像」を推論し、その人が実際に
+/// 着る/使う商品案(kind×design_brief)を返す。文字の直貼りはさせない(構造式/図解/コンセプト化はOK)。
+/// 🔴絶対に取りこぼさない: クエリがある限り必ず3案以上返す。Gemini が失敗/解釈不能でも、
+/// 角度を変えたローカル3案にフォールバック(0件・行き止まりを作らない)。作る系のみ=戦略ゲート非該当。
+pub async fn make_suggest(Query(q): Query<std::collections::HashMap<String, String>>) -> Response {
+    let word: String = q.get("q").map(|s| s.trim()).unwrap_or("").chars().take(80).collect();
+    if word.is_empty() {
+        // クエリ自体が無いときだけ空(提案する対象がない)。
+        return axum::Json(serde_json::json!({"ok": true, "suggestions": []})).into_response();
+    }
+    const OK_KINDS: &[&str] = &["tee","tee_white","hoodie","crewneck","long_sleeve_tee","tank","rashguard_ls","rashguard_black","leggings","apron","tote","sticker","mug","mug_black","phone_case","bottle","poster","canvas"];
+    // 推論できないとき/Gemini失敗時の保険: 角度を変えた3案。どれも検索語を大きく直貼りしない。
+    // これで「毎回3・絶対取りこぼさない」を保証する。
+    let fallback = |w: &str| -> Vec<serde_json::Value> {
+        vec![
+            serde_json::json!({"kind":"tee","title":"ミニマル意匠のTシャツ",
+                "design_brief": format!("A minimal, tasteful graphic inspired by the concept of \"{}\" — iconographic or single-line, NOT a big literal text label, on a black tee", w),
+                "why":"まずは王道の一枚で、その世界観を身につける"}),
+            serde_json::json!({"kind":"tote","title":"シンボル柄トート",
+                "design_brief": format!("Everyday canvas tote with an abstract/symbolic motif evoking \"{}\", clean and wearable, no literal big label", w),
+                "why":"日常使いでさりげなく好きを表す"}),
+            serde_json::json!({"kind":"mug","title":"エンブレムのマグ",
+                "design_brief": format!("Simple elegant mug with a small refined emblem/icon inspired by \"{}\"", w),
+                "why":"毎日の手元に置いて気分を上げる"}),
+        ]
+    };
+    let prompt = format!(
+        "あなたは MU(オンデマンドでTシャツやグッズをAI生成するブランド)の商品プランナー。\
+         ユーザーが検索/入力した言葉から、その人の『裏の目的・関心・人物像』まで推論し、\
+         その人が実際に身につける/使いたくなる商品アイデアを設計する。\n\
+         # 思考: 1)この言葉は何か同定 2)なぜ検索したか・裏の目的・人物像を推論 \
+         3)その人が着る/使う商品を必ず3案(kind と、目的やアイデンティティを表現する気の利いたデザイン)。\
+         用途が曖昧・推論しきれないときも、角度を変えて(そのままミニマル意匠化/別解釈/王道グッズ)必ず3案出す。\
+         4)併せて欲しくなる補完案を1つ。\n\
+         # 最重要: 『いいの』＝実際に買われるもの。人が金を出して着る/使う、売れるコマーシャルな\
+         デザインを狙う(トレンド・ブランドらしさ・ギフト適性)。自己満足の難解アートにしない。\n\
+         # 厳守: 検索語の文字をそのまま大きく載せた商品は禁止(誰も着ない)。化学構造式・英名・図解・\
+         コンセプト化はOK。着られる/使える美意識。ダサい直訳をしない。日本語で。\n\
+         # 出力(JSONのみ・前後に文やコードフェンス禁止):\n\
+         {{\"identity\":\"推論した人物像/目的(1文)\",\"reasoning\":\"なぜそう考えたか(1文)\",\
+         \"suggestions\":[{{\"kind\":\"tee|tee_white|hoodie|mug|tote|sticker|rashguard_ls|poster|apron\",\
+         \"title\":\"短い商品名(日本語)\",\"design_brief\":\"AIに渡す具体的なデザイン指示(英語可)\",\
+         \"why\":\"この人が買う理由(1文)\"}}],\
+         \"complement\":{{\"title\":\"併せて欲しい案\",\"design_brief\":\"...\",\"why\":\"...\"}}}}\n\
+         言葉: \"{}\"", word);
+    // Gemini で推論。失敗/解釈不能でも下で fallback 補完するので、ここでは Option に倒すだけ。
+    let parsed_opt: Option<serde_json::Value> = match crate::gemini::call_gemini_text(&prompt).await {
+        Ok(raw) => {
+            let json_str: String = raw.find('{')
+                .and_then(|i| raw[i..].rfind('}').map(|j| raw[i..i + j + 1].to_string()))
+                .unwrap_or(raw);
+            serde_json::from_str(&json_str).ok()
+        }
+        Err(_) => None,
+    };
+    let mut result = parsed_opt.unwrap_or_else(|| serde_json::json!({}));
+    // suggestions を取り出して kind 正規化。
+    let mut sugg: Vec<serde_json::Value> =
+        result.get("suggestions").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    for s in sugg.iter_mut() {
+        let k = s.get("kind").and_then(|v| v.as_str()).unwrap_or("tee");
+        let safe = if OK_KINDS.contains(&k) { k.to_string() } else { "tee".to_string() };
+        s["kind"] = serde_json::Value::String(safe);
+    }
+    sugg.truncate(5);
+    // 🔴 絶対3案: 足りなければ角度違いの fallback で必ず3まで埋める。
+    if sugg.len() < 3 {
+        for f in fallback(&word) {
+            if sugg.len() >= 3 { break; }
+            sugg.push(f);
+        }
+    }
+    result["suggestions"] = serde_json::Value::Array(sugg);
+    if result.get("identity").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        result["identity"] =
+            serde_json::Value::String("ぴったりの用途が読み切れなかったので、違う切り口で3案出しました".to_string());
+    }
+    result["ok"] = serde_json::Value::Bool(true);
+    axum::Json(result).into_response()
+}
+
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
@@ -9145,7 +9312,22 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
     // ローカル生成・持ち込み画像は API 課金ゼロ → 予算台帳は ¥0 で記録だけ残す(観測のため)。
     let gen_cost = if user_design_url.is_some() || use_local { 0 } else { GEMINI_IMAGE_COST_JPY };
-    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &format!("public_make sku={} engine={}", sku, if user_design_url.is_some() { "upload" } else if use_local { "local" } else { "gemini" }), Some(&sku)) };
+    // 提案カード(src=suggest)経由の生成は専用の月¥100,000枠で頭打ち。店全体の¥1,000,000とは別枠。
+    let from_suggest = q.src.as_deref() == Some("suggest");
+    const SUGGEST_BUDGET_JPY: i64 = 100_000;
+    if from_suggest && gen_cost > 0 {
+        let conn = db.lock().unwrap();
+        let spent: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(amount_jpy),0) FROM catalog_spend \
+             WHERE reason LIKE '%src=suggest%' AND strftime('%Y-%m', created_at) = strftime('%Y-%m','now')",
+            [], |r| r.get(0)).unwrap_or(0);
+        if spent + gen_cost > SUGGEST_BUDGET_JPY {
+            return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"今月の提案からの生成枠（¥100,000）が上限に達しました。"}))).into_response();
+        }
+    }
+    let engine_tag = if user_design_url.is_some() { "upload" } else if use_local { "local" } else { "gemini" };
+    let reason = format!("public_make sku={} engine={}{}", sku, engine_tag, if from_suggest { " src=suggest" } else { "" });
+    let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &reason, Some(&sku)) };
     if !charged {
         return (StatusCode::FAILED_DEPENDENCY, axum::Json(serde_json::json!({"ok":false,"error":"本日の生成枠が上限に達しました。また明日お試しください。"}))).into_response();
     }
