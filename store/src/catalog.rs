@@ -11538,6 +11538,7 @@ pub async fn shop_index(
 <title>{title}</title>
 <meta name="description" content="{meta_desc}">
 <link rel="canonical" href="{canonical}">
+<link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" href="/favicon.svg">
 {hreflang_links}{robots_meta}
 <meta property="og:type" content="website">
 <meta property="og:title" content="{title}">
@@ -11648,6 +11649,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   <a href="/returns">返品</a>
   <a href="/faq">FAQ</a>
   <a href="/privacy">プライバシー</a>
+  <a href="/tokushoho">特定商取引法</a>
   <a href="/heritage">heritage</a>
   <a href="/buy">drops</a>
   <a href="https://yukihamada.jp/community">🔥 ともしび</a>
@@ -12207,6 +12209,12 @@ pub async fn shop_pdp(
         }
         match (is_sealed, split) {
             (false, Some((h, t))) => (h, t),
+            // 区切りが無いが、desc とは別に短い label がある場合(エージェント作成商品など):
+            // label を H1 見出しに、desc 全文をタグラインへ降格する。長文ポエムが H1 を
+            // 占めて価格/CTA がファーストビューから押し出される問題(CV殺し)を防ぐ。
+            // label が空 or desc と同一なら従来どおり(挙動非変更)。
+            (false, None) if !label.trim().is_empty() && label.trim() != display_name.trim()
+                => (label.trim().to_string(), display_name.clone()),
             _ => (display_name.clone(), String::new()),
         }
     };
@@ -13374,6 +13382,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <meta name="twitter:description" content="{og_desc}">
 <meta name="twitter:image" content="{og}">
 <link rel="canonical" href="https://wearmu.com/shop/{sku_url}">
+<link rel="icon" href="/favicon.svg"><link rel="apple-touch-icon" href="/favicon.svg">
 {hreflang_links}
 <script type="application/ld+json">{{
   "@context": "https://schema.org/",
@@ -13531,6 +13540,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     <a href="/returns">返品 / Returns</a>
     <a href="/faq">FAQ</a>
     <a href="/privacy">プライバシー / Privacy</a>
+    <a href="/tokushoho">特定商取引法</a>
     <a href="mailto:info@enablerdao.com">CONTACT</a>
   </div>
   <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
