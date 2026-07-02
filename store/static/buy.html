@@ -345,7 +345,10 @@ footer{
     var key = "mu_ref_jiuflow";
     var url = new URL(location.href);
     var qref = (url.searchParams.get("ref") || "").toLowerCase();
-    var hasRef = qref === "jiuflow";
+    // 2026-07-02: JIUFLOW20 coupon expired 6/30 (Stripe-side too). Force-hide the
+    // banner so ?ref=jiuflow visitors aren't shown a code that fails at checkout.
+    // To relaunch: create a new Stripe coupon + restore `qref === "jiuflow"`.
+    var hasRef = false && qref === "jiuflow";
     if (!hasRef) {
       try { hasRef = localStorage.getItem(key) === "1"; } catch (_) {}
     }
@@ -487,16 +490,9 @@ footer{
     </a>
   </div>
 
-  <!-- 100枚 challenge live progress — Sho FB #7 #11: 進捗 を 隠さず 出す.
-       JSON は /api/100/progress (sold count + period start). -->
-  <a href="/100" id="challenge-100-live" style="display:flex;align-items:center;gap:14px;background:#0c0c0c;border:1px solid rgba(230,196,73,0.3);border-radius:8px;padding:14px 18px;margin:0 0 24px;text-decoration:none;color:#F5F5F0">
-    <div style="font-size:22px">🎯</div>
-    <div style="flex:1">
-      <div style="font-size:10.5px;letter-spacing:0.22em;color:#e6c449;text-transform:uppercase;margin-bottom:4px">100枚 チャレンジ · 5/18 → 5/31</div>
-      <div style="font-size:14px"><span id="challenge-100-sold" style="font-size:22px;font-weight:700;color:#fff;font-family:'SF Mono','Menlo',monospace">—</span> <span style="opacity:0.6">/ 100 着</span></div>
-    </div>
-    <div style="font-size:11px;letter-spacing:0.15em;color:#e6c449;text-transform:uppercase">live →</div>
-  </a>
+  <!-- 100枚 challenge banner removed 2026-07-02: campaign window (5/18→5/31)
+       is long past; a stale dated banner reads as an abandoned site. Re-add
+       with a live/dynamic period if the challenge is relaunched. -->
 
   <!-- 商品 写真 ギャラリー — Sho FB #8 #12. 4枚 grid。 (a) latest mockup
        (既存 hero.png API) (b) Yuki が 着てる 写真 (c) タグ / moon-phase
