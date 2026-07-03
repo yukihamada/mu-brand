@@ -4031,10 +4031,13 @@ async fn printful_render_mockup_bytes(
         // (meta_json.print_position_box・aspect-fit 済み)をそのまま使う。
         // AOP(301系)は4パネル cover-fill が正なので対象外。
         71 | 146 | 145 | 539 | 356 if custom_pos.is_some() => custom_pos.clone().unwrap(),
-        // 前面チェストDTGアパレル + AOPラッシュガード4パネル → tee 1800×2400 box。
-        // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356) +
-        // rashguard AOP(301/302/368/369/836)。
-        71 | 146 | 145 | 539 | 356 | 301 | 302 | 368 | 369 | 836 => match design_dims {
+        // 前面チェストDTGアパレル → tee 1800×2400 box。
+        // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356)。
+        // AOPラッシュガード(301/302/368/369/836)はここに入れない:
+        // 4パネル(front/back/sleeve_*)は printfile 寸法が別々で、単一チェスト
+        // box を流用すると下半分が白+袖タイルになる(既知バグ)。→ 下の _ アーム
+        // + files ループで per-placement cover-fill する。
+        71 | 146 | 145 | 539 | 356 => match design_dims {
             // Center-fit the design inside the 1260×1260 chest box (top-left
             // 270,380 in the 1800×2400 print area), preserving aspect so a
             // non-square design isn't stretched.
@@ -4063,13 +4066,26 @@ async fn printful_render_mockup_bytes(
         }
     };
     let placements = placements_for_product(printful_product);
-    let files: Vec<serde_json::Value> = placements.iter().map(|p| {
-        serde_json::json!({
+    // AOP(301系)は各パネル(front/back/sleeve_*)で printfile 寸法が違うため、
+    // 上で計算した単一 position を全パネルに流用すると下半分が白く残り袖に
+    // タイルされる(旧バグ)。パネルごとに cover-fill 位置を取り直す。
+    // 非AOPは placements=["front"] の1枚なので従来どおり単一 position。
+    let is_aop = matches!(printful_product, 301 | 302 | 368 | 369 | 836);
+    let mut files: Vec<serde_json::Value> = Vec::with_capacity(placements.len());
+    for p in placements.iter() {
+        let pos = if is_aop {
+            printful_fill_position(&client, &key, printful_product, *p, design_dims)
+                .await
+                .unwrap_or_else(|| position.clone())
+        } else {
+            position.clone()
+        };
+        files.push(serde_json::json!({
             "placement": p,
             "image_url": design_url,
-            "position": position,
-        })
-    }).collect();
+            "position": pos,
+        }));
+    }
     let create_body = serde_json::json!({
         "variant_ids": [printful_variant],
         "format": "png",
