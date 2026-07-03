@@ -572,7 +572,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <body>
 
 <!-- FLOATING STICKY SHOP CTA — visible after hero scrolls off -->
-<button id="floating-shop" type="button" aria-label="MUGEN を買う — 次のドロップまでのカウントダウン" onclick="showSection('mugen')">
+<button id="floating-shop" type="button" aria-label="MUGEN を買う — 次のドロップまでのカウントダウン" data-onclick="showSection" data-arg="mugen">
   <span class="price">MUGEN ¥5K〜</span>
   <span class="timer" id="floating-shop-timer">next drop —</span>
 </button>
@@ -612,11 +612,11 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 
 <!-- NAV -->
 <nav id="nav">
-  <a class="nav-logo" href="#" onclick="showSection('hero')"><span style="opacity:0.7;font-weight:400;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU</a>
+  <a class="nav-logo" href="#" data-onclick="showSection" data-arg="hero"><span style="opacity:0.7;font-weight:400;letter-spacing:0.1em;margin-right:8px">━◯━</span>MU</a>
   <div class="nav-tabs">
     <!-- Primary 2 (focus per Constitution §14 — preserve negative space): MUGEN + MUON -->
-    <div class="nav-tab" data-b="mugen" onclick="showSection('mugen')" role="button" tabindex="0" aria-label="MUGEN 無限 — 毎時間生まれる T シャツ ¥5,000〜">MUGEN <span style="opacity:0.45;font-size:9px;margin-left:4px">¥5K〜</span></div>
-    <div class="nav-tab" data-b="muon" onclick="showSection('muon')" role="button" tabindex="0" aria-label="MUON 無音 — 気温が枚数を決める ¥5,000〜">MUON <span style="opacity:0.45;font-size:9px;margin-left:4px">¥5K〜</span></div>
+    <div class="nav-tab" data-b="mugen" data-onclick="showSection" data-arg="mugen" role="button" tabindex="0" aria-label="MUGEN 無限 — 毎時間生まれる T シャツ ¥5,000〜">MUGEN <span style="opacity:0.45;font-size:9px;margin-left:4px">¥5K〜</span></div>
+    <div class="nav-tab" data-b="muon" data-onclick="showSection" data-arg="muon" role="button" tabindex="0" aria-label="MUON 無音 — 気温が枚数を決める ¥5,000〜">MUON <span style="opacity:0.45;font-size:9px;margin-left:4px">¥5K〜</span></div>
     <!-- Secondary: shown but visually de-emphasized -->
     <a href="/shop" class="nav-tab" style="text-decoration:none;color:#e6c449;font-weight:600" aria-label="SHOP — MU + コラボブランド カタログ 1,500+ SKU">SHOP <span style="opacity:0.55;font-size:9px;margin-left:4px">1500+</span></a>
     <!-- MART = mart.wearmu.com（1日1ドロップの限定EC・別アプリ）。/shop はカタログ、MART は日替わりキュレーション。data-track で流入をt.js計測。 -->
@@ -624,12 +624,12 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <a href="/brands" class="nav-tab" style="text-decoration:none;color:inherit;opacity:0.55" aria-label="ブランド一覧 — MU と各パートナーのコラボブランド">ブランド一覧</a>
     <!-- BJJ = 唯一の実需垂直 (CLAUDE.md STRATEGY)。More から昇格し買えるカタログ /bjj へ直結。 -->
     <a href="/bjj" class="nav-tab" style="text-decoration:none;color:#7aa0ff;font-weight:600" aria-label="MU × BJJ — 柔術コレクション (TAP × NAP)">🥋 BJJ</a>
-    <div class="nav-tab" data-b="ma" onclick="showSection('ma')" role="button" tabindex="0" aria-label="間 MA — 週1回 7日オークション" style="opacity:0.55">間 MA</div>
+    <div class="nav-tab" data-b="ma" data-onclick="showSection" data-arg="ma" role="button" tabindex="0" aria-label="間 MA — 週1回 7日オークション" style="opacity:0.55">間 MA</div>
     <a href="/you" class="nav-tab" style="text-decoration:none;color:inherit;opacity:0.55" aria-label="MU × YOU — あなた専用 T シャツ">/you</a>
     <a href="/blog" class="nav-tab" style="text-decoration:none;color:inherit;opacity:0.55" aria-label="運営公開ノート">運営ノート</a>
     <a href="/vision" class="nav-tab" style="text-decoration:none;color:#e6c449;font-weight:500" aria-label="MU の Vision">Vision</a>
     <!-- Tertiary: hidden behind "More" -->
-    <div class="nav-tab" style="position:relative;opacity:0.5" role="button" tabindex="0" onclick="this.querySelector('.more-pop').style.display = this.querySelector('.more-pop').style.display==='block'?'none':'block'">
+    <div class="nav-tab" style="position:relative;opacity:0.5" role="button" tabindex="0" data-toggle-child=".more-pop">
       More
       <div class="more-pop" style="display:none;position:absolute;top:100%;right:0;background:#0a0a0a;border:1px solid rgba(255,255,255,0.1);padding:12px 16px;min-width:200px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;line-height:2.4;z-index:50">
         <a href="/why" style="color:#e6c449;text-decoration:none;display:block;font-weight:600">📈 Why (Thesis)</a>
@@ -644,9 +644,9 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     </div>
   </div>
   <div class="nav-right">
-    <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">About</a>
-    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" onmouseover="this.style.opacity=0.8" onmouseout="this.style.opacity=0.25">Press</a>
-    <a href="/press.html?lang=en" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:20px;border:1px solid rgba(245,245,240,0.25);padding:3px 8px" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5" aria-label="English overview — read the brand explanation in English on the press page">EN ↗</a>
+    <a href="/about.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" data-hi="opacity:0.8" data-lo="opacity:0.25">About</a>
+    <a href="/press.html" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:8px" data-hi="opacity:0.8" data-lo="opacity:0.25">Press</a>
+    <a href="/press.html?lang=en" style="font-size:9px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;transition:opacity 0.2s;margin-right:20px;border:1px solid rgba(245,245,240,0.25);padding:3px 8px" data-hi="opacity:1" data-lo="opacity:0.5" aria-label="English overview — read the brand explanation in English on the press page">EN ↗</a>
     <div class="live-dot"></div>
     <span class="live-label">生成中</span>
   </div>
@@ -661,7 +661,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <div id="promo-strip" style="margin-top:100px;position:relative;z-index:5">
   <!-- 今日 の Tシャツ hero card — above-the-fold MUGEN + 1-click buy. -->
   <a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
-    <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" onerror="this.style.display='none'">
+    <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" data-onerror="hide">
     <div style="flex:1;min-width:0">
       <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL} · ベーシック生地</div>
       <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日 <span style="font-size:11px;opacity:0.5;font-weight:400">(下のオーガニック版は ¥7,800)</span></div>
@@ -835,15 +835,15 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   </div>
 
   <div class="hero-brands">
-    <div class="hero-brand-btn" onclick="showSection('ma')">
+    <div class="hero-brand-btn" data-onclick="showSection" data-arg="ma">
       <div class="hero-brand-sig"><div class="sig-line"></div></div>
       <div class="hero-brand-name">間 MA</div>
     </div>
-    <div class="hero-brand-btn" onclick="showSection('muon')">
+    <div class="hero-brand-btn" data-onclick="showSection" data-arg="muon">
       <div class="hero-brand-sig"><div class="sig-line"></div><div class="sig-dot"></div></div>
       <div class="hero-brand-name">MUON</div>
     </div>
-    <div class="hero-brand-btn" onclick="showSection('mugen')">
+    <div class="hero-brand-btn" data-onclick="showSection" data-arg="mugen">
       <div class="hero-brand-sig">
         <div class="sig-line"></div>
         <div class="sig-dot red"></div>
@@ -857,7 +857,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <a href="/cities" style="display:inline-block;margin-top:32px;font-size:9px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.5;text-decoration:none;color:inherit;border-bottom:1px dotted rgba(245,245,240,0.25);padding-bottom:4px" aria-label="MU の都市 — origin: Teshikaga, satellites">
     <span style="color:#e6c449">●</span> Origin: Teshikaga (JP) &nbsp;·&nbsp; <span style="opacity:0.6">○ Pilot: Honolulu (US)</span>
   </a>
-  <a href="/about.html" style="display:inline-block;margin-top:24px;font-size:8px;letter-spacing:0.4em;text-transform:uppercase;border:1px solid rgba(245,245,240,0.2);padding:12px 28px;opacity:0.6;transition:opacity 0.2s" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.6" aria-label="初めての方はこちら — MUについて詳しく知る">NEW? START HERE →</a>
+  <a href="/about.html" style="display:inline-block;margin-top:24px;font-size:8px;letter-spacing:0.4em;text-transform:uppercase;border:1px solid rgba(245,245,240,0.2);padding:12px 28px;opacity:0.6;transition:opacity 0.2s" data-hi="opacity:1" data-lo="opacity:0.6" aria-label="初めての方はこちら — MUについて詳しく知る">NEW? START HERE →</a>
 </div>
 
 <!-- MANIFESTO — quiet scroll-triggered story.
@@ -957,8 +957,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <!-- Vault — show the lock first. Tension over invitation. -->
     <a href="/vault" id="vault-locked-card"
        style="display:block;margin-top:32px;padding:28px 32px;background:rgba(255,255,255,0.015);border:1px solid rgba(255,255,255,0.08);border-radius:2px;text-decoration:none;color:inherit;transition:background 0.25s,border-color 0.25s"
-       onmouseover="this.style.background='rgba(230,196,73,0.04)';this.style.borderColor='rgba(230,196,73,0.3)';document.getElementById('vault-whisper').style.opacity='1';document.getElementById('vault-icon').style.color='#e6c449'"
-       onmouseout="this.style.background='rgba(255,255,255,0.015)';this.style.borderColor='rgba(255,255,255,0.08)';document.getElementById('vault-whisper').style.opacity='0.5';document.getElementById('vault-icon').style.color='rgba(245,245,240,0.4)'">
+       data-hi="background:rgba(230,196,73,0.04);border-color:rgba(230,196,73,0.3)"
+       data-lo="background:rgba(255,255,255,0.015);border-color:rgba(255,255,255,0.08)">
       <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px">
         <!-- Padlock SVG, monochrome. Hover → gold. -->
         <svg id="vault-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="color:rgba(245,245,240,0.4);flex-shrink:0;transition:color 0.25s">
@@ -1021,11 +1021,11 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
          sell shirts; tertiary = the BIM design detail on bim.house. -->
     <div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:36px">
       <a href="https://bim.house/soluna/sips" target="_blank" rel="noopener" data-funnel="cta_click" data-funnel-cta="home_sips_order"
-        style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;background:#e6c449;border:1px solid #e6c449;color:#0A0A0A;font-weight:600;padding:14px 28px;text-decoration:none;transition:opacity 0.2s" onmouseover="this.style.opacity=0.85" onmouseout="this.style.opacity=1">国産杉×籾殻SIPs を発注する →</a>
+        style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;background:#e6c449;border:1px solid #e6c449;color:#0A0A0A;font-weight:600;padding:14px 28px;text-decoration:none;transition:opacity 0.2s" data-hi="opacity:0.85" data-lo="opacity:1">国産杉×籾殻SIPs を発注する →</a>
       <a href="/shop"
-        style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;border:1px solid rgba(230,196,73,0.5);color:#e6c449;padding:14px 28px;text-decoration:none;transition:background 0.2s" onmouseover="this.style.background='rgba(230,196,73,0.08)'" onmouseout="this.style.background='transparent'">MU の T シャツを見る →</a>
+        style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;border:1px solid rgba(230,196,73,0.5);color:#e6c449;padding:14px 28px;text-decoration:none;transition:background 0.2s" data-hi="background:rgba(230,196,73,0.08)" data-lo="background:transparent">MU の T シャツを見る →</a>
       <a href="https://bim.house/viewer/u-mut-9bru6gvb" target="_blank" rel="noopener"
-        style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;border:1px solid rgba(245,245,240,0.2);color:#F5F5F0;padding:14px 28px;text-decoration:none;transition:opacity 0.2s" onmouseover="this.style.opacity=0.7" onmouseout="this.style.opacity=1">bim.house で詳しく →</a>
+        style="font-size:11px;letter-spacing:0.18em;text-transform:uppercase;border:1px solid rgba(245,245,240,0.2);color:#F5F5F0;padding:14px 28px;text-decoration:none;transition:opacity 0.2s" data-hi="opacity:0.7" data-lo="opacity:1">bim.house で詳しく →</a>
     </div>
 
     <p style="font-size:11px;line-height:1.9;color:rgba(245,245,240,0.4);margin-top:28px;max-width:560px">
@@ -1105,7 +1105,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <!-- §29 The Discipline of Silence — homepage からは profit_split を hero 露出しない (A-1)。
        /profit-split は維持、 footer から1行リンクのみ。 透明性は法令対応上の最小限に。 -->
   <div style="max-width:760px;margin:48px auto 0;padding:0 32px;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px">
-    <a href="/ma/retired" style="text-decoration:none;color:inherit;display:block;padding:24px;background:#111;border:1px solid rgba(230,196,73,0.25);transition:border-color 0.2s" onmouseover="this.style.borderColor='#e6c449'" onmouseout="this.style.borderColor='rgba(230,196,73,0.25)'">
+    <a href="/ma/retired" style="text-decoration:none;color:inherit;display:block;padding:24px;background:#111;border:1px solid rgba(230,196,73,0.25);transition:border-color 0.2s" data-hi="border-color:#e6c449" data-lo="border-color:rgba(230,196,73,0.25)">
       <div style="font-size:10px;letter-spacing:0.3em;color:#e6c449;margin-bottom:10px;text-transform:uppercase">Death-defined · 100 日</div>
       <div style="font-size:17px;font-weight:300;line-height:1.45;margin-bottom:10px;color:#F5F5F0">服が時間を持つ。期日に返せる。</div>
       <p style="font-size:12px;line-height:1.85;color:rgba(245,245,240,0.65);margin:0">MA は明示的な expiry を持つ。100 日経過後、owner はそのまま着続ける or MU に返送 (ENAI 50 unit refund) を選べる。Fast fashion の対極。</p>
@@ -1202,7 +1202,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       <span style="opacity:0.65;font-size:10px">申請後、返送先を案内します。交換品の送料はMU負担。申請から発送まで約2週間。</span></div>
     </div>
     <div class="fragment-arrow">MUGEN × 3 → MUON → 間 MA</div>
-    <button class="btn-primary" style="max-width:160px;font-size:8px" onclick="openFragmentModal()" aria-label="Fragment交換プログラムを申請する">Exchange</button>
+    <button class="btn-primary" style="max-width:160px;font-size:8px" data-onclick="openFragmentModal" aria-label="Fragment交換プログラムを申請する">Exchange</button>
   </div>
 
   <div class="products-grid" id="grid-mugen"><div class="empty">—</div></div>
@@ -1231,14 +1231,14 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 
 <!-- MODAL -->
 <div class="modal-bg" id="modal">
-  <button class="btn-close" onclick="closeModal()" aria-label="閉じる">×</button>
+  <button class="btn-close" data-onclick="closeModal" aria-label="閉じる">×</button>
   <div class="modal" id="modal-inner">
     <div class="modal-img"><img id="m-img" src="" alt="MU — 選んだ一着の拡大画像"></div>
     <div class="modal-body">
       <div class="modal-brand-label" id="m-brand"></div>
       <div class="modal-name" id="m-name"></div>
       <div class="modal-price" id="m-price"></div>
-      <a id="m-share-x" href="#" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;align-self:flex-start;border:1px solid rgba(255,255,255,0.15);padding:8px 14px;font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:#F5F5F0;text-decoration:none;transition:all 0.18s;font-family:inherit" onmouseover="this.style.borderColor='#e6c449';this.style.color='#e6c449'" onmouseout="this.style.borderColor='rgba(255,255,255,0.15)';this.style.color='#F5F5F0'" aria-label="X (Twitter) でこのドロップをシェア">
+      <a id="m-share-x" href="#" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:8px;align-self:flex-start;border:1px solid rgba(255,255,255,0.15);padding:8px 14px;font-size:9px;letter-spacing:0.32em;text-transform:uppercase;color:#F5F5F0;text-decoration:none;transition:all 0.18s;font-family:inherit" data-hi="border-color:#e6c449;color:#e6c449" data-lo="border-color:rgba(255,255,255,0.15);color:#F5F5F0" aria-label="X (Twitter) でこのドロップをシェア">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
         Share on X
       </a>
@@ -1288,7 +1288,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px" id="fabric-cards">
           <label class="fabric-card" data-variant="suzuri" data-funnel="cta_click" data-funnel-cta="fabric_pick_suzuri"
                  style="cursor:pointer;padding:11px 12px;border:1px solid rgba(255,138,138,0.35);background:rgba(255,138,138,0.04);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
-            <input type="radio" name="fabric" value="suzuri" style="display:none">
+            <input type="radio" name="fabric" value="suzuri" style="display:none" aria-label="生地: SUZURI（日本製）">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
               <span style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#ff8a8a;font-weight:600">🇯🇵 Standard</span>
               <span style="font-size:14px;color:#fff;font-weight:600" id="fc-suzuri-price">¥4,900</span>
@@ -1298,7 +1298,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           </label>
           <label class="fabric-card" data-variant="stripe" data-funnel="cta_click" data-funnel-cta="fabric_pick_stripe"
                  style="cursor:pointer;padding:11px 12px;border:1px solid rgba(230,196,73,0.35);background:rgba(230,196,73,0.05);border-radius:3px;display:flex;flex-direction:column;gap:4px;transition:all 0.15s ease">
-            <input type="radio" name="fabric" value="stripe" style="display:none">
+            <input type="radio" name="fabric" value="stripe" style="display:none" aria-label="生地: 標準（カード決済）">
             <div style="display:flex;justify-content:space-between;align-items:baseline">
               <span style="font-size:10px;letter-spacing:0.3em;text-transform:uppercase;color:#e6c449;font-weight:600">★ Premium</span>
               <span style="font-size:14px;color:#fff;font-weight:600" id="fc-stripe-price">¥—</span>
@@ -1320,16 +1320,16 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           <button class="size-btn" data-size="XL" data-funnel="cta_click" data-funnel-cta="modal_size_XL">XL</button>
         </div>
       </div>
-      <form id="checkout-form" onsubmit="doCheckout(event)">
+      <form id="checkout-form" data-submit="doCheckout">
         <div class="input-row">
-          <input class="mu-input" type="email" name="email" placeholder="Email (任意・決済画面でも入力できます)">
+          <input class="mu-input" type="email" name="email" placeholder="Email (任意・決済画面でも入力できます)" aria-label="メールアドレス（任意）">
         </div>
         <details style="margin:8px 0">
           <summary style="font-size:8px;letter-spacing:0.25em;text-transform:uppercase;opacity:0.5;cursor:pointer;list-style:none">
             + NFT証明書を受け取る（オプション）
           </summary>
           <div style="margin-top:10px">
-            <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（後からでもOK）">
+            <input class="mu-input" type="text" name="wallet" placeholder="Solanaウォレットアドレス（後からでもOK）" aria-label="Solana ウォレットアドレス（任意）">
             <div class="soulbound-note" style="margin-top:6px;display:block">
               <strong style="color:#e6c449">📧 ご購入後、Email で NFT 受け取り方法をお送りします。</strong><br>
               ここで wallet を未入力でも OK — 後日メールから wallet を登録すれば mint パイロット (2026 Q3) で受け取れます。間 MA はローンチ時に Soulbound (転売不可) となります。
@@ -1371,7 +1371,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
           inside #stripe-embedded. The native sheet handles confirmation and
           redirects to /success on completion.
         -->
-        <button type="button" id="btn-express" onclick="openExpressCheckout(event)" data-funnel="cta_click" data-funnel-cta="modal_express_pay"
+        <button type="button" id="btn-express" data-onclick="openExpressCheckout" data-funnel="cta_click" data-funnel-cta="modal_express_pay"
                 style="display:none;margin-top:8px;width:100%;background:#000;color:#fff;border:1px solid rgba(255,255,255,0.2);padding:12px 14px;border-radius:2px;font-size:10px;letter-spacing:0.22em;text-transform:uppercase;font-weight:600;cursor:pointer">
            Apple Pay / Google Pay
         </button>
@@ -1526,7 +1526,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 
 <!-- Fragment Modal -->
 <div class="modal-bg" id="fragment-modal">
-  <button class="btn-close" onclick="document.getElementById('fragment-modal').classList.remove('open')" aria-label="閉じる">×</button>
+  <button class="btn-close" data-act="fragment-close" aria-label="閉じる">×</button>
   <div class="modal" style="grid-template-columns:1fr;max-width:500px">
     <div class="modal-body" style="padding:48px">
       <div class="modal-brand-label">Fragment System</div>
@@ -1536,14 +1536,14 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
         MUON × 3着を返送することで間 MA 1着と交換できます。<br><br>
         着続けることが、上位ブランドへの道。
       </div>
-      <form onsubmit="submitFragment(event)">
+      <form data-submit="submitFragment">
         <div class="input-row">
-          <input class="mu-input" type="email" name="email" placeholder="購入時のEmail" required>
+          <input class="mu-input" type="email" name="email" placeholder="購入時のEmail" required aria-label="購入時のメールアドレス">
           <select class="mu-input" name="direction">
             <option value="mugen_to_muon">MUGEN × 3 → MUON × 1</option>
             <option value="muon_to_ma">MUON × 3 → 間 MA × 1</option>
           </select>
-          <input class="mu-input" type="text" name="order_ids" placeholder="注文番号（カンマ区切りで3つ）" required>
+          <input class="mu-input" type="text" name="order_ids" placeholder="注文番号（カンマ区切りで3つ）" required aria-label="注文番号（カンマ区切りで3つ）">
         </div>
         <div class="fragment-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:8px"></div>
         <button type="submit" class="btn-primary" style="margin-top:8px">申請する</button>
@@ -1566,7 +1566,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
     <a class="footer-link" href="/wearing">Wearing</a>
     <a class="footer-link" href="/ma/retired">Retired</a>
     <a class="footer-link" href="/nouns-proposal.html">Nouns Proposal</a>
-    <a class="footer-link" onclick="document.getElementById('fragment-modal').classList.add('open');return false" href="#">Fragment</a>
+    <a class="footer-link" data-act="fragment-open" href="#">Fragment</a>
     <a class="footer-link" href="/tokushoho.html">特定商取引法</a>
     <a class="footer-link" href="/start" style="color:#e6c449">作って売る</a>
     <a class="footer-link" href="/kpi">公開KPI</a>
@@ -1585,8 +1585,8 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>
   <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:6px;color:#F5F5F0">毎日1着、世界に生まれる新作を最速で。</div>
   <div style="font-size:12px;opacity:0.55;line-height:1.7;margin-bottom:18px;color:#F5F5F0">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
-  <form class="mu-drop-form" data-source="homepage" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;max-width:420px;margin:0 auto;flex-wrap:wrap;justify-content:center">
-    <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.04);color:#F5F5F0;font-size:14px">
+  <form class="mu-drop-form" data-source="homepage" data-submit="muDropSubscribe" style="display:flex;gap:8px;max-width:420px;margin:0 auto;flex-wrap:wrap;justify-content:center">
+    <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" aria-label="メールアドレス" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.04);color:#F5F5F0;font-size:14px">
     <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
     <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px;color:#F5F5F0" aria-live="polite"></div>
   </form>
@@ -1665,7 +1665,7 @@ async function loadHeroLifestyle(){
     }
     grid.innerHTML =
       '<div style="grid-column:1/-1;text-align:center;font-size:9px;letter-spacing:0.3em;opacity:0.45;text-transform:uppercase;margin-bottom:4px">people wearing MU · live</div>' +
-      cards.map(p => `<a href="/mugen" title="${p.name}" style="display:block;aspect-ratio:4/5;overflow:hidden;border:1px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease" onmouseover="this.style.borderColor='rgba(230,196,73,0.6)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.08)'">
+      cards.map(p => `<a href="/mugen" title="${p.name}" style="display:block;aspect-ratio:4/5;overflow:hidden;border:1px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease" data-hi="border-color:rgba(230,196,73,0.6)" data-lo="border-color:rgba(255,255,255,0.08)">
         <img src="${p.lifestyle_url}" alt="MUGEN #${p.drop_num} lifestyle" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block">
       </a>`).join('');
   } catch (e) {
@@ -1784,7 +1784,7 @@ function makeCard(p){
   <div class="card${soldOut?' sold-out-card':''}" data-pid="${p.id}">
     ${p.mockup_url
       ? `<img class="card-img lazy-img" src="${placeholderSvg}" data-src="${p.mockup_url}" alt="${p.name}" loading="lazy" decoding="async"
-          onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45';this.style.filter='grayscale(0.4)'">`
+          data-onerror="og-gray">`
       : `<div class="card-placeholder"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>`}
     ${badge}
     ${fragHint}
@@ -2044,7 +2044,7 @@ async function loadMA(){
     cont.innerHTML = `
     <div class="ma-piece">
       <div class="ma-img">
-        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" onerror="this.onerror=null;this.src='/og.jpg';this.style.opacity='0.45'">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
+        ${p.mockup_url?`<img src="${p.mockup_url}" alt="${p.name}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover" data-onerror="og">`:'<div class="card-placeholder" style="background:#1a1a1a"><div class="card-placeholder-bar"></div><div class="card-placeholder-label">AI GENERATING...</div></div>'}
       </div>
       <div class="ma-auction">
         <div>
@@ -2070,11 +2070,11 @@ async function loadMA(){
           <input class="mu-input" type="email" id="ma-email" placeholder="Email">
         </div>
         <label style="display:flex;align-items:flex-start;gap:8px;margin:10px 0 6px;font-size:9px;line-height:1.6;letter-spacing:0.05em;opacity:0.85;cursor:pointer">
-          <input type="checkbox" id="ma-nft-opt" style="margin-top:2px;accent-color:#e6c449" onchange="document.getElementById('ma-nft-wallet').style.display=this.checked?'block':'none'">
+          <input type="checkbox" id="ma-nft-opt" style="margin-top:2px;accent-color:#e6c449" data-toggle-target="ma-nft-wallet">
           <span>🎫 Soulbound NFT 証明書を発行する <span style="opacity:0.55">(wallet は今ここで or 後日メールから登録 OK)</span></span>
         </label>
         <input class="mu-input" type="text" id="ma-nft-wallet" placeholder="Solana ウォレットアドレス（任意・後からでもOK）" style="display:none;margin-bottom:6px">
-        <button class="btn-primary" onclick="placeBid(${p.id})">入札する</button>
+        <button class="btn-primary" data-onclick="placeBid" data-arg="${p.id}">入札する</button>
         <div id="bid-msg" style="font-size:9px;letter-spacing:0.1em;min-height:16px;margin-top:4px"></div>
         <div class="soulbound-note">📧 落札後、NFT 受け取り方法を Email でお送りします。wallet を今ここで入力しなくても OK — メールから後で登録できます。Soulbound = 転売不可の真正証明書、所有が変わる際は NFT の移転手続きが必要です。</div>
         `:'<div class="empty" style="padding:20px 0">Sold</div>'}
@@ -2082,7 +2082,7 @@ async function loadMA(){
     </div>
     ${nextP ? `
     <div class="ma-next" style="margin-top:18px;padding:14px 16px;background:#0d0d0d;border:1px solid #1c1c1c;border-radius:6px;display:flex;align-items:center;gap:12px;font-size:11px;letter-spacing:0.04em">
-      ${nextP.mockup_url ? `<img src="${nextP.mockup_url}" alt="${nextP.name}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:cover;border-radius:4px;background:#000" onerror="this.style.opacity='0.3'">` : ''}
+      ${nextP.mockup_url ? `<img src="${nextP.mockup_url}" alt="${nextP.name}" loading="lazy" decoding="async" style="width:48px;height:48px;object-fit:cover;border-radius:4px;background:#000" data-onerror="dim">` : ''}
       <div style="flex:1;line-height:1.7">
         <div style="opacity:0.5;letter-spacing:0.32em;text-transform:uppercase;font-size:9px;font-weight:700">▶ Next</div>
         <div><strong>${nextP.name}</strong>  ¥${(nextP.current_bid||nextP.price_jpy).toLocaleString()} 〜  <span style="opacity:0.55">${nextP.bid_count||0} bids</span></div>
@@ -2944,12 +2944,12 @@ if ('serviceWorker' in navigator) {
 </style>
 <div id="mu-drop-modal" role="dialog" aria-modal="true" aria-label="MU Drop 登録">
   <div class="mdm-card">
-    <button class="mdm-x" type="button" aria-label="閉じる" onclick="muDropCloseModal()">×</button>
+    <button class="mdm-x" type="button" aria-label="閉じる" data-onclick="muDropCloseModal">×</button>
     <div style="font-size:11px;letter-spacing:0.32em;text-transform:uppercase;color:#e6c449;margin-bottom:10px">MU DROP</div>
     <div style="font-size:19px;font-weight:300;line-height:1.5;margin-bottom:6px;color:#F5F5F0">毎日1着、世界に生まれる新作を最速で。</div>
     <div style="font-size:12px;opacity:0.6;line-height:1.7;margin-bottom:20px;color:#F5F5F0">ドロップ通知 / 早期アクセス<span style="opacity:0.7"> · Daily drop alerts &amp; early access</span></div>
-    <form class="mu-drop-form" data-source="modal" onsubmit="return muDropSubscribe(event)" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
-      <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.05);color:#F5F5F0;font-size:14px">
+    <form class="mu-drop-form" data-source="modal" data-submit="muDropSubscribe" style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center">
+      <input type="email" name="email" required placeholder="you@example.com" autocomplete="email" aria-label="メールアドレス" style="flex:1;min-width:200px;padding:12px 14px;border-radius:999px;border:1px solid rgba(245,245,240,0.4);background:rgba(255,255,255,0.05);color:#F5F5F0;font-size:14px">
       <button type="submit" style="padding:12px 22px;border-radius:999px;border:none;background:#e6c449;color:#0a0a0a;font-weight:700;font-size:14px;cursor:pointer;white-space:nowrap">登録</button>
       <div class="mu-drop-msg" style="flex-basis:100%;font-size:12.5px;line-height:1.7;margin-top:4px;min-height:1px;color:#F5F5F0" aria-live="polite"></div>
     </form>
@@ -3032,5 +3032,6 @@ window.muDropSubscribe=window.muDropSubscribe||function(e){
 <script src="https://koe.live/embed.js" data-to="yuki" data-source="wearmu" data-label="こんなの作って、を声で"></script>
 <!-- Enabler ファミリー共通フッター (koe.live ホスト・依存ゼロ・失敗無害) -->
 <script defer src="https://koe.live/family.js"></script>
+<script src="/home-boot.js" defer></script>
 </body>
 </html>

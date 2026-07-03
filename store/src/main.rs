@@ -25532,7 +25532,7 @@ async fn home(
     index(State(db), is_en).await.into_response()
 }
 
-async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
+async fn index(State(db): State<Db>, is_en: bool) -> Response {
     let raw = include_str!("../static/index.html");
 
     // ── SSR fill: pre-fill the dynamic placeholders so the page never
@@ -25573,7 +25573,7 @@ async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
                 "SELECT drop_num, name, lifestyle_url FROM products
                  WHERE active=1 AND lifestyle_url IS NOT NULL AND lifestyle_url != ''
                  ORDER BY id DESC LIMIT 6"
-            ) { Ok(s) => s, Err(_) => return Html(String::new()) };
+            ) { Ok(s) => s, Err(_) => return Html(String::new()).into_response() };
             stmt.query_map([], |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?, r.get::<_,String>(2)?)))
                 .map(|it| it.filter_map(|r| r.ok()).collect())
                 .unwrap_or_default()
@@ -25942,7 +25942,35 @@ async fn index(State(db): State<Db>, is_en: bool) -> Html<String> {
     };
     let html = html.replace("__SERVER_VARIANT__", &home_winner);
 
-    Html(html)
+    // ── Content-Security-Policy (homepage) ──────────────────────────────
+    // A per-request nonce authorizes the page's own inline <script> blocks;
+    // every former inline on*= handler now lives in /home-boot.js (delegated),
+    // so script-src carries NO 'unsafe-inline'/'unsafe-eval'. style-src keeps
+    // 'unsafe-inline' (inline style= only; not script-executable). Non-script
+    // fetch/img/media directives stay permissive to avoid breaking Stripe,
+    // enabler-analytics, koe.live and Printful/R2 mockups.
+    let nonce = {
+        use rand::Rng;
+        use base64::Engine;
+        let bytes = rand::thread_rng().gen::<u128>().to_le_bytes();
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    };
+    let html = html.replace("<script>", &format!("<script nonce=\"{}\">", nonce));
+    let csp = format!(
+        "default-src 'self'; base-uri 'self'; object-src 'none'; \
+         script-src 'self' 'nonce-{n}' https://js.stripe.com https://enabler-analytics.fly.dev https://koe.live; \
+         style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; \
+         font-src 'self' data: https:; media-src 'self' data: blob: https:; \
+         connect-src 'self' https:; \
+         frame-src 'self' https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://koe.live; \
+         form-action 'self' https://checkout.stripe.com https://js.stripe.com; frame-ancestors 'self'",
+        n = nonce
+    );
+    let mut resp = Html(html).into_response();
+    if let Ok(v) = HeaderValue::from_str(&csp) {
+        resp.headers_mut().insert("Content-Security-Policy", v);
+    }
+    resp
 }
 
 async fn blog_index(State(db): State<Db>) -> Html<String> {
