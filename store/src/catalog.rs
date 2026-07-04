@@ -7584,6 +7584,7 @@ $('#p').addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter
 <script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<div id="lineMakeFab" style="display:none;position:fixed;left:14px;bottom:14px;z-index:9998"><a href="https://line.me/R/ti/p/@876vdgto" data-funnel="cta_click" data-funnel-cta="line_make_fab" style="display:flex;align-items:center;gap:8px;background:#06C755;color:#fff;font-weight:700;padding:10px 16px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);text-decoration:none;font-size:14px">📸 LINEで写真から作る</a></div><script>navigator.language&&navigator.language.toLowerCase().indexOf('ja')==0&&(document.getElementById('lineMakeFab').style.display='block')</script>
 </body></html>"##;
 
 /// POST /api/make?prompt=…&kind=… — public NL → product. status='review',
@@ -11697,6 +11698,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 <script defer src="/mu-funnel.js"></script>
 {drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<div id="lineMakeFab" style="display:none;position:fixed;left:14px;bottom:14px;z-index:9998"><a href="https://line.me/R/ti/p/@876vdgto" data-funnel="cta_click" data-funnel-cta="line_make_fab" style="display:flex;align-items:center;gap:8px;background:#06C755;color:#fff;font-weight:700;padding:10px 16px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);text-decoration:none;font-size:14px">📸 LINEで写真から作る</a></div><script>navigator.language&&navigator.language.toLowerCase().indexOf('ja')==0&&(document.getElementById('lineMakeFab').style.display='block')</script>
 </body></html>"##,
         title = html_text(&title),
         meta_desc = html_attr(&meta_desc),
@@ -13580,6 +13582,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 {drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <script>(function(){{try{{var b=JSON.stringify({{s:'wearmu.com',k:'click',l:'pdp:{sku}'}});if(navigator.sendBeacon){{navigator.sendBeacon('https://enabler-analytics.fly.dev/api/event',new Blob([b],{{type:'application/json'}}));}}}}catch(e){{}}}})();</script>
+<div id="lineMakeFab" style="display:none;position:fixed;left:14px;bottom:14px;z-index:9998"><a href="https://line.me/R/ti/p/@876vdgto" data-funnel="cta_click" data-funnel-cta="line_make_fab" style="display:flex;align-items:center;gap:8px;background:#06C755;color:#fff;font-weight:700;padding:10px 16px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);text-decoration:none;font-size:14px">📸 LINEで写真から作る</a></div><script>navigator.language&&navigator.language.toLowerCase().indexOf('ja')==0&&(document.getElementById('lineMakeFab').style.display='block')</script>
 </body></html>"##,
         make_cta = make_cta_banner("pdp"),
         maker_line = maker_line,

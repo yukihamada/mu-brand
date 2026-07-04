@@ -1,5 +1,16 @@
 # 本番データ変更ログ (mu-store)
 
+## 2026-07-04 (2)
+- Stripe live に 100%オフクーポン+プロモコード `POTEPRESENT` を発行(coupon id=POTEPRESENT・
+  promo_1TpT9LDqLakc8NxkoP1uRf23・duration=once・**max_redemptions=1**)。ポテ×古今 初来店マグの
+  無料プレゼント用(本人指示「1個無料で受け取れるようにプレゼントして」)。発行は mu-store マシンの
+  STRIPE_SECRET_KEY を fly-machine-exec bash+openssl で使用。catalog checkout は
+  allow_promotion_codes=true・送料別建てなし → コード適用で完全¥0。
+- `you_users.slug` を `38asmxp`→`yuki` に UPDATE (email=yuki@hamada.tokyo・手動SQL)。本人指示
+  「僕は yuki ね」。旧slug参照は catalog_orders.gift_json 内 0件を確認済み。/api/gift/check?handle=yuki
+  → exists:true を実打検証。@shuzo は available:true(ギフトclaim時に自動作成される設計・PR#191)。
+  実施者: Claude (本人GO済タスク)。
+
 ## 2026-07-04
 - ポテ×焼肉古今「初来店」グッズ 7 SKU の `brand` を `yuki`→`elepote` に UPDATE（手動SQL・
   fly-machine-exec sqlite3 経由）。対象: `YUKI-AGENT-MUG-c0088d6c` / `YUKI-AGENT-STICKER-152d7496` /

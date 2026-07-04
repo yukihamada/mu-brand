@@ -26087,6 +26087,7 @@ footer{{max-width:760px;margin:0 auto;padding:32px 28px 60px;border-top:1px soli
 </nav>
 <div class="wrap">{body}</div>
 <footer>— yuki / MU / 株式会社イネブラ · <a href="/">wearmu.com</a></footer>
+<div id="lineMakeFab" style="display:none;position:fixed;left:14px;bottom:14px;z-index:9998"><a href="https://line.me/R/ti/p/@876vdgto" data-funnel="cta_click" data-funnel-cta="line_make_fab" style="display:flex;align-items:center;gap:8px;background:#06C755;color:#fff;font-weight:700;padding:10px 16px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);text-decoration:none;font-size:14px">📸 LINEで写真から作る</a></div><script>navigator.language&&navigator.language.toLowerCase().indexOf('ja')==0&&(document.getElementById('lineMakeFab').style.display='block')</script>
 </body></html>"##, t = html_escape(title), body = body)
 }
 
