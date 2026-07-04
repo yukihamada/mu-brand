@@ -1,5 +1,16 @@
 # 本番データ変更ログ (mu-store)
 
+## 2026-07-04
+- ポテ×焼肉古今「初来店」グッズ 7 SKU の `brand` を `yuki`→`elepote` に UPDATE（手動SQL・
+  fly-machine-exec sqlite3 経由）。対象: `YUKI-AGENT-MUG-c0088d6c` / `YUKI-AGENT-STICKER-152d7496` /
+  `YUKI-AGENT-TEE-188086c2` / `YUKI-AGENT-COASTER-8f4a0b9a` / `YUKI-AGENT-TOTE-5da2cc28` /
+  `YUKI-AGENT-PHONE-CASE-cb77cae3` / `YUKI-AGENT-PILLOW-40d4df8c`（全て status=live のまま・
+  printful_product_id/variant_id 等の行内フルフィル設定は不変=印刷影響なし）。
+  理由: 本人指示「ELEPOTE の棚に載せて」— /shop?brand=elepote が 15→22 件になったのを実打検証済み。
+  注意: brand 移動により agent API (mu_list_mine/mu_retire_product, key=yuki@hamada.tokyo) の
+  管理対象から外れる（elepote は pre-seeded brand・owner_email なし）。差し戻しは同 SQL で brand='yuki'。
+  実施者: Claude (本人GO済タスク)。
+
 ## 2026-06-13
 - song 商品『合宿の音 — 弟子屈アンビエンス』を catalog_products に作成 (正規 mu MCP
   `mu_create_product` 経由・agent=yuki@hamada.tokyo)。`AICAMPIKU-AGENT-SONG-6eea639b`、
