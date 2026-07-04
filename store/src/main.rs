@@ -71274,6 +71274,7 @@ async fn main() {
         .route("/api/app/agent/chat", post(catalog::agent_chat))
         .route("/app", get(catalog::app_landing))
         .route("/api/make/recent", get(catalog::make_recent))
+        .route("/api/make/suggest", get(catalog::make_suggest))
         .route("/api/make/peek", get(catalog::make_peek))
         .route("/api/make/notify", post(catalog::make_notify))
         // MU Drop newsletter signup (no coupon — drop alerts / early access)
