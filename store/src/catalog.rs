@@ -4206,11 +4206,12 @@ async fn printful_fill_position(
     // fill_mode=cover の全面プリント面(shorts 693 の front は 11250×4350 等)は
     // 92% 正方形 fit だと中央の帯にしかならない(shorts が白抜けに見えた実バグ)。
     // 印刷面全体を覆う cover 配置(アスペクト維持・中央・はみ出しは裁ち落ち)へ。
-    // まずは実機検証済みの 693(shorts) / 597・598(slides) に限定し、他の cover
-    // printfile 製品(259 beach towel / 189 leggings 等)は既存モックの見た目が
-    // 変わるため目視検証してから移行する。
+    // まずは実機検証済みの 693(shorts) / 597・598(slides) / 259(beach towel:
+    // 9300×4800 cover — 2026-07-04 実モック目視OK) に限定し、他の cover printfile
+    // 製品(189 leggings / 186 socks 等)は既存モックの見た目が変わるため
+    // 目視検証してから移行する。
     let fill_mode = pf["fill_mode"].as_str().unwrap_or("fit");
-    if fill_mode == "cover" && matches!(product, 693 | 597 | 598) {
+    if fill_mode == "cover" && matches!(product, 693 | 597 | 598 | 259) {
         return Some(match design_dims {
             Some((dw, dh)) => aspect_cover_position(w, h, dw, dh),
             None => serde_json::json!({
