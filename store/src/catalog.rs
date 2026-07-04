@@ -1043,6 +1043,12 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         536 | 635 => &["embroidery_corner_right"],
         895 => &["leg_front_right"],
         709 => &["first"],
+        // 597/598 = Men's/Women's Slides — 有効な placement は shoe_right /
+        // shoe_left のみ ("front" は MG-4 で拒否)。両足に同じデザインを敷く。
+        // printfile 330 = 1650×1650 fill_mode=cover (mockup-generator/printfiles
+        // で両IDとも検証 2026-07-04)。注文ファイルの type にも同じ値が乗るため、
+        // この arm が無いと fulfillment も invalid file type で落ちる。
+        597 | 598 => &["shoe_right", "shoe_left"],
         _ => &["front"],
     }
 }
@@ -4197,6 +4203,23 @@ async fn printful_fill_position(
         .find(|f| f["printfile_id"].as_i64() == Some(pf_id))?;
     let w = pf["width"].as_i64()?;
     let h = pf["height"].as_i64()?;
+    // fill_mode=cover の全面プリント面(shorts 693 の front は 11250×4350 等)は
+    // 92% 正方形 fit だと中央の帯にしかならない(shorts が白抜けに見えた実バグ)。
+    // 印刷面全体を覆う cover 配置(アスペクト維持・中央・はみ出しは裁ち落ち)へ。
+    // まずは実機検証済みの 693(shorts) / 597・598(slides) に限定し、他の cover
+    // printfile 製品(259 beach towel / 189 leggings 等)は既存モックの見た目が
+    // 変わるため目視検証してから移行する。
+    let fill_mode = pf["fill_mode"].as_str().unwrap_or("fit");
+    if fill_mode == "cover" && matches!(product, 693 | 597 | 598) {
+        return Some(match design_dims {
+            Some((dw, dh)) => aspect_cover_position(w, h, dw, dh),
+            None => serde_json::json!({
+                "area_width": w, "area_height": h,
+                "width": w,      "height": h,
+                "top": 0,        "left": 0
+            }),
+        });
+    }
     // A square box at 92% of the print area's SHORTER side, centered, gives a
     // safe margin regardless of print-area shape. Inside that box, center-fit
     // the design by its true aspect ratio so non-square artwork isn't stretched
@@ -4250,6 +4273,28 @@ fn aspect_fit_position(
     let h = h.clamp(1, box_side);
     let left = (box_left + (box_side - w) / 2).clamp(0, (area_w - w).max(0));
     let top = (box_top + (box_side - h) / 2).clamp(0, (area_h - h).max(0));
+    serde_json::json!({
+        "area_width": area_w, "area_height": area_h,
+        "width": w, "height": h,
+        "top": top, "left": left
+    })
+}
+
+/// Cover-fill: 印刷面 `area_w`×`area_h` を、デザイン `(dw, dh)` のアスペクト比を
+/// 保ったまま完全に覆う配置。短い方の軸を印刷面に合わせて拡大し、余った軸は
+/// 中央寄せで負のオフセット(裁ち落ち)になる。fill_mode=cover の printfile
+/// (AOP/全面昇華) 用 — fit(aspect_fit_position) だと余白が白布のまま残る。
+fn aspect_cover_position(area_w: i64, area_h: i64, dw: u32, dh: u32) -> serde_json::Value {
+    let a = (dw.max(1) as f64) / (dh.max(1) as f64);
+    let area_a = (area_w as f64) / (area_h as f64);
+    let (w, h) = if a >= area_a {
+        // デザインが印刷面より横長 → 高さを面に合わせ、幅がはみ出す。
+        (((area_h as f64) * a).round() as i64, area_h)
+    } else {
+        (area_w, ((area_w as f64) / a).round() as i64)
+    };
+    let left = (area_w - w) / 2;
+    let top = (area_h - h) / 2;
     serde_json::json!({
         "area_width": area_w, "area_height": area_h,
         "width": w, "height": h,
