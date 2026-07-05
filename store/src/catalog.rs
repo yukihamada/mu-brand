@@ -13280,6 +13280,17 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <link rel="alternate" hreflang="x-default" href="https://wearmu.com/shop/{path}">"#,
         path = urlencoding::encode(&sku),
     );
+    // Self-referential canonical (SEO fix): the en alternate is declared above
+    // as /shop/<sku>?lang=en, so on ?lang=en the page MUST canonicalise to
+    // itself — not to the JA URL. A canonical that points off the hreflang
+    // cluster makes Google drop every ?lang=en product page from the index
+    // (the whole English long-tail, 6,800+ pages). The homepage already does
+    // this; PDPs had a hardcoded JA canonical. Keep og:url in lockstep.
+    let canonical_href = if lang == "en" {
+        format!("https://wearmu.com/shop/{}?lang=en", urlencoding::encode(&sku))
+    } else {
+        format!("https://wearmu.com/shop/{}", urlencoding::encode(&sku))
+    };
     // BreadcrumbList: Home > SHOP > product. Separate ld+json block.
     let breadcrumb_ld = format!(
         r#"<script type="application/ld+json">{{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{{"@type":"ListItem","position":1,"name":"Home","item":"https://wearmu.com/"}},{{"@type":"ListItem","position":2,"name":"SHOP","item":"https://wearmu.com/shop"}},{{"@type":"ListItem","position":3,"name":"{name}","item":"https://wearmu.com/shop/{path}"}}]}}</script>"#,
@@ -13383,7 +13394,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <meta property="og:title" content="{og_title}">
 <meta property="og:description" content="{og_desc}">
 <meta property="og:type" content="product">
-<meta property="og:url" content="https://wearmu.com/shop/{sku_url}">
+<meta property="og:url" content="{canonical_href}">
 <meta property="og:site_name" content="wearmu.com">
 <meta property="product:price:amount" content="{price_raw}">
 <meta property="product:price:currency" content="JPY">
@@ -13391,7 +13402,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <meta name="twitter:title" content="{og_title}">
 <meta name="twitter:description" content="{og_desc}">
 <meta name="twitter:image" content="{og}">
-<link rel="canonical" href="https://wearmu.com/shop/{sku_url}">
+<link rel="canonical" href="{canonical_href}">
 {hreflang_links}
 <script type="application/ld+json">{{
   "@context": "https://schema.org/",
@@ -13645,6 +13656,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         sku_url   = urlencoding::encode(&sku),
         price_raw = price_jpy,
         html_lang_attr = html_lang_attr,
+        canonical_href = canonical_href,
         title_suffix = title_suffix,
         hreflang_links = hreflang_links,
         breadcrumb_ld = breadcrumb_ld,
