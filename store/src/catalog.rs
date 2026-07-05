@@ -13887,14 +13887,18 @@ pub async fn shop_checkout(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
                     COALESCE({ext}, mockup_main_file, ''),
                     COALESCE(fulfillment_route, 'printful_dtg'), meta_json,
-                    COALESCE(printful_product_id, 0)
+                    COALESCE(printful_product_id, 0),
+                    COALESCE(printful_variant_id, 0),
+                    COALESCE(printful_sync_variant_id, 0)
              FROM catalog_products WHERE sku=?", ext = MOCKUP_EXT_LIVE)
         } else {
             format!(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
                     COALESCE({ext}, mockup_main_file, ''),
                     COALESCE(fulfillment_route, 'printful_dtg'), meta_json,
-                    COALESCE(printful_product_id, 0)
+                    COALESCE(printful_product_id, 0),
+                    COALESCE(printful_variant_id, 0),
+                    COALESCE(printful_sync_variant_id, 0)
              FROM catalog_products WHERE sku=? AND is_active=1", ext = MOCKUP_EXT_LIVE)
         };
         conn.query_row(
@@ -13910,12 +13914,14 @@ pub async fn shop_checkout(
                     r.get::<_, String>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, i64>(7)?,
+                    r.get::<_, i64>(8)?,
+                    r.get::<_, i64>(9)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((price_id, price_jpy, desc, _brand, mockup_path, route, meta_json, pf_product_id)) = row else {
+    let Some((price_id, price_jpy, desc, _brand, mockup_path, route, meta_json, pf_product_id, pf_variant_id, pf_sync_variant_id)) = row else {
         return (StatusCode::NOT_FOUND, "sku not found").into_response();
     };
 
@@ -14179,26 +14185,42 @@ pub async fn shop_checkout(
         form.push(("line_items[0][adjustable_quantity][enabled]", "true".into()));
         form.push(("line_items[0][adjustable_quantity][minimum]", "1".into()));
         form.push(("line_items[0][adjustable_quantity][maximum]", "50".into()));
-        // Size picker inside Stripe Checkout. fulfill_catalog_order already
-        // reads custom_fields[key=size] and swaps the Printful variant via
-        // resolve_size_variant() — nouns SKUs are one-per-design (not the
-        // per-size SKU stems the /shop grid uses), so this is the size rail.
+    }
+    // Size picker inside Stripe Checkout for made-to-order apparel (tee /
+    // hoodie / crewneck / rashguard / long-sleeve). Previously this dropdown
+    // was gated on `is_bulk_brand` (nouns only), so every other apparel SKU
+    // opened checkout with NO size field and every order silently shipped M
+    // (the DB's default variant). Now any apparel SKU whose default variant is
+    // a verified color's "M" (so the size→variant offset is color-preserving —
+    // see resolve_apparel_size_variant) gets the full S/M/L/XL/2XL rail.
+    // Gated off when the SKU rides a pre-synced Printful variant
+    // (printful_sync_variant_id): build_printful_item ignores the variant
+    // override for those, so we must not offer a size we can't actually ship.
+    let show_size = pf_sync_variant_id == 0
+        && resolve_apparel_size_variant(pf_product_id, pf_variant_id, "M").is_some();
+    if show_size {
+        // fulfill_catalog_order reads custom_fields[key=size] and swaps the
+        // Printful variant via resolve_apparel_size_variant(), preserving the
+        // garment's colour by offsetting from THIS SKU's own M variant.
         form.push(("custom_fields[0][key]", "size".into()));
         form.push(("custom_fields[0][label][type]", "custom".into()));
         form.push(("custom_fields[0][label][custom]", "Size".into()));
         form.push(("custom_fields[0][type]", "dropdown".into()));
-        for (i, s) in ["S", "M", "L", "XL"].iter().enumerate() {
-            // Stripe form encoding needs distinct literal keys per index.
-            let (lk, vk) = match i {
-                0 => ("custom_fields[0][dropdown][options][0][label]",
-                      "custom_fields[0][dropdown][options][0][value]"),
-                1 => ("custom_fields[0][dropdown][options][1][label]",
-                      "custom_fields[0][dropdown][options][1][value]"),
-                2 => ("custom_fields[0][dropdown][options][2][label]",
-                      "custom_fields[0][dropdown][options][2][value]"),
-                _ => ("custom_fields[0][dropdown][options][3][label]",
-                      "custom_fields[0][dropdown][options][3][value]"),
-            };
+        // Stripe form encoding needs distinct literal keys per index.
+        const SIZE_OPT_KEYS: [(&str, &str); 5] = [
+            ("custom_fields[0][dropdown][options][0][label]",
+             "custom_fields[0][dropdown][options][0][value]"),
+            ("custom_fields[0][dropdown][options][1][label]",
+             "custom_fields[0][dropdown][options][1][value]"),
+            ("custom_fields[0][dropdown][options][2][label]",
+             "custom_fields[0][dropdown][options][2][value]"),
+            ("custom_fields[0][dropdown][options][3][label]",
+             "custom_fields[0][dropdown][options][3][value]"),
+            ("custom_fields[0][dropdown][options][4][label]",
+             "custom_fields[0][dropdown][options][4][value]"),
+        ];
+        for (i, s) in ["S", "M", "L", "XL", "2XL"].iter().enumerate() {
+            let (lk, vk) = SIZE_OPT_KEYS[i];
             form.push((lk, s.to_string()));
             form.push((vk, s.to_string()));
         }
@@ -14213,9 +14235,9 @@ pub async fn shop_checkout(
     // custom-field; resolve_size_variant(601, value) maps it to the variant.
     // All Stripe custom fields are built into one owned Vec with a running
     // index, so the phone-model dropdown and the gift fields never collide.
-    // (is_bulk_brand already claimed custom_fields[0] for its size picker.)
+    // (the apparel size picker above already claimed custom_fields[0].)
     let mut phone_model_field: Vec<(String, String)> = Vec::new();
-    let mut cf_n: usize = if is_bulk_brand { 1 } else { 0 };
+    let mut cf_n: usize = if show_size { 1 } else { 0 };
     if pf_product_id == 601 {
         let picked = q.model.as_deref().map(|m| m.to_uppercase()).filter(|m| {
             PHONE_CASE_MODELS.iter().any(|(v, _, _)| *v == m)
@@ -14726,19 +14748,21 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT printful_product_id,
-                    COALESCE(fulfillment_route, 'printful_dtg')
+                    COALESCE(fulfillment_route, 'printful_dtg'),
+                    COALESCE(printful_variant_id, 0)
              FROM catalog_products WHERE sku=?",
             rusqlite::params![&sku],
             |r| {
                 Ok((
                     r.get::<_, i64>(0)?,
                     r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
                 ))
             },
         )
         .ok()
     };
-    let Some((_pp_id, route)) = product
+    let Some((_pp_id, route, _pf_default_variant)) = product
     else {
         tracing::warn!("[catalog/fulfill] sku {} not in catalog_products", sku);
         return;
@@ -14918,7 +14942,13 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 let k = cf["key"].as_str();
                 if k == Some("size") || k == Some("iphone_model") {
                     let chosen = cf["dropdown"]["value"].as_str().unwrap_or("M");
-                    variant_override = resolve_size_variant(_pp_id, chosen);
+                    // Color-aware apparel size first (offsets from THIS SKU's own
+                    // M variant so the garment colour is preserved); fall back to
+                    // the per-product table (phone-case models under
+                    // "iphone_model", and any legacy black-only tee rows).
+                    variant_override =
+                        resolve_apparel_size_variant(_pp_id, _pf_default_variant, chosen)
+                            .or_else(|| resolve_size_variant(_pp_id, chosen));
                     break;
                 }
             }
@@ -18177,6 +18207,72 @@ fn html_attr(s: &str) -> String {
 // Mirrors merch-bridge/app.py normalize_state_code (the Python file we're
 // retiring). Fallback to passing raw_state through — Printful's error is
 // friendlier than silently dropping the field.
+/// Color-preserving size → Printful variant resolver for made-to-order
+/// apparel. Unlike `resolve_size_variant` (which is keyed only on the
+/// product and therefore returns ONE colour's block — Black — regardless of
+/// the garment's actual colour), this offsets from the SKU's OWN default
+/// variant, so a White tee stays White, a Navy tee stays Navy, etc.
+///
+/// Invariant it relies on (verified live against the Printful catalog API
+/// 2026-07 for every colour in the live catalog): for each of these
+/// products, the S/M/L/XL/2XL variants of a colour are five consecutive
+/// IDs with M in the middle, and the row's stored `printful_variant_id` is
+/// always that colour's M. So: S = M-1, M = M, L = M+1, XL = M+2, 2XL = M+3.
+///
+/// To stay honest we only apply the offset when `default_variant_id` is a
+/// KNOWN colour-M we have verified (`APPAREL_M_DEFAULTS`). An unrecognised
+/// default (e.g. a future colour not yet verified) returns None, and the
+/// caller ships the row's default variant unchanged — never a guessed ID.
+///
+/// Products included (all verified S..2XL-contiguous with an M default):
+///   71  Bella+Canvas 3001 tee          57  Gildan 2400 long-sleeve tee
+///   145 Gildan 18000 crewneck          146 Gildan 18500 hoodie
+///   301 AOP men's rashguard            356 Bella 3501 long-sleeve tee
+///   539 AS Colour 5025 drop-arm tank   693 AOP recycled-mesh shorts
+///
+/// Deliberately EXCLUDED (the offset invariant does NOT hold — adding them
+/// would mis-map sizes, so they keep shipping their M default until each is
+/// given an explicit per-size table):
+///   189 AOP leggings — colour block has no 2XL (XS..XL only).
+///   895 Bella 4737 joggers — variants stride by 4, not 1 (S23110 M23114
+///       L23118…), so ±offset lands on the wrong garment.
+const APPAREL_M_DEFAULTS: &[(i64, i64)] = &[
+    // (printful_product_id, colour's verified size-M variant_id)
+    (57, 3449), (57, 3505),                                     // LS tee: White, Light Blue
+    (71, 4012), (71, 4017), (71, 4037), (71, 4112),             // tee: White, Black, Baby Blue, Navy
+    (71, 4142), (71, 6949), (71, 8461),                         //      Red, Athletic Heather, Dark Grey Heather
+    (145, 5427), (145, 5435), (145, 7861),                      // crewneck: White, Black, Light Blue
+    (146, 5523), (146, 5531), (146, 10842),                     // hoodie: White, Black, Light Blue
+    (301, 9328),                                                // rashguard: White (only colour sold)
+    (356, 10095),                                               // LS tee (Bella 3501): Black
+    (539, 13485),                                               // drop-arm tank (AS 5025): Black
+    (693, 17391),                                               // AOP mesh shorts: White
+];
+
+pub(crate) fn resolve_apparel_size_variant(
+    printful_product_id: i64,
+    default_variant_id: i64,
+    size: &str,
+) -> Option<i64> {
+    if !APPAREL_M_DEFAULTS
+        .iter()
+        .any(|&(p, m)| p == printful_product_id && m == default_variant_id)
+    {
+        return None;
+    }
+    // Offset from the colour's M. Verified contiguous for S..2XL on every
+    // product above; XS / 3XL are NOT contiguous, so we don't offer them.
+    let offset: i64 = match size.trim().to_uppercase().as_str() {
+        "S" => -1,
+        "M" => 0,
+        "L" => 1,
+        "XL" => 2,
+        "2XL" | "XXL" => 3,
+        _ => return None,
+    };
+    Some(default_variant_id + offset)
+}
+
 /// Map a Stripe-selected size string to the matching Printful variant
 /// for known products. Returns None when we don't have a mapping (caller
 /// falls back to the row's default variant_id).
@@ -18954,6 +19050,77 @@ mod state_code_tests {
         assert_eq!(crate::jp_state_code("東京"), "JP-13");
         assert_eq!(crate::jp_state_code("JP-13"), "JP-13");
         assert_eq!(crate::jp_state_code("そんな県はない"), "");
+    }
+}
+
+#[cfg(test)]
+mod apparel_size_variant_tests {
+    use super::{resolve_apparel_size_variant, resolve_size_variant};
+
+    // The whole point of the color-aware resolver: a White tee (default M
+    // variant 4012) must resolve every size WITHIN the White block, never
+    // jump to the Black block that resolve_size_variant(71,..) hard-codes.
+    // Verified live against Printful GET /products/71 (2026-07):
+    //   White  S4011 M4012 L4013 XL4014 2XL4015
+    //   Black  S4016 M4017 L4018 XL4019 2XL4020
+    #[test]
+    fn tee_size_preserves_colour() {
+        // White tee (default 4012)
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "S"), Some(4011));
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "M"), Some(4012));
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "L"), Some(4013));
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "XL"), Some(4014));
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "2XL"), Some(4015));
+        // Black tee (default 4017) — matches the legacy black-only table.
+        assert_eq!(resolve_apparel_size_variant(71, 4017, "S"), Some(4016));
+        assert_eq!(resolve_apparel_size_variant(71, 4017, "2XL"), Some(4020));
+        assert_eq!(resolve_apparel_size_variant(71, 4017, "S"), resolve_size_variant(71, "S"));
+        // A White "L" must NOT collide with any Black variant.
+        assert_ne!(resolve_apparel_size_variant(71, 4012, "L"), resolve_size_variant(71, "L"));
+    }
+
+    #[test]
+    fn other_products_and_colours() {
+        // Long-sleeve tee 57 White (default 3449): S3448 .. 2XL3452
+        assert_eq!(resolve_apparel_size_variant(57, 3449, "S"), Some(3448));
+        assert_eq!(resolve_apparel_size_variant(57, 3449, "2XL"), Some(3452));
+        // Crewneck 145 Light Blue (default 7861): S7860 .. 2XL7864
+        assert_eq!(resolve_apparel_size_variant(145, 7861, "S"), Some(7860));
+        assert_eq!(resolve_apparel_size_variant(145, 7861, "XL"), Some(7863));
+        // Hoodie 146 White (default 5523): S5522 .. 2XL5526
+        assert_eq!(resolve_apparel_size_variant(146, 5523, "L"), Some(5524));
+        // Rashguard 301 White (default 9328): S9327 M9328 .. 2XL9331
+        assert_eq!(resolve_apparel_size_variant(301, 9328, "S"), Some(9327));
+        assert_eq!(resolve_apparel_size_variant(301, 9328, "2XL"), Some(9331));
+        // LS tee 356 Black (default 10095): S10094 .. 2XL10098
+        assert_eq!(resolve_apparel_size_variant(356, 10095, "S"), Some(10094));
+        assert_eq!(resolve_apparel_size_variant(356, 10095, "2XL"), Some(10098));
+        // Tank 539 Black (default 13485): S13484 .. 2XL13488
+        assert_eq!(resolve_apparel_size_variant(539, 13485, "L"), Some(13486));
+        // Shorts 693 White (default 17391): S17390 .. 2XL17394
+        assert_eq!(resolve_apparel_size_variant(693, 17391, "XL"), Some(17393));
+    }
+
+    // Leggings (189) and joggers (895) are intentionally NOT in the table —
+    // their variants aren't contiguous S..2XL, so we must not offset them.
+    #[test]
+    fn non_contiguous_products_excluded() {
+        assert_eq!(resolve_apparel_size_variant(189, 7678, "M"), None);
+        assert_eq!(resolve_apparel_size_variant(895, 23114, "M"), None);
+    }
+
+    #[test]
+    fn unknown_default_or_size_is_none() {
+        // Unverified default variant → None (caller ships the row default,
+        // never a guessed ID).
+        assert_eq!(resolve_apparel_size_variant(71, 99999, "M"), None);
+        // Non-apparel product (phone case 601) → None here (handled by
+        // resolve_size_variant instead).
+        assert_eq!(resolve_apparel_size_variant(601, 33987, "M"), None);
+        // XS / 3XL are not contiguous, so we don't offer them.
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "XS"), None);
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "3XL"), None);
+        assert_eq!(resolve_apparel_size_variant(71, 4012, "garbage"), None);
     }
 }
 
