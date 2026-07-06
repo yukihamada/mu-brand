@@ -2824,29 +2824,25 @@ const SEED_THEMES: &[Theme] = &[
 
 const GEMINI_IMAGE_COST_JPY: i64 = 6;
 
-// Koe(濱田優貴クローン声 "Yuki HQ" / ElevenLabs)で日本語メッセージを音声化。
-// 贈りものに「愛のある声」を添えるため。ELEVENLABS_API_KEY が必要。
-const KOE_VOICE_ID: &str = "JVXRnEgOTfiREknlhmhs";
-const KOE_TTS_MODEL: &str = "eleven_multilingual_v2";
+// Koe(koe.live/api/speak・同意済み本人声)で日本語メッセージを音声化。
+// 贈りものに「愛のある声」を添えるため。ElevenLabsは全廃(2026-07-06 本人指示)。
 const KOE_TTS_COST_JPY: i64 = 4;
 async fn koe_tts(text: &str) -> Result<Vec<u8>, String> {
-    let key = std::env::var("ELEVENLABS_API_KEY").unwrap_or_default();
-    if key.is_empty() { return Err("ELEVENLABS_API_KEY unset".into()); }
-    let url = format!("https://api.elevenlabs.io/v1/text-to-speech/{}?output_format=mp3_44100_128", KOE_VOICE_ID);
-    let payload = serde_json::json!({
-        "text": text,
-        "model_id": KOE_TTS_MODEL,
-        "voice_settings": {"stability":0.85,"similarity_boost":0.8,"style":0.0,"use_speaker_boost":true}
-    });
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(45)).build().map_err(|e| e.to_string())?;
-    let resp = client.post(&url).header("xi-api-key", &key).json(&payload).send().await
-        .map_err(|e| format!("eleven connect: {e}"))?;
+    let url = std::env::var("KOE_SPEAK_URL").unwrap_or_else(|_| "https://koe.live/api/speak".into());
+    let voice = std::env::var("KOE_VOICE").unwrap_or_else(|_| "yukihamada".into());
+    let payload = serde_json::json!({"text": text, "user_id": voice, "source": "mu_gift"});
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(90)).build().map_err(|e| e.to_string())?;
+    let mut req = client.post(&url).json(&payload);
+    if let Ok(tok) = std::env::var("KOE_SPEAK_TOKEN") {
+        if !tok.is_empty() { req = req.header("authorization", format!("Bearer {tok}")); }
+    }
+    let resp = req.send().await.map_err(|e| format!("koe connect: {e}"))?;
     if !resp.status().is_success() {
         let s = resp.status();
         let b = resp.text().await.unwrap_or_default();
-        return Err(format!("eleven {s}: {}", &b[..b.len().min(200)]));
+        return Err(format!("koe {s}: {}", &b[..b.len().min(200)]));
     }
-    resp.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("eleven bytes: {e}"))
+    resp.bytes().await.map(|b| b.to_vec()).map_err(|e| format!("koe bytes: {e}"))
 }
 
 /// Returns (theme_display, kind, retail_jpy) for the named slug/kind, or None.
