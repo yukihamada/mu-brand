@@ -70,7 +70,7 @@ FORBIDDEN=(
 )
 DIFF_ADDED=$(git diff "$BASE" "$HEAD" | grep -E '^\+[^+]' || true)
 for tok in "${FORBIDDEN[@]}"; do
-  if echo "$DIFF_ADDED" | grep -qF "$tok"; then
+  if echo "$DIFF_ADDED" | grep -cF "$tok" >/dev/null; then
     deny "forbidden token in added lines: $tok"
   fi
 done
@@ -78,7 +78,7 @@ done
 # ── 5. For main.rs: every added non-blank, non-comment line must look like
 #       data (string content) or a known-safe parameter assignment.
 #       Reject if any line looks like Rust *statement* (fn/let/use/match/etc).
-if echo "$CHANGED" | grep -qx 'store/src/main.rs'; then
+if echo "$CHANGED" | grep -cx 'store/src/main.rs' >/dev/null; then
   # Extract just the added lines (without the leading +) for main.rs only.
   ADDED=$(git diff "$BASE" "$HEAD" -- store/src/main.rs | grep -E '^\+[^+]' | sed 's/^\+//' || true)
   # Patterns that are SAFE to add automatically:
