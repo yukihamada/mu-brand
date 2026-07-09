@@ -3,6 +3,9 @@ Allow: /
 Disallow: /admin
 Disallow: /admin/
 Disallow: /api/admin/
+# /api/shop/checkout mints a real Stripe session per GET — crawlers created
+# 206 wasted sessions in 7 days (2026-07-09 audit). Keep all crawlers off it.
+Disallow: /api/shop/checkout
 Disallow: /proposals/
 Disallow: /sandbox/
 Disallow: /buyer/

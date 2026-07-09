@@ -378,6 +378,33 @@ fn gift_key_valid(key: Option<&str>) -> bool {
     !secret.is_empty() && key.map(|k| k == secret).unwrap_or(false)
 }
 
+/// Per-IP checkout rate limit — backstop behind shop_checkout's bot-UA guard
+/// (mirrors merch-bridge d07dd44). More than 10 Stripe-session attempts per
+/// minute from one Fly-Client-IP → true (caller answers 429). In-memory and
+/// per-machine, which is enough: the goal is stopping crawler bursts from
+/// minting wasted Stripe sessions, not a precise global quota.
+const CHECKOUT_RL_PER_MIN: u32 = 10;
+fn checkout_rate_limited(ip: &str) -> bool {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static HITS: OnceLock<Mutex<HashMap<String, (u64, u32)>>> = OnceLock::new();
+    let now_min = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    let mut map = HITS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap();
+    if map.len() > 10_000 {
+        // Cheap GC so an IP-rotating crawler can't grow the map unbounded.
+        map.retain(|_, (win, _)| *win == now_min);
+    }
+    let e = map.entry(ip.to_string()).or_insert((now_min, 0));
+    if e.0 != now_min {
+        *e = (now_min, 0);
+    }
+    e.1 += 1;
+    e.1 > CHECKOUT_RL_PER_MIN
+}
+
 /// Seed the universal MU mark (━◯━) kiss-cut sticker. This is the
 /// fallback cross-sell add-on (shop_pdp) for every brand that lacks its
 /// own ¥800 sticker — i.e. almost all of them (bjj/coffee/moon/code/…),
@@ -12527,7 +12554,7 @@ pub async fn shop_pdp(
         // 金額の出ない gift 納品書＋メッセージを同梱(checkoutで入力)。デジタル/家は対象外。
         let gift_html = if !is_digital && !is_house {
             format!(
-                r#"<a class="buy" id="giftbtn" href="{base}&gift=1" data-funnel="cta_click" data-funnel-cta="pdp_gift" style="margin-top:10px;background:transparent;border:1px solid var(--line,#333);color:var(--fg,#f5f5f0);font-weight:500">🎁 贈り物にする<span style="display:block;font-size:11.5px;opacity:.6;margin-top:3px;font-weight:400">相手に直送・金額のわかる明細は入れません</span></a>"#,
+                r#"<a class="buy" id="giftbtn" rel="nofollow" href="{base}&gift=1" data-funnel="cta_click" data-funnel-cta="pdp_gift" style="margin-top:10px;background:transparent;border:1px solid var(--line,#333);color:var(--fg,#f5f5f0);font-weight:500">🎁 贈り物にする<span style="display:block;font-size:11.5px;opacity:.6;margin-top:3px;font-weight:400">相手に直送・金額のわかる明細は入れません</span></a>"#,
                 base = base,
             )
         } else { String::new() };
@@ -12549,7 +12576,7 @@ pub async fn shop_pdp(
             (String::new(), String::new())
         };
         format!(
-            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{cross_script}{phone_script}{acctgift_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" rel="nofollow" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{cross_script}{phone_script}{acctgift_script}"#,
             cross_html = cross_html,
             phone_html = phone_html,
             gift_html = gift_html,
@@ -13853,6 +13880,18 @@ pub async fn shop_checkout(
         return (StatusCode::SERVICE_UNAVAILABLE, "checkout disabled").into_response();
     }
     let sku = q.sku;
+    // Observability (2026-07-09 audit): a JS-less crawler with a clean
+    // browser-ish UA minted 206 unpaid Stripe sessions in 7 days by following
+    // the PDP buy + &gift=1 links (same SKU ~10 min apart, 24/7, zero
+    // client-side funnel events) — and neither the request log nor
+    // funnel_events carried UA/IP, so it was unattributable. Log both on
+    // every checkout decision (blocked / rate-limited / session created).
+    let ua_raw = headers.get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let client_ip = headers.get("fly-client-ip")
+        .or_else(|| headers.get("x-forwarded-for"))
+        .and_then(|v| v.to_str().ok()).unwrap_or("")
+        .split(',').next().unwrap_or("").trim().to_string();
     // GET /api/shop/checkout は <a href> 直リンク。クローラ/リンクプレビュー/プリフェッチが
     // 辿るだけで実 Stripe セッションが量産される (実測: 7日で478作成/人手buyクリックは17 →
     // 転換率の分母汚染 + 無駄なセッション生成)。bot UA は購入せずセッションも作らせず PDP へ送る。
@@ -13870,17 +13909,28 @@ pub async fn shop_checkout(
                 || purpose.contains("prefetch") || xpurpose.contains("preview")
                 || xmoz.contains("prefetch")
         };
-        let ua = headers.get(axum::http::header::USER_AGENT)
-            .and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
+        let ua = ua_raw.to_lowercase();
         let is_bot = is_prefetch || ua.is_empty() || [
             "bot", "crawl", "spider", "slurp", "bingpreview", "facebookexternalhit",
             "embedly", "quora link preview", "outbrain", "pinterest", "developers.google.com",
             "headless", "phantom", "python-requests", "curl/", "wget", "go-http-client",
             "node-fetch", "axios", "scrapy", "preview", "monitor", "uptime", "pingdom",
+            // 2026-07-09: AI agents + HTTP client libs whose UA carries no
+            // "bot"/"crawl" token. False positive cost is still just the PDP.
+            "anthropic", "claude-", "openai", "chatgpt", "perplexity",
+            "meta-external", "cohere", "httpx", "aiohttp", "okhttp",
+            "java/", "libwww", "python-urllib",
         ].iter().any(|b| ua.contains(b));
         if is_bot {
+            tracing::info!("[shop/checkout] bot_blocked sku={} ip={} ua={:?}", sku, client_ip, ua_raw);
             return Redirect::to(&format!("/shop/{}", urlencoding::encode(&sku))).into_response();
         }
+    }
+    // Backstop behind the UA guard (mirrors merch-bridge d07dd44): one IP
+    // bursting checkout GETs is a crawler, not a shopper — 429 before Stripe.
+    if !client_ip.is_empty() && checkout_rate_limited(&client_ip) {
+        tracing::warn!("[shop/checkout] rate_limited sku={} ip={} ua={:?}", sku, client_ip, ua_raw);
+        return (StatusCode::TOO_MANY_REQUESTS, "rate limited").into_response();
     }
     // A valid gift key unlocks an otherwise-hidden (is_active=0) SKU —
     // the private 'halo' tees. Public checkouts never pass a key, so they
@@ -14421,6 +14471,10 @@ pub async fn shop_checkout(
             // 出していた(2026-06-07 R6採点で発覚・orders=9 vs start=0)。
             crate::funnel_track_server(&db, "checkout_start", "/api/shop/checkout", None,
                 serde_json::json!({"sku": &sku})).await;
+            // Attribution for the next "who is minting sessions?" audit —
+            // funnel_events carries no UA/IP, so this log line is the only
+            // place a session creation is tied to its client.
+            tracing::info!("[shop/checkout] session_created sku={} ip={} ua={:?}", sku, client_ip, ua_raw);
             Redirect::to(&url).into_response()
         }
         Ok(r) => {
