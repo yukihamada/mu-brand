@@ -126,6 +126,8 @@ def main():
     changes = []
     for (gid, name, cur_micros) in groups:
         new_micros = int(cur_micros * mult)
+        # JPYの入札は¥1単位(=1,000,000 microsの倍数)必須。端数はVALUE_NOT_MULTIPLE_OF_BILLABLE_UNITで400になる(2026-07-10実発火)
+        new_micros = round(new_micros / 1_000_000) * 1_000_000
         new_micros = max(CPC_FLOOR_MICROS, min(CPC_CEIL_MICROS, new_micros))
         if abs(new_micros - cur_micros) < 5_000_000:  # < ¥5 change → skip
             continue
