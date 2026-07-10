@@ -107,6 +107,12 @@ def decide_multiplier(signups_24h):
 
 
 def main():
+    # ワークフロー冒頭コメントの契約どおり: google-ads.yaml が無ければ no-op で正常終了
+    # (secret未設定で cron を毎日赤くしない。赤は実エラーだけにする)
+    if not YAML.exists():
+        print(f"{YAML} not found — no-op exit (GOOGLE_ADS_YAML secret not materialised).")
+        return
+
     metrics = cv_pulse()
     signups_24h = metrics.get("signups_24h", 0)
     mult, reason = decide_multiplier(signups_24h)
