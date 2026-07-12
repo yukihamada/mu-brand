@@ -6829,8 +6829,10 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
 /// 残る(=壊れない)・サーバ注入分(kind options / price hint)も同じ表で訳せる。
 /// 長い複合文字列(JSON-LD 等)を先に、単独の短い文字列を後に置く —
 /// 先に短い方を替えると長い方がマッチしなくなるため順序が意味を持つ。
-fn make_html_en(mut h: String) -> String {
-    const T: &[(&str, &str)] = &[
+/// ⚠ EN 側の文中アポストロフィは必ずカーリー(’)にする — 素の `'` は JS の
+/// シングルクォート文字列内に置換された瞬間ページの全 JS を殺す
+/// (tests_critical::make_en_table_no_new_straight_apostrophes が守る)。
+pub(crate) const MAKE_EN_T: &[(&str, &str)] = &[
         // ── head / SEO ──
         (r#"<!doctype html><html lang="ja">"#, r#"<!doctype html><html lang="en">"#),
         ("<title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>",
@@ -6868,15 +6870,15 @@ fn make_html_en(mut h: String) -> String {
         // ── developer / MCP section ──
         ("🤖 開発者・AIから作る（API / MCP）", "🤖 For developers &amp; AI agents (API / MCP)"),
         ("人が打たなくても、あなたのAIや自分のアプリから直接MUに作れます。MCP対応なので、お使いのAI（Claude等）につなぐだけ。",
-         "No human typing needed — create on MU straight from your AI or your own app. It's MCP-native: just connect your AI (Claude, etc.)."),
+         "No human typing needed — create on MU straight from your AI or your own app. It’s MCP-native: just connect your AI (Claude, etc.)."),
         ("REST APIでも、登録→デザイン生成→販売まで全部できます。",
          "Or hit the REST API directly: register → generate designs → sell, end to end."),
         ("使い方とツール一覧 → /build", "Docs &amp; tool list → /build"),
         // ── A/B/C バリアント (JS内・長い方から) ──
         ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>（<a href=\"/credit\" style=\"color:#ffd700\">仕組み</a>）。",
-         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone's shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b> (<a href=\"/credit\" style=\"color:#ffd700\">how it works</a>)."),
+         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone’s shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b> (<a href=\"/credit\" style=\"color:#ffd700\">how it works</a>)."),
         ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
-         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone's shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b>."),
+         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone’s shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b>."),
         ("考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style=\"color:#ffd700\">売れたら売上の10%</b>。",
          "Faster than thinking. <b>Just tap one below</b> and AI turns it into a piece. Free input works too. <b style=\"color:#ffd700\">Every sale pays you 10%</b>."),
         ("ひとことどうぞ。話すように書けば、AI があなたの一着にします。<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
@@ -6996,11 +6998,11 @@ fn make_html_en(mut h: String) -> String {
         ("🎁 だれかに贈る", "🎁 Give it to someone"),
         ("相手が住所を入力・金額の出ない明細でお届け", "They enter their own address · delivered with no price on the slip"),
         ("🎨 相手向けに作り直す", "🎨 Remake it for them"),
-        ("この人向けに一言足して作り直す（例: 母の還暦に / 道場の名前を入れて）", "Add a line and remake it for them (e.g. for mom's 60th · put the dojo's name on it)"),
+        ("この人向けに一言足して作り直す（例: 母の還暦に / 道場の名前を入れて）", "Add a line and remake it for them (e.g. for mom’s 60th · put the dojo’s name on it)"),
         ("作り直しています… 10〜30秒", "Remaking… 10–30s"),
-        ("作り直せませんでした。少し時間をおいて試してください。", "Couldn't remake it. Please try again shortly."),
+        ("作り直せませんでした。少し時間をおいて試してください。", "Couldn’t remake it. Please try again shortly."),
         ("さっきの案（どれも棚に残っています）", "Earlier takes (all still on the shelf)"),
-        ("棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。", "It's on the shelf now. The more you spread it, the more it sells → 10% of every sale goes to you, the maker. "),
+        ("棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。", "It’s on the shelf now. The more you spread it, the more it sells → 10% of every sale goes to you, the maker. "),
         ("クリエイター登録(無料)で売上と報酬を管理 →", "Manage sales &amp; payouts with a free creator account →"),
         ("🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。", "🌱 <b>One of one.</b> The same picture will never be generated again. It has no first owner yet."),
         ("つくりました。確認後に公開・購入できます。", "Created. It goes live and purchasable after a quick check."),
@@ -7032,8 +7034,11 @@ fn make_html_en(mut h: String) -> String {
         ("<div style=\"font-weight:700;font-size:16px;margin-bottom:8px\">ホーム画面に追加</div>", "<div style=\"font-weight:700;font-size:16px;margin-bottom:8px\">Add to Home Screen</div>"),
         ("下の <b>共有</b> ボタン <span style=\"font-size:17px\">􀈂</span> を押して、<br><b>「ホーム画面に追加」</b> を選ぶと、アプリとして開けます。", "Tap the <b>Share</b> button <span style=\"font-size:17px\">􀈂</span> below, then choose <b>“Add to Home Screen”</b> to open this as an app."),
         (">わかった</button>", ">Got it</button>"),
-    ];
-    for (ja, en) in T {
+];
+
+/// /make の英語化: JA でレンダリングした最終 HTML に MAKE_EN_T を適用する。
+fn make_html_en(mut h: String) -> String {
+    for (ja, en) in MAKE_EN_T {
         h = h.replace(ja, en);
     }
     h
