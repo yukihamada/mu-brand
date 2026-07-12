@@ -1198,7 +1198,13 @@ def random_delay(brand: str):
         "staple": (0, 4 * 3600),     # 0–4 h: 朝〜昼の間に上がる気軽さ
     }
     lo, hi = delays.get(brand.split("_")[0], (0, 0))
-    if hi == 0:
+    # MAX_DELAY_SECS: CI ランナーの timeout-minutes より長く眠ると job ごと
+    # 殺される(GH Actions では cancelled 扱い=missing drop の主因)ため、
+    # 実行環境が眠りの上限を指定できる。0/未設定なら従来どおり。
+    cap = int(os.environ.get("MAX_DELAY_SECS", "0") or 0)
+    if cap:
+        hi = min(hi, cap)
+    if hi <= 0:
         return
     secs = random.randint(lo, hi)
     h, m = divmod(secs, 3600)
