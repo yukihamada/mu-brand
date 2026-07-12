@@ -437,3 +437,24 @@ fn tone_gate_blocks_invisible_canvas_combos() {
     assert!(!show_variant_kind("mug_black", mid), "mid → no double mugs");
     assert!(show_variant_kind("mug", mid));
 }
+
+// ── /make EN 対訳テーブル: 素のアポストロフィ禁止 ────────────────────────────
+//
+// MAKE_EN_T の EN 文は最終 HTML に文字列置換で入る。置換先には JS の
+// シングルクォート文字列リテラル(A/B/C variant subs・alert・placeholder 等)が
+// 含まれるため、JA 側に無い素の `'` を EN 側が持ち込むと文字列が途中で閉じ、
+// ページの全 JS が SyntaxError で死ぬ(実障害: /make?lang=en の「つくる」が
+// 無反応・2026-07-11)。文中アポストロフィはカーリー(’)を使うこと。
+// JA 側に `'` がある対は JS の構造ごと置換している(textContent='つくる' 等)
+// ので対象外。
+#[test]
+fn make_en_table_no_new_straight_apostrophes() {
+    for (ja, en) in crate::catalog::MAKE_EN_T {
+        if !ja.contains('\'') {
+            assert!(
+                !en.contains('\''),
+                "EN translation introduces a straight apostrophe (kills /make?lang=en JS) — use ’ instead: {en}"
+            );
+        }
+    }
+}
