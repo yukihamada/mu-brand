@@ -898,6 +898,32 @@ pub async fn maker_page(
     let grid = if products.is_empty() {
         r#"<p style="opacity:.6;font-size:13px">公開中の作品はまだありません。</p>"#.to_string()
     } else { format!(r#"<div class="grid">{}</div>"#, cards) };
+    // CollectionPage + ItemList JSON-LD — クリエイターのポートフォリオを
+    // 構造化データとして Google に渡す。/shop と同じ ItemList 形 (position +
+    // url) で、作者ページが固有コンテンツの SEO 面として拾われるように。
+    // serde_json で組むので商品名の引用符/タグは安全にエスケープされる。
+    let collection_ld: String = {
+        let items: Vec<serde_json::Value> = products.iter().enumerate().map(|(i, p)| {
+            serde_json::json!({
+                "@type": "ListItem",
+                "position": i + 1,
+                "url": format!("https://wearmu.com/shop/{}", urlencoding::encode(&p.sku)),
+                "name": p.label,
+            })
+        }).collect();
+        let obj = serde_json::json!({
+            "@context": "https://schema.org",
+            "@type": "CollectionPage",
+            "name": format!("{} — MU クリエイター", dn.trim()),
+            "url": format!("https://wearmu.com/u/{}", code_clean),
+            "mainEntity": {
+                "@type": "ItemList",
+                "numberOfItems": products.len(),
+                "itemListElement": items,
+            }
+        });
+        serde_json::to_string(&obj).unwrap_or_else(|_| "{}".into()).replace("</", "<\\/")
+    };
     let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>{who} — MU クリエイター</title>
@@ -906,7 +932,13 @@ pub async fn maker_page(
 <meta property="og:description" content="作品 {n} 点・売れた数 {sales}。ことば1行から30秒、あなたもブランドを持てる。">
 <meta property="og:image" content="{og_img}">
 <meta property="og:url" content="https://wearmu.com/u/{code}">
+<meta property="og:type" content="profile">
 <meta name="twitter:card" content="summary_large_image">
+<link rel="canonical" href="https://wearmu.com/u/{code}">
+<link rel="alternate" hreflang="ja" href="https://wearmu.com/u/{code}">
+<link rel="alternate" hreflang="en" href="https://wearmu.com/u/{code}?lang=en">
+<link rel="alternate" hreflang="x-default" href="https://wearmu.com/u/{code}">
+<script type="application/ld+json">{collection_ld}</script>
 <style>
 body{{background:#0a0a0a;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',Arial,sans-serif;margin:0}}
 .wrap{{max-width:920px;margin:0 auto;padding:32px 22px 60px}}
@@ -949,6 +981,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 </body></html>"##,
         who = who, n = products.len(), sales = sales, grid = grid,
+        collection_ld = collection_ld,
         code = crate::html_escape(&code_clean),
         // シェアは作者の一人称: 「私のブランドできた」をそのまま貼れる形に。
         share_text = urlencoding::encode(&format!("{} のMUブランド(作品{}点) — ことば1行から30秒 #MU #wearmu", who, products.len())),
