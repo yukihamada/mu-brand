@@ -26046,6 +26046,8 @@ const BLOG_SUZURI_VS_PRINTFUL_RAW: &str = include_str!("../static/blog/suzuri-vs
 const BLOG_SPEC_AND_PROMPT_RAW: &str = include_str!("../static/blog/spec-and-prompt.md");
 const BLOG_100_IN_20_RAW: &str = include_str!("../static/blog/100-in-20-days-strategy.md");
 const BLOG_ALL_IN_ON_MU_RAW: &str = include_str!("../static/blog/all-in-on-mu.md");
+const BLOG_BJJ_SHIRT_RASHGUARD_RAW: &str = include_str!("../static/blog/bjj-shirt-rashguard-guide.md");
+const BLOG_JIUFLOW_ZERO_INVENTORY_RAW: &str = include_str!("../static/blog/jiuflow-zero-inventory-drop.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -26117,6 +26119,14 @@ async fn blog_100_in_20() -> Html<String> {
 
 async fn blog_all_in_on_mu() -> Html<String> {
     Html(render_blog_md("20 個作って、 MU 1 つに賭ける", BLOG_ALL_IN_ON_MU_RAW))
+}
+
+async fn blog_bjj_shirt_rashguard() -> Html<String> {
+    Html(render_blog_md("柔術Tシャツ・ラッシュガードの選び方", BLOG_BJJ_SHIRT_RASHGUARD_RAW))
+}
+
+async fn blog_jiuflow_zero_inventory() -> Html<String> {
+    Html(render_blog_md("JiuFlowユーザー限定グッズを、在庫ゼロのままAIで作った話", BLOG_JIUFLOW_ZERO_INVENTORY_RAW))
 }
 
 /// /lp/:persona — Google Ads landing pages, persona-keyed.
@@ -54878,6 +54888,7 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
         "from-automation-to-autonomy", "fabric-shift", "week-one-7-buyers",
         "quality-upgrade-muon-ma", "suzuri-vs-printful-spec",
         "spec-and-prompt", "100-in-20-days-strategy", "all-in-on-mu",
+        "bjj-shirt-rashguard-guide", "jiuflow-zero-inventory-drop",
     ];
     for slug in STATIC_BLOG_SLUGS {
         entries.push_str(&format!(
@@ -71073,6 +71084,8 @@ async fn main() {
         .route("/blog/spec-and-prompt", get(blog_spec_and_prompt))
         .route("/blog/100-in-20-days-strategy", get(blog_100_in_20))
         .route("/blog/all-in-on-mu", get(blog_all_in_on_mu))
+        .route("/blog/bjj-shirt-rashguard-guide", get(blog_bjj_shirt_rashguard))
+        .route("/blog/jiuflow-zero-inventory-drop", get(blog_jiuflow_zero_inventory))
         .route("/lp/:persona", get(landing_page))
         .route("/grachan82", get(grachan82_page))
         .route("/sato-ion", get(grachan82_page))
