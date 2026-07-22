@@ -70685,6 +70685,8 @@ async fn main() {
         }))
         .nest_service("/will", ServeDir::new("static/will"))
         .nest_service("/foundation", ServeDir::new("static/foundation"))
+        // つくりかた事典 — SEO流入→MUで作る動線→受注ファネル (see tasks/tsukurikata note)
+        .nest_service("/tsukurikata", ServeDir::new("static/tsukurikata"))
         .nest_service("/bjj", ServeDir::new("static/bjj"))
         .nest_service("/roll", ServeDir::new("static/roll"))
         // Generic DB-driven brand LP — works for any catalog_brands slug.
