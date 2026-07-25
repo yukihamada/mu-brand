@@ -126,6 +126,9 @@
 "make.priceSave" = "Save";
 "make.cancel" = "Cancel";
 "make.priceHint" = "Enter a price (JPY). Below-cost amounts are auto-adjusted.";
+"aiConsent.title" = "Sending to AI";
+"aiConsent.body" = "Your text will be sent to Google Gemini (AI) to generate your design. Please don't include personal information.";
+"aiConsent.agree" = "Agree & Continue";
 "tab.agent" = "AI";
 "agent.intro.title" = "Talk to MU's AI.";
 "agent.intro.sub" = "Make things, check sales, ask anything — all by chatting.";

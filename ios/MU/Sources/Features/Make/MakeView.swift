@@ -29,6 +29,7 @@ struct MakeView: View {
     @State private var errorMessage: String?
     @State private var showCheckout = false
     @State private var showGift = false
+    @State private var showAIConsent = false
     @FocusState private var promptFocused: Bool
 
     // デザイン依頼: このお題を誰かに頼む(相手が作る→自分が受け取る→作手に印税)。
@@ -239,6 +240,7 @@ struct MakeView: View {
             } message: {
                 Text("完成のお知らせ・受け取りに使います")
             }
+            .aiConsentAlert(isPresented: $showAIConsent) { performMake() }
         }
     }
 
@@ -853,6 +855,14 @@ struct MakeView: View {
         guard !isMaking else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        // 入力テキストはデザイン生成のためGemini(AI)へ送信される。初回のみ同意を取る。
+        guard AIConsent.given else { showAIConsent = true; return }
+        performMake()
+    }
+
+    private func performMake() {
+        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isMaking, !text.isEmpty else { return }
         promptFocused = false
         errorMessage = nil
         resetAll()

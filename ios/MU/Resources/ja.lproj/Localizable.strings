@@ -126,6 +126,9 @@
 "make.priceSave" = "保存";
 "make.cancel" = "キャンセル";
 "make.priceHint" = "売値(円)を入力。原価を下回る額は自動で調整されます。";
+"aiConsent.title" = "AIに送信します";
+"aiConsent.body" = "入力したテキストは、デザイン生成のためGoogle Gemini(AI)に送信されます。個人情報は入力しないでください。";
+"aiConsent.agree" = "同意して続ける";
 "tab.agent" = "AI";
 "agent.intro.title" = "MUのAIに、話しかけて。";
 "agent.intro.sub" = "作る・売上を見る・相談する。ぜんぶ会話で。";

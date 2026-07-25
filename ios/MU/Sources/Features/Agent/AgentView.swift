@@ -10,6 +10,7 @@ struct AgentView: View {
     @State private var messages: [ChatMessage] = []
     @State private var sending = false
     @State private var showCheckout: String?
+    @State private var showAIConsent = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -38,6 +39,7 @@ struct AgentView: View {
                                  set: { showCheckout = $0?.url })) { item in
                 if let url = URL(string: item.url) { SafariView(url: url).ignoresSafeArea() }
             }
+            .aiConsentAlert(isPresented: $showAIConsent) { performSend() }
         }
     }
 
@@ -134,6 +136,14 @@ struct AgentView: View {
     }
 
     private func send() {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !sending else { return }
+        // 入力テキストは意図判定のためGemini(AI)へ送信される。初回のみ同意を取る。
+        guard AIConsent.given else { showAIConsent = true; return }
+        performSend()
+    }
+
+    private func performSend() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !sending else { return }
         if voice.isRecording { voice.stop() }
