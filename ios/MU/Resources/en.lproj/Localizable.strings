@@ -88,6 +88,7 @@
 "shop.search" = "Search with words";
 
 "pdp.buy" = "Buy now";
+"pdp.seller" = "Sold by Enabler Inc. — your payment will be processed under the merchant name Enabler Inc.";
 "pdp.openWeb" = "Open on web (gift & details)";
 
 "auth.lead" = "We'll email you a 6-digit code. Enter it and you're in — no password.";

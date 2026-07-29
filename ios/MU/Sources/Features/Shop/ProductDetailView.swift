@@ -52,6 +52,13 @@ struct ProductDetailView: View {
                 .buttonStyle(.borderedProminent)
                 .foregroundStyle(.black)
 
+                // 販売者の明示 (App Review Guideline 4.9: 決済シートに出る
+                // merchant 名 = Stripe アカウント名義 "Enabler Inc." を購入前に開示)
+                Text(String(localized: "pdp.seller"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
                 // 🎁 プレゼントする
                 Button {
                     Analytics.track("pdp_gift", ["sku": product.sku])
