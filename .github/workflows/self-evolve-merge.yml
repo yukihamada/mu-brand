@@ -32,7 +32,7 @@ jobs:
             echo "result=enabled" >> "$GITHUB_OUTPUT"
           fi
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         if: steps.killcheck.outputs.result == 'enabled'
         with:
           fetch-depth: 0
