@@ -27758,6 +27758,11 @@ async fn collab_manage_page(
     <a class="help" href="mailto:info@enablerdao.com?subject=Collab%20Support%3A%20{slug}">❓ サポートに問い合わせ</a>
   </div>
 
+  <div id="plan-banner" style="background:#111;border:1px solid rgba(230,196,73,0.35);border-left:3px solid #e6c449;border-radius:2px;padding:16px 20px;margin-bottom:28px;font-size:12.5px;line-height:1.85">
+    <div id="plan-banner-text">この collab page は無料プランで作成できます (1 つ目まで無料)。2 つ目以降の drop や複数ブランド運用は <strong style="color:#fff">¥980/月のサブスク</strong>、または <strong style="color:#fff">MUGEN 1 着購入</strong>で無制限に。</div>
+    <button id="upgrade-btn" type="button" style="margin-top:10px;background:#e6c449;color:#000;border:0;padding:9px 16px;font-size:10.5px;letter-spacing:0.2em;text-transform:uppercase;font-weight:700;border-radius:2px;cursor:pointer">🔓 ¥980/月で無制限プランへ</button>
+  </div>
+
   {pl_block}
 
   <h2>+ 商品を 1 つ追加</h2>
@@ -27843,6 +27848,49 @@ form.addEventListener('submit', async (e) => {{
     msg.textContent = '❌ network: ' + err.message;
   }}
 }});
+
+// Plan banner — personalizes if a /collab/chat session cookie is present
+// (same browser as creation), otherwise shows the generic pitch already
+// in the HTML. Upgrade button always attempts checkout; a 401 means the
+// partner needs to (re-)verify email first.
+(async () => {{
+  const bannerText = document.getElementById('plan-banner-text');
+  const upgradeBtn = document.getElementById('upgrade-btn');
+  try {{
+    const r = await fetch('/api/collab/session', {{ credentials: 'same-origin' }});
+    if (r.ok) {{
+      const j = await r.json();
+      if (j.ok) {{
+        if (j.subscription_active) {{
+          bannerText.textContent = '✓ ¥980/月サブスク中 — collab page を無制限に作成できます。';
+          upgradeBtn.style.display = 'none';
+        }} else {{
+          bannerText.innerHTML = `無料 collab page を ${{j.collabs_created}} 個作成済み。2 つ目以降は <strong style="color:#fff">¥980/月のサブスク</strong>、または <strong style="color:#fff">MUGEN 1 着購入</strong>で無制限に。`;
+        }}
+      }}
+    }}
+  }} catch (_) {{ /* keep generic copy */ }}
+  upgradeBtn.addEventListener('click', async () => {{
+    upgradeBtn.disabled = true;
+    upgradeBtn.textContent = '処理中…';
+    try {{
+      const r = await fetch('/api/collab/sub/checkout', {{ method: 'POST', credentials: 'same-origin' }});
+      if (r.status === 401) {{
+        alert('先に /collab/chat でメール認証してください。認証後にもう一度お試しください。');
+        window.location.href = '/collab/chat';
+        return;
+      }}
+      const j = await r.json();
+      if (j.ok && j.url) {{ window.location.href = j.url; return; }}
+      throw new Error(j.error || ('HTTP ' + r.status));
+    }} catch (e) {{
+      alert('エラー: ' + (e.message || '?'));
+    }} finally {{
+      upgradeBtn.disabled = false;
+      upgradeBtn.textContent = '🔓 ¥980/月で無制限プランへ';
+    }}
+  }});
+}})();
 </script>
 </body></html>"##,
         slug = html_escape(&slug), name = html_escape(&name),

@@ -188,6 +188,33 @@ const authedBudget = document.getElementById('authed-budget');
 const logoutBtn    = document.getElementById('logout-btn');
 const deleteBtn    = document.getElementById('delete-btn');
 
+// Starts the ¥980/月 subscription checkout. Must be POST (the endpoint
+// rejects GET), so this is called from a click handler rather than a
+// plain <a href> — a bare link here previously 405'd instead of reaching
+// Stripe.
+async function startSubCheckout(triggerEl) {
+  const prevText = triggerEl ? triggerEl.textContent : '';
+  if (triggerEl) { triggerEl.textContent = '処理中…'; triggerEl.style.pointerEvents = 'none'; }
+  try {
+    const r = await fetch('/api/collab/sub/checkout', { method: 'POST', credentials: 'same-origin' });
+    if (r.status === 401) {
+      setError('メール認証が切れました。 もう一度認証してください。');
+      await loadSession();
+      return;
+    }
+    const j = await r.json().catch(() => ({}));
+    if (r.ok && j.ok && j.url) {
+      window.location.href = j.url;
+      return;
+    }
+    throw new Error(j.error || ('HTTP ' + r.status));
+  } catch (e) {
+    setError('サブスク開始に失敗しました: ' + (e.message || '?'));
+  } finally {
+    if (triggerEl) { triggerEl.textContent = prevText; triggerEl.style.pointerEvents = ''; }
+  }
+}
+
 const PLACEHOLDERS = [
   '5/17 にイオン応援したい、 kokon で BBQ 30 人 ¥8,000',
   '6/2 自主企画ライブ 渋谷 30 人 物販 T ¥4,500',
@@ -428,8 +455,13 @@ async function doCreate() {
     if (r.status === 402) {
       const j = await r.json().catch(() => ({}));
       setError(`枠を超えました: ${j.reason || ''} — MUGEN を 1 着買う (= 1 MU) または ¥980/月 サブスクで作れます。`);
-      // Offer sub link
-      previewSlot.innerHTML += `<div style="margin-top:14px"><a href="/api/collab/sub/checkout" data-sub-cta>¥980/月 サブスクで作る →</a> · <a href="/mugen">MUGEN を買う →</a></div>`;
+      // Offer sub link — button (not <a href>) since checkout is POST-only.
+      const ctaWrap = document.createElement('div');
+      ctaWrap.style.marginTop = '14px';
+      ctaWrap.innerHTML = `<a href="#" data-sub-cta>¥980/月 サブスクで作る →</a> · <a href="/mugen">MUGEN を買う →</a>`;
+      previewSlot.appendChild(ctaWrap);
+      const subLink = ctaWrap.querySelector('[data-sub-cta]');
+      subLink.addEventListener('click', (ev) => { ev.preventDefault(); startSubCheckout(subLink); });
       if (btn) { btn.disabled = false; btn.textContent = '✓ これで作成する'; }
       return;
     }
@@ -468,8 +500,17 @@ async function doCreate() {
       <div style="font-size:10.5px;color:#888;line-height:1.85;margin-top:14px">
         管理 URL: <code style="background:rgba(230,196,73,0.10);color:#e6c449;padding:1px 6px;font-size:10px;font-family:'SF Mono',monospace;word-break:break-all">${esc(manage)}</code>
       </div>
+      <div style="font-size:11px;color:#9a9a9a;line-height:1.85;margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.08)">
+        💡 collab page は 1 つ目まで無料。 2 つ目以降の drop や複数ブランド運用は
+        <a href="#" data-sub-cta style="color:#e6c449">¥980/月のサブスク →</a>
+        で無制限に作成できます。
+      </div>
     `;
     chatEl.appendChild(card);
+    const successSubLink = card.querySelector('[data-sub-cta]');
+    if (successSubLink) {
+      successSubLink.addEventListener('click', (ev) => { ev.preventDefault(); startSubCheckout(successSubLink); });
+    }
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   } catch (e) {
     setError('作成失敗: ' + (e.message || '不明'));
