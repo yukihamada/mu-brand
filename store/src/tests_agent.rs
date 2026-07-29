@@ -78,6 +78,30 @@ fn risk_blocks_inappropriate_language() {
 }
 
 #[test]
+fn risk_no_false_positive_on_innocent_substrings() {
+    // ユニセックス (unisex) embeds セックス but is legitimate apparel copy —
+    // must NOT trip the gate (this sent every KOE tee to manual review).
+    let r = assess_product_risk("KOE Tee", "コットン100%・ユニセックスのTシャツ", None, "");
+    assert!(r.is_none(), "unisex must pass, got {:?}", r);
+    // English NSFW terms match whole tokens only: grape ⊅ rape, shiitake ⊅ shit.
+    let r2 = assess_product_risk("Grape Tee", "fresh grape and shiitake print", None, "");
+    assert!(r2.is_none(), "grape/shiitake must pass, got {:?}", r2);
+    // The real terms are still caught (substring for セックス, token for rape/porn).
+    assert_eq!(
+        assess_product_risk("Tee", "セックス", None, "").as_deref(),
+        Some("inappropriate language")
+    );
+    assert_eq!(
+        assess_product_risk("Tee", "this is porn", None, "").as_deref(),
+        Some("inappropriate language")
+    );
+    assert_eq!(
+        assess_product_risk("Tee", "go rape go", None, "").as_deref(),
+        Some("inappropriate language")
+    );
+}
+
+#[test]
 fn risk_passes_clean_product() {
     // Safe label + safe copy + trusted CDN host → auto-publish (None).
     let r = assess_product_risk(
