@@ -861,14 +861,28 @@ fn assess_product_risk(
             return Some(format!("brand/IP/real-person term: {}", t));
         }
     }
-    // 4) inappropriate language
-    const NSFW: &[&str] = &[
-        "fuck", "shit", "porn", "nigger", "fag", "rape", "セックス", "ポルノ", "死ね", "殺す",
-    ];
+    // 4) inappropriate language.
+    //   Unambiguous terms stay substring-matched — no innocent word embeds them.
+    const NSFW: &[&str] = &["fuck", "porn", "nigger", "ポルノ", "死ね", "殺す"];
     for w in NSFW {
         if text.contains(w) {
             return Some("inappropriate language".into());
         }
+    }
+    //   Ambiguous short terms: whole-token match only (reuse `toks` from step 3),
+    //   mirroring the brand-token guard above — otherwise innocent words
+    //   false-positive (grape⊃rape, shiitake⊃shit, fag⊂surnames). Substring
+    //   matching sent real products to manual review.
+    const NSFW_TOKENS: &[&str] = &["rape", "shit", "fag"];
+    for w in NSFW_TOKENS {
+        if toks.contains(w) {
+            return Some("inappropriate language".into());
+        }
+    }
+    //   Japanese セックス needs a compound guard: ユニセックス (unisex) embeds it,
+    //   which sent every "ユニセックスTシャツ" description to manual review.
+    if text.replace("ユニセックス", "").contains("セックス") {
+        return Some("inappropriate language".into());
     }
     // 5) operator-extendable blocklist (real names etc.) via env
     if let Ok(extra) = std::env::var("RISK_BLOCK_TERMS") {
