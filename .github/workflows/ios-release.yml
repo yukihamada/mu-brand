@@ -1,0 +1,126 @@
+name: iOS Archive & Upload to App Store Connect
+
+# 手動実行のみ。m5 (Xcode 26) が使えない時の代替ビルド経路。
+# iOS 26 SDK 必須 (ITMS-90725 / altool 409) のため macos-26 ランナー + Xcode 26.5 を使う。
+# 署名は cloud signing (-allowProvisioningUpdates + ASC API キー)。ローカル証明書・
+# キーチェーン解錠は不要 = SSH ビルドの errSecInternalComponent 問題を回避できる。
+on:
+  workflow_dispatch:
+    inputs:
+      xcode:
+        description: "Xcode version (must ship the iOS 26 SDK)"
+        required: false
+        default: "26.5"
+      upload:
+        description: "Upload the export to App Store Connect"
+        type: boolean
+        required: false
+        default: true
+
+concurrency:
+  group: ios-release
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode ${{ inputs.xcode }}
+        run: |
+          sudo xcode-select -s "/Applications/Xcode_${{ inputs.xcode }}.app"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i iphoneos
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Write App Store Connect API key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$HOME/private_keys"
+          printf '%s\n' "$ASC_KEY_P8" > "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          chmod 600 "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Show build number (must match the intended CFBundleVersion)
+        working-directory: ios
+        run: |
+          grep -E "CURRENT_PROJECT_VERSION|MARKETING_VERSION" project.yml
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" MUWidget/Info.plist
+
+      - name: Archive
+        working-directory: ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project MU.xcodeproj \
+            -scheme MU \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/MU.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM=5BV85JW8US
+
+      - name: Verify archived binary version
+        run: |
+          APP_PLIST="$RUNNER_TEMP/MU.xcarchive/Products/Applications/MU.app/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_PLIST"
+          /usr/libexec/PlistBuddy -c "Print :DTSDKName" "$APP_PLIST"
+
+      - name: Export & upload to App Store Connect
+        working-directory: ios
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          DEST=$([ "${{ inputs.upload }}" = "true" ] && echo upload || echo export)
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>${DEST}</string>
+            <key>teamID</key><string>5BV85JW8US</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>uploadSymbols</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/MU.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          ls -la "$RUNNER_TEMP/export" || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mu-ios-export
+          path: |
+            ${{ runner.temp }}/export
+          if-no-files-found: ignore
+          retention-days: 7
