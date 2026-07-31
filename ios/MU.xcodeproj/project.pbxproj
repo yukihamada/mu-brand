@@ -21,6 +21,7 @@
 		64F738F6F2E4860BD7910617 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63CABCD1C5C82345D918B01 /* Session.swift */; };
 		714DE96383F152E399DC9BB3 /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FB043CBEA23D3AEC2ED545 /* ScanView.swift */; };
 		72C1F86E0777B2ED87AB917E /* ShopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDD3AA78E083DAD93A222113 /* ShopView.swift */; };
+		9028964DABB2120FBC9E50A0 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3A31AE585B3F93176512B196 /* Localizable.strings */; };
 		AEB216DA4B7A3841DB82154A /* MUApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC239613BD23A83EA3EEE15 /* MUApp.swift */; };
 		C3A13A39199892744181EE91 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397EDA480FA0F17B7918F918 /* AppState.swift */; };
 		C9BEA58145EFC10A50732C0B /* ClosetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D52C74AD48EE37849F85FC /* ClosetView.swift */; };
@@ -74,6 +75,7 @@
 		42F1F6F276BCB5A2CA6FE3E7 /* MUWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MUWidget.swift; sourceTree = "<group>"; };
 		43E501A44D68FF958C26B9C4 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		49932C238081818516C669B3 /* MUTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MUTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		529C86DB9E3CE68DD50AF8CB /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		5C2819769FCF2C0AA6B54978 /* SafariView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariView.swift; sourceTree = "<group>"; };
 		65896010E833D11F55EF9973 /* AgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentView.swift; sourceTree = "<group>"; };
 		6C4140B36BFB33F4D3CBCCE1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -89,6 +91,7 @@
 		D5551BD573D581C8DB539528 /* AIConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIConsent.swift; sourceTree = "<group>"; };
 		E04C21412555E3233719B07C /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		E859F5B164FA53F364CDCD57 /* ModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTests.swift; sourceTree = "<group>"; };
+		F0F61490DB0634AE8090D1BE /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/Localizable.strings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -176,6 +179,7 @@
 			isa = PBXGroup;
 			children = (
 				6C4140B36BFB33F4D3CBCCE1 /* Info.plist */,
+				3A31AE585B3F93176512B196 /* Localizable.strings */,
 				42F1F6F276BCB5A2CA6FE3E7 /* MUWidget.swift */,
 			);
 			path = MUWidget;
@@ -263,6 +267,7 @@
 			buildConfigurationList = 13E71BF02A5A3023AAC6432C /* Build configuration list for PBXNativeTarget "MUWidget" */;
 			buildPhases = (
 				24D2F99A0AACE9B57F38234C /* Sources */,
+				E49560437D9C8388E3982534 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -350,6 +355,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E49560437D9C8388E3982534 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9028964DABB2120FBC9E50A0 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -409,6 +422,15 @@
 /* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
+		3A31AE585B3F93176512B196 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				529C86DB9E3CE68DD50AF8CB /* en */,
+				F0F61490DB0634AE8090D1BE /* ja */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
 		B82CA420028E679CC07FEA55 /* Localizable.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
@@ -456,7 +478,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 5BV85JW8US;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -476,7 +498,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -582,7 +604,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 6;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 5BV85JW8US;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -596,7 +618,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

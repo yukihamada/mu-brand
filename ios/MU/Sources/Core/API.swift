@@ -250,7 +250,7 @@ struct MUAPI {
         let json = try await post(base.appendingPathComponent("api/make/request"), body: body)
         guard let link = json["designer_link"] as? String,
               let status = json["status_url"] as? String else {
-            throw APIError.message("リンクを作成できませんでした")
+            throw APIError.message(String(localized: "リンクを作成できませんでした"))
         }
         return (link, status)
     }

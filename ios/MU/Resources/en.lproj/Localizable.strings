@@ -143,3 +143,15 @@
 "onb.seed.a" = "You're great just for living today";
 "onb.seed.b" = "A \"thank you\" piece for someone you love";
 "onb.seed.c" = "A gentle few words that lighten the heart";
+
+/* Design request (gift link) flow — keys are the Japanese literals used in MakeView */
+"このお題を誰かに頼む" = "Ask someone to design this";
+"🎁 依頼リンクができました" = "🎁 Your request link is ready";
+"このリンクを送ると、相手がデザインして、できあがったらあなたが受け取れます。" = "Send this link — they design it, and you receive the finished piece.";
+"リンクを送る" = "Send link";
+"自分の受け取りページを見る →" = "View your pickup page →";
+"あなたのメール" = "Your email";
+"リンクを作る" = "Create link";
+"完成のお知らせ・受け取りに使います" = "Used to notify you and deliver the finished design.";
+"メールとお題を入れてください" = "Enter your email and a prompt";
+"リンクを作成できませんでした" = "Couldn't create the link";

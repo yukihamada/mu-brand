@@ -267,7 +267,7 @@ struct MakeView: View {
         let brief = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty, e.contains("@") else {
-            errorMessage = "メールとお題を入れてください"; return
+            errorMessage = String(localized: "メールとお題を入れてください"); return
         }
         requestBusy = true; errorMessage = nil
         Analytics.track("design_request_create")
@@ -279,7 +279,7 @@ struct MakeView: View {
         } catch let APIError.message(m) {
             errorMessage = m
         } catch {
-            errorMessage = "リンクを作成できませんでした"
+            errorMessage = String(localized: "リンクを作成できませんでした")
         }
         requestBusy = false
     }
