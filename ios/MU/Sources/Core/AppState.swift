@@ -5,7 +5,8 @@ import SwiftUI
 // pendingPrompt をセット → MakeView が拾って自動生成する。
 @MainActor
 final class AppState: ObservableObject {
-    @Published var selectedTab = 2          // 起動時は中央の「作る」を見せる
+    // 起動時は中央の「作る」。MU_BOOT_TAB(環境変数)はスクショ撮影用の初期タブ指定。
+    @Published var selectedTab = Int(ProcessInfo.processInfo.environment["MU_BOOT_TAB"] ?? "") ?? 2
     @Published var pendingPrompt: String?   // オンボーディング → Make への受け渡し
 
     // タブのタグ(順序: ライブ0 / ショップ1 / 作る2[中央] / AI3 / アカウント4)。
