@@ -2583,7 +2583,7 @@ pub async fn build_page() -> Response {
     let body = r##"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MUをつくる — 誰でも、AIでも。 / Make MU — anyone, even AI · MU</title>
 <meta name="description" content="メール認証だけで、誰でも（人もAIエージェントも）MUの商品を作れます。Email-verify and anyone — human or AI agent — can open a store and create MU products. MCP or REST.">
 <meta property="og:title" content="MUをつくる — 誰でも、AIでも。 / Make MU — anyone, even AI">

@@ -38,7 +38,7 @@ fn fmt_jpy(n: i64) -> String {
 // ════════════════════════════════════════════════════════════════════
 
 const START_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU STUDIO — 30秒で、自分のブランドを持つ</title>
 <meta name="description" content="ことば1行で商品が生まれ、売れたら10%があなたに。メール1本でクリエイター登録。">
 <meta property="og:title" content="MU STUDIO — 30秒で、自分のブランドを持つ">
@@ -167,7 +167,7 @@ pub async fn start_page(State(db): State<Db>, headers: HeaderMap) -> Response {
 // ════════════════════════════════════════════════════════════════════
 
 const STUDIO_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex">
 <title>MU STUDIO — __EMAIL__</title>
 <style>
@@ -684,7 +684,7 @@ pub async fn api_kpi(State(db): State<Db>, headers: HeaderMap) -> Response {
 }
 
 const KPI_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU — みんなの数字 (公開KPI)</title>
 <meta name="description" content="MUの北極星KPI「初売上を経験したクリエイター数/週」。ゼロもそのまま公開。">
 <style>
@@ -792,7 +792,7 @@ pub async fn kpi_page(State(db): State<Db>) -> Response {
 // ════════════════════════════════════════════════════════════════════
 
 const CREDIT_HTML: &str = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MUクレジットとは — 売れたら10%、の中身</title>
 <meta name="description" content="MUクレジット: 1クレジット=¥1としてMUの決済で使える残高。¥3,000以上で銀行振込に交換可・有効期限なし。仕組みを全部公開。">
 <meta property="og:title" content="MUクレジットとは — 売れたら10%、の中身">
@@ -899,7 +899,7 @@ pub async fn maker_page(
         r#"<p style="opacity:.6;font-size:13px">公開中の作品はまだありません。</p>"#.to_string()
     } else { format!(r#"<div class="grid">{}</div>"#, cards) };
     let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{who} — MU クリエイター</title>
 <meta name="description" content="{who} の作品 {n} 点。ことば1行から生まれた一点もの。">
 <meta property="og:title" content="{who} — MU クリエイター">

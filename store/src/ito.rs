@@ -582,7 +582,7 @@ pub(crate) async fn serial_page(State(db): State<Db>, Path(serial): Path<String>
         format!("<a href=\"/shop/{0}\" style=\"color:#5cf\">{0}</a> · ", esc(&sku))
     };
     let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>糸 {serial} — wearmu</title>
 <meta name="robots" content="noindex">
 <style>
@@ -636,7 +636,7 @@ document.getElementById('go').onclick=function(){{
 /// GET /ito — 糸の説明 + 残高/自分の服の確認。
 pub(crate) async fn ito_page() -> Response {
     let html = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>糸 (ITO) — 服が財布になる | wearmu</title>
 <meta name="description" content="MUの糸は買えない・送れない・換金できないポイント。人と会って服をスキャンすると編まれ、30日でほつれる。10糸で1着と交換。">
 <style>

@@ -5588,7 +5588,7 @@ pub async fn api_connect(Query(q): Query<MuConnectQ>) -> Response {
 /// GET /connect — 声でつなぐ UI（MUブランド）。
 pub async fn connect_page() -> Html<String> {
     Html(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>━◯━ MU — 声でつなぐ</title><meta name="description" content="名前を入れるだけ。リンクを送って、ひらいたら声でつながる。">
 <style>*{margin:0;padding:0;box-sizing:border-box}body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;min-height:100dvh;line-height:1.7;background:radial-gradient(60% 45% at 50% 0%,rgba(255,215,0,.12),transparent 70%),#0a0a0a}
 a{color:inherit;text-decoration:none}nav{display:flex;justify-content:space-between;align-items:center;padding:14px 22px;border-bottom:1px solid rgba(255,255,255,.08)}nav .b{font-weight:900;letter-spacing:.3em}
@@ -5663,7 +5663,7 @@ pub async fn store_unmanned_page(State(db): State<Db>) -> Html<String> {
         cards
     };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU MAKE 無人店 — 店員ゼロ、AIだけのTシャツ店 · wearmu.com</title>
 <meta name="description" content="MU MAKE 無人店。店員はいない。AIが描いて、刷って、あなたに送る。24時間営業・在庫ゼロ・受注生産。なんでも言ってみ、Tシャツになるから。">
 <meta property="og:title" content="MU MAKE 無人店 — 店員ゼロ、AIだけのTシャツ店">
@@ -6545,7 +6545,7 @@ pub async fn makeable_all_page() -> Html<String> {
     }
 
     let body = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU で作れるもの — 言うだけで、できる。</title>
 <meta name="description" content="MU が今すぐ作れる商品の一覧（Tシャツ・トート・タンク・刺繍キャップ・マグ・ステッカー・ポスター・デジタル・受注の家まで）と、これから作れそうなもの。価格フロア付き。">
 <meta property="og:title" content="MU で作れるもの一覧">
@@ -7080,7 +7080,7 @@ fn make_html_en(mut h: String) -> String {
 }
 
 const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
 <meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
 <link rel="canonical" href="https://wearmu.com/make">
@@ -8477,7 +8477,7 @@ pub async fn app_landing(State(db): State<Db>) -> Html<String> {
 }
 
 const APP_LANDING_HTML: &str = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU — 言えば、作れる。｜AIアパレル工房アプリ</title>
 <meta name="description" content="ひとこと言うだけで、世界に一つの服やグッズをAIが作って即販売。あなたのデザインが売れたら印税も。MUのiPhoneアプリ。">
 <meta property="og:title" content="MU — 言えば、作れる。"><meta property="og:description" content="ひとことで、世界に一つのプロダクトが生まれる。AIアパレル工房 MU のアプリ。">
@@ -8638,7 +8638,7 @@ pub async fn make_edit_page(axum::extract::Path(sku): axum::extract::Path<String
 }
 
 const MAKE_EDIT_HTML: &str = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>編集 — MU MAKE</title><meta name="robots" content="noindex">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -9793,7 +9793,7 @@ pub async fn gift_page() -> Html<String> {
 }
 
 const GIFT_HTML: &str = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>贈りもの — その人のために、AIが一点ものを作る | MU</title>
 <meta name="description" content="贈る相手はどんな人? と一言入れるだけで、AIがその人のためだけの一点ものをデザイン。そのまま相手に直送できます（金額の出ない明細＋メッセージ同梱）。">
 <link rel="canonical" href="https://wearmu.com/gift">
@@ -9963,7 +9963,7 @@ pub async fn gift_unbox_page(State(db): State<Db>, axum::extract::Path(sku): axu
         format!("<button class=\"voice\" id=\"v\" data-t=\"{}\">▶ 声で聴く</button>", html_attr(&fallback))
     };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>あなたへ、贈りもの — MU</title>
 <meta name="robots" content="noindex">
 <meta property="og:title" content="あなたへ、贈りもの — MU">
@@ -10211,7 +10211,7 @@ pub async fn public_promote(State(db): State<Db>, Query(q): Query<PromoteQuery>)
 /// GET /promote — 昇帯記念ドロップのフォームページ。
 pub async fn promote_page() -> Html<String> {
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>昇帯記念ドロップ — wearmu.com</title>
 <meta name="description" content="昇帯したその日を、世界に一枚だけの記念Tに。名前・道場・帯・昇帯日を入れるだけで、MUが墨絵の記念グラフィックを生成します。">
 <style>
@@ -10318,7 +10318,7 @@ document.getElementById('go').addEventListener('click', async function(){{
 fn legal_page(title: &str, body_html: &str) -> Html<String> {
     Html(format!(
         r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title} — wearmu.com</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
@@ -11579,7 +11579,7 @@ pub async fn shop_index(
     );
     let body = format!(
         r##"<!doctype html><html lang="{html_lang_attr}"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title}</title>
 <meta name="description" content="{meta_desc}">
 <link rel="canonical" href="{canonical}">
@@ -13415,7 +13415,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 
     let body = format!(
         r##"<!doctype html><html lang="{html_lang_attr}"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{short_title} | {title_suffix}</title>
 <meta name="description" content="{desc_short}">
 <meta property="og:image" content="{og}">
@@ -16491,7 +16491,7 @@ pub async fn gift_claim_page(State(db): State<Db>, Path(token): Path<String>) ->
     };
     let page = format!(
         r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow"><title>ギフトを受け取る — MU</title>
 <style>
  :root{{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}}
@@ -16882,7 +16882,7 @@ pub async fn make_request_status(State(db): State<Db>, Path(token): Path<String>
 /// ①自分で作る(/make?k=rashguard_ls) ②道場の誰かに頼む(/design/ask) の2導線。
 pub async fn dojo_page() -> Response {
     let page = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>道場の一着を、みんなで — MU × BJJ</title>
 <meta name="description" content="道場の一着を、言葉から。チームの一体感・昇級や卒業の記念・大会のユニフォームに。自分で作るか、道場の仲間に頼む。">
 <link rel="canonical" href="https://wearmu.com/dojo">
@@ -16909,7 +16909,7 @@ pub struct DesignMineQuery { #[serde(default)] pub email: Option<String> }
 
 /// GET /design/mine?email= — 自分が出した依頼の一覧と状態(待ち/制作中/完成)。
 pub async fn design_mine_page(State(db): State<Db>, Query(q): Query<DesignMineQuery>) -> Response {
-    let head = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>あなたのデザイン依頼 — MU</title><style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:520px;margin:0 auto;padding:46px 22px 80px}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:23px;font-weight:300;margin:10px 0 14px}p.m{color:#999;font-size:13px;line-height:1.8}input{background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:12px;font-size:15px;border-radius:4px}button{background:var(--gold);color:#000;border:0;padding:12px 18px;font-weight:600;border-radius:4px;cursor:pointer}.row{display:flex;gap:8px}.card{display:block;background:#0f0f0f;border:1px solid #222;border-radius:10px;padding:14px;margin-top:10px;text-decoration:none;color:inherit}.b{font-size:14px}.s{font-size:12px;margin-top:6px}.ready{color:#9bd97a}.prog{color:var(--gold)}.wait{color:#888}</style></head><body><div class="wrap"><div class="kick">🎁 MY REQUESTS</div><h1>あなたのデザイン依頼</h1>"##;
+    let head = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex,nofollow"><title>あなたのデザイン依頼 — MU</title><style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:520px;margin:0 auto;padding:46px 22px 80px}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:23px;font-weight:300;margin:10px 0 14px}p.m{color:#999;font-size:13px;line-height:1.8}input{background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:12px;font-size:15px;border-radius:4px}button{background:var(--gold);color:#000;border:0;padding:12px 18px;font-weight:600;border-radius:4px;cursor:pointer}.row{display:flex;gap:8px}.card{display:block;background:#0f0f0f;border:1px solid #222;border-radius:10px;padding:14px;margin-top:10px;text-decoration:none;color:inherit}.b{font-size:14px}.s{font-size:12px;margin-top:6px}.ready{color:#9bd97a}.prog{color:var(--gold)}.wait{color:#888}</style></head><body><div class="wrap"><div class="kick">🎁 MY REQUESTS</div><h1>あなたのデザイン依頼</h1>"##;
     let email = q.email.as_deref().map(str::trim).unwrap_or("").to_lowercase();
     if email.is_empty() || !email.contains('@') {
         let form = r#"<p class="m">依頼に使ったメールを入れてください。</p><div class="row" style="margin-top:12px"><input id="e" type="email" placeholder="you@example.com" style="flex:1" onkeydown="if(event.key==='Enter')go()"><button onclick="go()">見る</button></div><script>function go(){var e=document.getElementById('e').value.trim();if(e)location.href='/design/mine?email='+encodeURIComponent(e);}</script>"#;
@@ -16949,7 +16949,7 @@ pub async fn design_mine_page(State(db): State<Db>, Query(q): Query<DesignMineQu
 /// GET /design/ask — 依頼リンクを発行するフォーム(誰かに頼む入口)。
 pub async fn design_ask_page() -> Response {
     let page = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex,nofollow">
 <title>誰かにデザインを頼む — MU</title>
 <style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:460px;margin:0 auto;padding:46px 22px 80px}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:24px;font-weight:300;margin:10px 0 6px}p.m{color:#999;font-size:13px;line-height:1.8;margin:0 0 22px}label{font-size:11px;letter-spacing:.08em;color:#999}input,textarea{width:100%;box-sizing:border-box;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:12px;font-size:15px;border-radius:4px;font-family:inherit;margin-top:5px}textarea{min-height:84px}button{background:var(--gold);color:#000;border:0;padding:15px;font-size:14px;font-weight:600;border-radius:4px;cursor:pointer;width:100%;margin-top:16px}.f{margin-top:14px}.lk{display:block;background:#0f0f0f;border:1px solid #2a2a2a;border-radius:8px;padding:12px;margin-top:8px;font-size:12.5px;word-break:break-all;color:#cfe9c4}.err{color:#e07b7b;font-size:13px;margin-top:10px}</style></head>
 <body><div class="wrap"><div class="kick">🎁 DESIGN REQUEST</div><h1>誰かにデザインを頼む</h1>
@@ -16991,7 +16991,7 @@ pub async fn design_request_page(State(db): State<Db>, Path(token): Path<String>
     let Some((result_sku, claimed, brief)) = row else {
         return (StatusCode::NOT_FOUND, Html(gift_simple_page("リンクが無効です", "この依頼リンクは見つかりませんでした。"))).into_response();
     };
-    let head = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>デザイン依頼 — MU</title><style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:460px;margin:0 auto;padding:46px 22px 80px;text-align:center}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:23px;font-weight:300;margin:10px 0 8px}p.m{color:#999;font-size:13px;line-height:1.8}img{max-width:100%;border-radius:10px;margin:14px 0}a.cta{display:inline-block;background:var(--gold);color:#000;text-decoration:none;font-weight:700;padding:15px 26px;border-radius:99px;margin-top:8px}</style></head><body><div class="wrap"><div class="kick">🎁 DESIGN REQUEST</div>"##;
+    let head = r##"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex,nofollow"><title>デザイン依頼 — MU</title><style>:root{--gold:#e6c449}html,body{background:#000;color:#f5f5f0;margin:0;font-family:-apple-system,sans-serif}.wrap{max-width:460px;margin:0 auto;padding:46px 22px 80px;text-align:center}.kick{font-size:11px;letter-spacing:.3em;color:var(--gold)}h1{font-size:23px;font-weight:300;margin:10px 0 8px}p.m{color:#999;font-size:13px;line-height:1.8}img{max-width:100%;border-radius:10px;margin:14px 0}a.cta{display:inline-block;background:var(--gold);color:#000;text-decoration:none;font-weight:700;padding:15px 26px;border-radius:99px;margin-top:8px}</style></head><body><div class="wrap"><div class="kick">🎁 DESIGN REQUEST</div>"##;
     let body = if let Some(sku) = result_sku.filter(|s| !s.is_empty()) {
         let (label, img): (String, String) = {
             let conn = db.lock().unwrap();

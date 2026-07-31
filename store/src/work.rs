@@ -91,7 +91,7 @@ fn page(title: &str, body: &str) -> Response {
 fn page_with_head(title: &str, head_extra: &str, body: &str) -> Response {
     let html = format!(
         r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex">
 <title>{title}｜MU</title>{head_extra}
 <style>
