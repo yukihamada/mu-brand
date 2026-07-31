@@ -2160,7 +2160,7 @@ async fn admin_funnel_page(
 
     let html = format!(r##"<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>MU · funnel</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex">
 <style>
   body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,Menlo,monospace;margin:0;padding:24px;font-size:13px;line-height:1.55}}
@@ -2344,7 +2344,7 @@ async fn admin_retention_page(
 
     let html = format!(r##"<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>MU · retention</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex">
 <style>
   body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,Menlo,monospace;margin:0;padding:24px;font-size:13px;line-height:1.55}}
@@ -2621,7 +2621,7 @@ async fn pt_spawn_mugen_handler(
 async fn pt_exchange_page_placeholder() -> Response {
     Html(r##"<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>MU · soon</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex">
 <style>body{background:#0a0a0a;color:#f5f5f0;font-family:ui-monospace,Menlo,monospace;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;padding:24px}
 h1{font-size:14px;letter-spacing:0.4em;margin:0 0 12px}
@@ -2639,7 +2639,7 @@ a{color:#e6c449}</style></head><body>
 async fn pt_exchange_page() -> Response {
     Html(r##"<!doctype html>
 <html lang="ja"><head><meta charset="utf-8"><title>MU · pt-exchange</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <style>
   body{background:#0a0a0a;color:#f5f5f0;font-family:ui-monospace,Menlo,monospace;margin:0;padding:24px;max-width:980px;margin:0 auto}
   h1{font-size:14px;letter-spacing:0.4em;margin:8px 0 4px}
@@ -4105,7 +4105,7 @@ async fn embed_iframe_page(
     let theme_attr = html_attr_escape(theme);
     let lang_attr  = html_attr_escape(lang);
     let html = format!(r#"<!doctype html><html lang="{lang}"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU products embed</title>
 <style>
 html,body{{margin:0;padding:0;background:transparent}}
@@ -4315,7 +4315,7 @@ async fn memory_vault_index(
     }
     Html(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <title>MU Memory Vault</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:480px;margin:80px auto;padding:0 20px;color:#222}
 h1{font-size:20px}.note{color:#666;font-size:13px;line-height:1.7;margin:18px 0}
 input{width:100%;padding:12px;border:1px solid #ddd;border-radius:6px;font-size:15px;box-sizing:border-box}
@@ -4449,7 +4449,7 @@ async fn itto_serial_page(
     };
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>一頭 #{serial} — MU × 焼肉古今</title>
 <meta name="description" content="一頭 ittō #{serial} の個別ページ。誕生日、牧場、写真、進行ステータスを全公開。">
 <meta property="og:title" content="一頭 #{serial}">
@@ -4632,7 +4632,7 @@ async fn show_baba_owner_proposal(
     if !has_kokon_partner_cookie(&headers, &pw) {
         // Show a minimal password gate.
         let gate = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>馬場ちゃん専用 — MU 提案</title>
 <style>body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
 .box{max-width:380px;text-align:center;background:#111;padding:36px 28px;border:1px solid rgba(255,255,255,0.1)}
@@ -4679,7 +4679,7 @@ async fn show_reversal_owner_proposal(
     }
     if !has_reversal_partner_cookie(&headers, &pw) {
         let gate = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>reversal × MU — 機密提案</title>
 <style>body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}
 .box{max-width:380px;text-align:center;background:#111;padding:36px 28px;border:1px solid rgba(255,255,255,0.1)}
@@ -5092,7 +5092,7 @@ async fn itto_success_page(
     let html = format!(r##"<!DOCTYPE html>
 <html lang="ja"><head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex">
 <title>{seat_label} — 確保完了 · MU × 焼肉古今</title>
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -5468,7 +5468,7 @@ async fn buyer_profile_page(
 
     let page = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow"/>
 <title>buyer · {masked} · MU</title>
 <link rel="canonical" href="https://wearmu.com/buyer/{token}"/>
@@ -5580,7 +5580,7 @@ async fn mypage_entry(
     }
     // Entry form.
     let page = r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>マイページ · MU</title>
 <style>
   :root{--bg:#000;--fg:#f5f5f0;--mute:#888;--gold:#e6c449}
@@ -5999,7 +5999,7 @@ async fn mypage_dashboard(db: Db, email: String, buyer_token: String) -> Respons
     );
 
     let page = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow"/>
 <title>マイページ · {masked} · MU</title>
 <style>
@@ -6417,7 +6417,7 @@ fn vault_footer_html() -> &'static str {
 
 fn vault_locked_page(reason: &str) -> Response {
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>VAULT · MU</title>
 <style>{css}
   .wrap{{max-width:520px;margin:0 auto;text-align:center;padding:60px 22px}}
@@ -6483,7 +6483,7 @@ async fn vault_index(State(db): State<Db>, headers: HeaderMap) -> Response {
     }
 
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>VAULT · MU</title>
 <style>{css}
   .wrap{{max-width:780px;margin:0 auto;padding:48px 22px 0}}
@@ -6624,7 +6624,7 @@ async fn vault_article(
     let (html_body, toc_html) = vault_inject_toc(&html_body);
     let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title} · VAULT · MU</title>
 <style>{css}
   .wrap{{max-width:720px;margin:0 auto;padding:40px 22px 60px;line-height:1.9;color:#e9e7df;font-size:16px}}
@@ -6833,7 +6833,7 @@ async fn vault_dashboard_api(State(db): State<Db>, headers: HeaderMap) -> Respon
 
     let masked = mask_email_public(&email);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>LIVE · VAULT · MU</title>
 <meta http-equiv="refresh" content="60"/>
 <style>{css}
@@ -6945,7 +6945,7 @@ async fn community_numbers_public(State(db): State<Db>) -> Response {
     };
 
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>コミュニティだけの数字 · MU</title>
 <meta name="description" content="MUのTシャツを持っている人だけが見れる、原価・没デザイン・明日の予告・founder note。中に入るには1枚買うだけ。"/>
 <style>
@@ -7416,7 +7416,7 @@ async fn anchor_page(State(db): State<Db>, Path(id): Path<i64>) -> Response {
         format!(r#"<div class="quiet">prev: <code>{}</code></div>"#, html_escape(&prev))
     };
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>🔗 Proof of Birth · {brand} #{drop} · MU</title>
 <style>
   body{{background:#070707;color:#f5f5f0;font-family:-apple-system,'Helvetica Neue',sans-serif;margin:0;line-height:1.7}}
@@ -8691,7 +8691,7 @@ async fn bounty_hof_page(State(db): State<Db>) -> impl IntoResponse {
     let html = format!(r#"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU Bounty Hall of Fame</title>
 <meta name="description" content="MU bug bounty に貢献してくださった研究者のリスト。 公開を希望された方のみ掲載。">
 <meta property="og:title" content="MU Bounty Hall of Fame">
@@ -8923,7 +8923,7 @@ async fn show_bounty_claim_page(
     let original_design_url = bounty_original_tee_design_url();
     let title = format!("MU Bounty Reward Claim #{}", row.bounty_id);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title}</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -10019,7 +10019,7 @@ async fn mupay_place_printful_order(
 /// GET /pay — public MU PAY landing page.
 async fn mupay_landing_page() -> impl IntoResponse {
     Html(format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU PAY — T シャツに使えるストアクレジット | MU</title>
 <meta name="description" content="MU PAY は MUGEN の T シャツに引き換えられるストアクレジット。バグ報酬などで受け取った残高で、追加費用なしでシャツを受け取れます。現金化は準備中。">
 <meta name="robots" content="noindex">
@@ -10116,7 +10116,7 @@ async fn mupay_account_page(
     if led_html.is_empty() { led_html = "<tr><td colspan=2 style='color:#666'>まだ取引がありません</td></tr>".into(); }
 
     Html(format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU PAY — あなたの残高</title><meta name="robots" content="noindex">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
@@ -11015,7 +11015,7 @@ async fn moon_scan_page(
         )
     };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU Scan — 月相マーカー読取</title>
 <meta name="robots" content="noindex">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -12056,7 +12056,7 @@ async fn shirt_life_page(
     let pos_html = pos.map(|p| format!(" / position {} of {}", p, inventory)).unwrap_or_default();
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Shirt #{pid} life · {brand_disp} #{drop_disp} · MU</title>
 <link rel="icon" href="/favicon.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -12187,7 +12187,7 @@ async fn shirt_map_page(State(db): State<Db>) -> Html<String> {
         rows.push_str("<tr><td colspan=\"3\" style=\"text-align:center;color:#666;padding:24px\">まだ目撃 0 件 · <a href=\"/scan\" style=\"color:#e6c449\">/scan</a> で 1 件目を作る</td></tr>");
     }
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Map · MU shirts in the wild</title>
 <link rel="icon" href="/favicon.svg">
 <style>
@@ -12393,7 +12393,7 @@ async fn chronicle_short_page(
     };
 
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>#{pos:03} / {name} — Chronicle</title>
 <meta name="description" content="このシャツが運ぶ匿名の年代記。同じデザインを着る人たちの注文日時の連続。">
 <meta property="og:title" content="{name} #{pos:03} · MU Chronicle">
@@ -13086,7 +13086,7 @@ async fn admin_hub_page(
     };
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU admin · hub</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -13323,7 +13323,7 @@ async fn admin_outreach_page(
     let admin_token = q.get("token").cloned().unwrap_or_default();
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Outreach Pipeline — admin</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -13612,7 +13612,7 @@ async fn admin_product_new_page(
     )).collect::<String>();
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>+ Product · admin</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -14035,7 +14035,7 @@ async fn challenge_100_page(State(db): State<Db>) -> Html<String> {
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU の 14 日 · 5/18 → 5/31 · 透明 公開</title>
 <meta name="description" content="2026年5月18日 — 5月31日、 AI が運営するアパレル「MU」の 14 日間 の 販売数 を 毎日 公開 する 場所。 数字 は 隠さない。 良くも 悪くも /transparency で 見れる。">
 <meta property="og:title" content="MU の 14 日 · 透明 公開">
@@ -15124,7 +15124,7 @@ async fn admin_product_detail(
 /// MUの暗色トーン・SHOPへ戻る導線つき。/p/:sku と /shop/:sku の404で共用。
 pub fn product_not_found_page() -> Response {
     let html = r#"<!DOCTYPE html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>見つかりませんでした — MU SHOP</title>
 <meta name="robots" content="noindex">
 <style>
@@ -15497,7 +15497,7 @@ async fn product_sku_page(
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{name} — MU #{drop_num}</title>
 <meta name="description" content="{og_desc_esc}">
 <link rel="canonical" href="{canonical_url}">
@@ -15893,7 +15893,7 @@ async fn story_page(
     let html = format!(r##"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow">
 <title>{name} — Story</title>
 <style>
@@ -16261,7 +16261,7 @@ async fn admin_reviews_queue(
 
     let html = format!(
         r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow"><title>レビュー承認 — MU admin</title>
 <style>
 body{{background:#0d0d0d;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;max-width:760px;margin:0 auto;padding:28px 18px;line-height:1.6}}
@@ -19343,7 +19343,7 @@ async fn public_stats_page(State(db): State<Db>) -> Response {
 
     let page = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU · 今日の AI 活動 (live stats)</title>
 <meta name="description" content="MU は 0-human apparel ブランド。AI agent の活動ログを公開しています。"/>
 <meta property="og:title" content="MU · live stats"/>
@@ -19639,7 +19639,7 @@ async fn public_agents_page(State(db): State<Db>) -> Response {
 
     let page = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU · AI agents — 動作とプロンプト全公開</title>
 <meta name="description" content="MU を動かす AI agent 一覧。各エージェントが何を、いつ、どんなプロンプトで実行しているか全公開。"/>
 <meta property="og:title" content="MU · AI agents"/>
@@ -22334,7 +22334,7 @@ async fn wallet_page(
     };
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow">
 <title>Wallet — MU 間 MA</title>
 <style>
@@ -23718,7 +23718,7 @@ async fn verify_page(
             let drop_fmt = format!("#{:04}", drop_num);
             let body = format!(r#"<!DOCTYPE html>
 <html lang="ja"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU — 真正性証明が見つかりません</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -23783,7 +23783,7 @@ a:hover{{background:#1C1C1C}}
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{name} — MU 真正性証明</title>
 <meta name="description" content="MU {brand_up} {drop_fmt} — 北海道の気象データから生まれた服の真正性証明">
 <style>
@@ -24541,7 +24541,7 @@ async fn show_housedrip_page(State(db): State<Db>) -> Response {
     )}).collect::<Vec<_>>().join("\n");
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>House Drip — MU</title>
 <meta name="description" content="MU House Drip — Hawaii ビーチサイドの家に4日かけて置かれた4枚のドリップ tee。無言から「持って帰ってね」まで。各 ¥4,800。">
 <meta name="robots" content="index,follow">
@@ -24775,7 +24775,7 @@ async fn brands_index(State(db): State<Db>) -> Html<String> {
 
     let body = format!(
         r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>ブランド一覧 — {total_brands} ブランド | MU</title>
 <meta name="description" content="MU と各パートナーの コラボブランド 一覧。 {total_brands} ブランド・{total_skus} SKU。 各ブランドのページとカタログへ。">
 <link rel="canonical" href="https://wearmu.com/brands">
@@ -25041,7 +25041,7 @@ async fn proposal_nihon_kotsu(
     let sample_cards = legacy_cards;  // kept for backwards-compat below
 
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow"/>
 <title>{name} — Private Pitch</title>
 <style>
@@ -26052,7 +26052,7 @@ const BLOG_JIUFLOW_ZERO_INVENTORY_RAW: &str = include_str!("../static/blog/jiufl
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
     format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{t} · MU blog</title>
 <meta name="description" content="MU brand log — yuki が数字で書く運営記録">
 <meta property="og:title" content="{t} · MU">
@@ -27713,7 +27713,7 @@ async fn collab_manage_page(
         _ => String::new(),
     };
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{name} — 管理画面 | MU Collab</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -28046,7 +28046,7 @@ async fn collab_public_page(
     let share_x_url = format!("https://twitter.com/intent/tweet?text={}", urlencoding_encode(&share_text));
     let share_line_url = format!("https://social-plugins.line.me/lineit/share?url=https%3A%2F%2Fwearmu.com%2Fcollab%2F{}", slug);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{name} — MU Drop</title>
 <meta name="description" content="{desc}">
 <meta name="robots" content="noindex,nofollow">
@@ -28656,7 +28656,7 @@ async fn collection_page(
 
     let canonical_url = format!("https://wearmu.com/collections/{}", brand);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{label} — MU</title>
 <link rel="canonical" href="{canonical_url}"/>
 <meta property="og:type" content="website">
@@ -28814,7 +28814,7 @@ fn render_merch_grid_html(
     }
 
     format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title_esc} — MU</title>
 <meta name="description" content="{tagline_esc}"/>
 <link rel="canonical" href="{canonical_url}"/>
@@ -29841,7 +29841,7 @@ async fn source_gorogoro(State(db): State<Db>, headers: HeaderMap) -> Response {
             "MU(Tシャツ)を買った人だけが見られます。購入時のメールでログインしてください。"
         };
         let inner = format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex">
 <title>gorogoro-bjj · MU Source Access</title>
 <style>body{{margin:0;background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,'Hiragino Sans',sans-serif;line-height:1.7}}.wrap{{max-width:680px;margin:0 auto;padding:48px 20px}}.kicker{{color:#e6c449;font-size:11px;letter-spacing:.18em;margin-bottom:10px}}h1{{font-size:24px;margin:0 0 8px}}.lockcard{{background:#111;border:1px solid #222;border-radius:12px;padding:28px;text-align:center;margin-top:24px}}.lk{{font-size:40px}}.btn{{display:inline-block;background:#e6c449;color:#111;font-weight:700;text-decoration:none;padding:10px 18px;border-radius:8px;margin:8px 6px}}.btn.ghost{{background:transparent;border:1px solid #444;color:#ddd}}a{{color:#7fd3ff}}</style></head>
 <body><div class="wrap"><div class="kicker">MU SOURCE ACCESS · HOLDER ONLY</div>
@@ -29883,7 +29883,7 @@ async fn source_gorogoro(State(db): State<Db>, headers: HeaderMap) -> Response {
         body = "<p style=\"color:#ff7a7a\">ソースの取得に失敗しました。少し後でもう一度お試しください。</p>".to_string();
     }
     let page = format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex">
 <title>gorogoro-bjj source · MU Source Access</title>
 <style>body{{margin:0;background:#0a0a0a;color:#e8e8e8;font-family:-apple-system,'Hiragino Sans',sans-serif;line-height:1.6}}.wrap{{max-width:980px;margin:0 auto;padding:28px 18px 80px}}h1{{font-size:22px;margin:0 0 4px}}.sub{{color:#9a9a9a;font-size:13px;margin-bottom:18px}}.msa{{display:inline-block;font-size:11px;letter-spacing:.12em;border:1px solid #e6c449;color:#e6c449;border-radius:4px;padding:3px 8px;margin-bottom:14px}}.toc{{background:#111;border:1px solid #222;border-radius:8px;padding:12px 16px;margin-bottom:22px}}.toc a{{color:#7fd3ff;text-decoration:none;font-family:'SF Mono',Menlo,monospace;font-size:13px;display:inline-block;margin:3px 10px 3px 0}}.file{{margin:20px 0;border:1px solid #1e1e1e;border-radius:8px;overflow:hidden}}.file h2{{font-size:14px;font-family:'SF Mono',Menlo,monospace;background:#141414;margin:0;padding:10px 14px;border-bottom:1px solid #1e1e1e}}.file h2 .b{{color:#666;font-weight:400;font-size:12px}}pre{{margin:0;padding:14px 16px;overflow-x:auto;font-family:'SF Mono',Menlo,monospace;font-size:12px;line-height:1.5;color:#cfe;white-space:pre;tab-size:2}}.assets{{background:#111;border:1px solid #222;border-radius:8px;padding:12px 16px;font-size:12px;color:#9a9a9a}}.assets code{{color:#ccc}}a.back{{color:#e6c449;text-decoration:none}}</style></head>
 <body><div class="wrap"><div class="msa">MU SOURCE ACCESS · ホルダー認証OK</div>
@@ -31501,7 +31501,7 @@ async function saveGate(btn){
 fn gate_page_shell(title_tag: &str, indexable: bool, masked: Option<&str>, extra_css: &str, inner: &str) -> Response {
     let robots = if indexable { "" } else { r#"<meta name="robots" content="noindex,nofollow"/>"# };
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="apple-itunes-app" content="app-id=6781269252">
 {robots}
 <title>{title}</title>
 <style>{css}{extra}</style></head><body>
@@ -32857,7 +32857,7 @@ fn render_proposal_lp(
     format!(r#"<!doctype html>
 <html lang="{html_lang_attr}"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{display_name} × MU — {title_suffix}</title>
 {robots_meta}
 <link rel="canonical" href="{canonical_url_localized}">
@@ -34048,7 +34048,7 @@ async fn admin_ls_page(
     let html = format!(r#"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow">
 <title>/ls — admin dashboard</title>
 <style>
@@ -34909,7 +34909,7 @@ async fn admin_proposal_manage_ui(
         &format!("/admin/proposals/{}/manage", slug)).await { return r; }
     let admin_token = q.get("admin_token").cloned().unwrap_or_default();
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Admin · {slug} · MU</title>
 <style>
 body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;margin:0;padding:24px;line-height:1.6;font-size:14px}}
@@ -35109,7 +35109,7 @@ async fn admin_users_ui(
     if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/users").await { return r; }
     let admin_token = q.get("admin_token").cloned().unwrap_or_default();
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Admin Users · MU</title>
 <style>
 body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue',sans-serif;margin:0;padding:24px;line-height:1.6;font-size:14px}}
@@ -35509,7 +35509,7 @@ async fn proposal_personal_page(
         r#"<div style="background:rgba(230,196,73,0.08);border:1px solid rgba(230,196,73,0.4);padding:18px 22px;border-radius:6px;margin-bottom:24px"><div style="font-size:11px;letter-spacing:0.22em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:6px">SANDBOX — 公開されません</div><div style="font-size:13.5px;line-height:1.85">これは MU を買ってくれたあなた専用の AI SKU 試作スペースです。 ページ下の <strong>「もっと SKU を追加」</strong> から無料 30 個を試してみてください。 出来た SKU はあなたが ✓ を押したもののみ、 後で公開できます。</div></div>"#
     } else { "" };
     let html = format!(r##"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>━◯━ MU Sandbox — {slug}</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -35593,7 +35593,7 @@ fn extras_my_landing_html(error: Option<&str>) -> String {
         html_escape(e)
     )).unwrap_or_default();
     format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow">
 <title>MU Sandbox — リンクが正しくありません</title>
 <style>body{{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;line-height:1.7;padding:48px 24px;max-width:560px;margin:0 auto}}h1{{font-size:22px;font-weight:300;letter-spacing:0.02em;color:#e6c449;margin-bottom:18px}}a{{color:#e6c449}}</style>
@@ -37034,7 +37034,7 @@ POST /api/v1/mockup/regen?slug=&lt;s&gt;&letter=&lt;l&gt;</pre>
     let html = format!(r#"<!doctype html>
 <html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="robots" content="noindex,nofollow">
 <title>MU API — wearmu.com</title>
 <style>
@@ -37547,7 +37547,7 @@ async fn admin_proposal_sku_add_form(
         )
     }).collect();
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Manual SKU add — {slug} | MU admin</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -38884,7 +38884,7 @@ async fn jiufight_affiliate_landing(
 
     let body = format!(r##"<!doctype html>
 <html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>#{nnn} · JIU FIGHT × MU — TOKYO 2026.05.24</title>
 <meta name="description" content="あなたの友達が JIU FIGHT × MU 150着エディションの #{nnn} を着ています。 2026年5月24日、東京で会いましょう。">
 <meta property="og:title" content="#{nnn} / 150 — JIU FIGHT × MU TOKYO 2026.05.24">
@@ -40216,7 +40216,7 @@ async fn success_page(
     </script>"##, sku_js = sku_js)
     };
 
-    Html(format!(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><meta name="robots" content="noindex,nofollow"><style>
+    Html(format!(r#"<!DOCTYPE html><html><head><meta charset=UTF-8><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><title>{title}</title><meta name="robots" content="noindex,nofollow"><style>
     body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',sans-serif;
     display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:20px;padding:40px 20px;line-height:1.7}}
     h1{{font-size:14px;letter-spacing:0.4em;text-transform:uppercase;font-weight:300;opacity:0.6;margin:0}}
@@ -40303,7 +40303,7 @@ async fn play_song_page(
         return axum::response::Redirect::to("/jiujitsu-yamano").into_response();
     }
     let html = format!(r#"<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex">
 <title>{label} — MU</title><style>
 html,body{{height:100%;margin:0}}
 body{{background:#0A0A0A;color:#F5F5F0;font-family:'Hiragino Mincho ProN','Yu Mincho',serif;
@@ -41940,7 +41940,7 @@ async fn you_signal_email(
     };
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{label} — MU × YOU</title>
 <style>
 body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;-webkit-font-smoothing:antialiased}}
@@ -42821,7 +42821,7 @@ async fn public_transparency_page(State(db): State<Db>) -> Html<String> {
     let muon_missing_s  = fmt_commas(muon_missing);
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Transparency — MU の数字、全部 | wearmu.com</title>
 <meta name="description" content="MU の売上・購入・購読・欠番。一切隠さない数字を、毎リクエストで再計算して返します。">
 <meta property="og:title" content="MU Transparency — 数字を全部晒します">
@@ -43274,7 +43274,7 @@ async fn public_transparency_page_en(State(db): State<Db>) -> Html<String> {
     let t100_class = if t100_sold >= 70 { "good" } else if t100_sold >= 30 { "warn" } else { "bad" };
 
     let html = format!(r##"<!doctype html><html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Transparency — every MU number, public | wearmu.com</title>
 <meta name="description" content="MU's revenue, purchases, subscriptions, missing drops. Every number recomputed on every request. Nothing hidden.">
 <meta property="og:title" content="MU Transparency — every number, public">
@@ -43833,7 +43833,7 @@ async fn admin_brands_page(
     let token = q.get("token").cloned().unwrap_or_default();
     let t = html_attr_escape(&token);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU admin · brands</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -44148,7 +44148,7 @@ async fn public_governance_page() -> Html<String> {
 "##;
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU 憲法 — 一人から、みんなへ | wearmu.com</title>
 <meta name="description" content="MU は無人 AI ブランド。創業者が消えても複数人で続く形にする——判断基準・権限・声・収益・継承の設計図 (v0.1)。みんなで育てる生きた文書。">
 <meta property="og:title" content="MU 憲法 — 一人から、みんなへ">
@@ -44210,7 +44210,7 @@ footer a:hover{{color:var(--y)}}
 async fn public_constitution_legacy_page() -> Html<String> {
     let body_html = md_to_html_simple(CONSTITUTION_RAW);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU Constitution — Vision + 20 operational principles | wearmu.com</title>
 <meta name="description" content="MU の 4 行 Vision と 20 の運用原則。コードが参照する単一の正典 (machine-readable, include_str! at compile time).">
 <meta property="og:title" content="MU Constitution">
@@ -44341,7 +44341,7 @@ async fn public_donations_page(State(db): State<Db>) -> Html<String> {
     );
     let body_html = format!("{}\n{}", live_hero, body_md_html);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>━◯━ MU · 寄付公開記録 (Constitution §27) | wearmu.com</title>
 <meta name="description" content="MU の Constitution §27 — MA 落札額の 50% (post-tax) を 弟子屈町 / 北海道 に寄付する commitment の公開記録。 append-only。">
 <meta property="og:title" content="MU · §27 寄付公開記録">
@@ -44764,7 +44764,7 @@ async fn public_profit_split_page(State(db): State<Db>) -> Html<String> {
     );
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>━◯━ MU · 利益分配 (ハイブリッド + 段階) | wearmu.com</title>
 <meta name="description" content="MU の利益分配スキーム — 自社 brand は弟子屈 35 + 気候 reserve 10 + 運営 5、 collab brand は partner 指定先 50、 personal brand は弟子屈 50 default。 寄付率は sales 0-99 着 = 1% → 100+ = 5% → 500+ = 10% → 1k+ = 20% → 5k+ = 35% → 10k+ = 50% (target) の段階で credible に積み上げ。">
 <link rel="canonical" href="https://wearmu.com/profit-split">
@@ -44925,7 +44925,7 @@ async fn succession_page(State(db): State<Db>) -> Html<String> {
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
 <title>MA Succession Chain · 100-Year Append-Only Lineage · MU</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <meta name="description" content="MU の MA steward succession chain — 100 年 append-only。 各世代の holder と handoff 理由を hash-chained で永続記録、 founder の不在でも 連鎖は続く。">
 <meta name="robots" content="index,follow">
 <link rel="canonical" href="https://wearmu.com/succession">
@@ -45339,7 +45339,7 @@ async fn chronicle_vote_confirm(
     };
     Html(format!(
         r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>投票完了 — Sibling Chronicle | MU</title>
 <style>
 body{{background:#0A0A0A;color:#F5F5F0;font-family:'Helvetica Neue',sans-serif;line-height:1.85;padding:48px 24px;margin:0}}
@@ -45403,7 +45403,7 @@ async fn chronicle_vote_page(State(db): State<Db>) -> Html<String> {
         String::new()
     };
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Sibling Chronicle — DAO 投票 | MU</title>
 <meta name="description" content="MU 保有者・/you 登録者向けの DAO 投票。Sibling Chronicle (年代記 QR) を front design に合成するか、首裏下に専用印刷するか、入れないか。">
 <meta property="og:title" content="MU · Sibling Chronicle DAO 投票">
@@ -46205,7 +46205,7 @@ async fn ma_lineage_page(
     let key_safe   = html_escape(&expected);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Lineage · {label_safe} · MU</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" href="/favicon.svg">
@@ -47253,7 +47253,7 @@ async fn dao_bind_confirm(
 
 fn dao_bind_result_page(title: &str, body_html: &str) -> String {
     format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title} · MU DAO</title>
 <link rel="icon" href="/favicon.svg">
 <style>
@@ -47271,7 +47271,7 @@ fn dao_bind_result_page(title: &str, body_html: &str) -> String {
 /// GET /dao/bind — public form.
 async fn dao_bind_page() -> Html<String> {
     Html(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Bind · MU DAO</title>
 <link rel="icon" href="/favicon.svg">
 <style>
@@ -47674,7 +47674,7 @@ async fn admin_dao_merge(
 /// GET /dao/propose — public form to submit a proposal.
 async fn dao_propose_page() -> Html<String> {
     Html(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Propose · MU DAO</title>
 <link rel="icon" href="/favicon.svg">
 <style>
@@ -47749,7 +47749,7 @@ document.getElementById('f').addEventListener('submit', async e => {
 async fn dao_whitepaper_page() -> Html<String> {
     let body_html = md_to_html_simple(DAO_WHITEPAPER_RAW);
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU DAO Whitepaper — §23 The base token does not exist | wearmu.com</title>
 <meta name="description" content="MU DAO の仕組み: Constitution authorship + MA pieces + Chronicle slots による weight 関数。ICO なし、Airdrop なし、Founder allocation なし。">
 <meta property="og:title" content="MU DAO Whitepaper">
@@ -47921,7 +47921,7 @@ async fn dao_page(State(db): State<Db>) -> Html<String> {
     let today = dao_today_jst();
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>DAO · MU</title>
 <link rel="icon" href="/favicon.svg">
 <meta property="og:title" content="MU DAO — no token, just shares of who wrote, who wore, who carries">
@@ -48086,7 +48086,7 @@ async fn ma_gift_claim_page(
     } else { String::new() };
     let form_disabled = status == "claimed" || status == "shipped";
     Html(format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{label} · MA Gift — 受取登録 | MU</title>
 <meta name="description" content="MU 間 MA の commemorative piece、受取登録ページ。1-of-1、世界に 1 着。">
 <meta name="robots" content="noindex,nofollow">
@@ -52106,7 +52106,7 @@ async fn show_auto_blog(
     let title_attr = html_attr_escape(&title);
     let slug_attr  = html_attr_escape(&slug);
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title} | MU 自動運営ノート</title>
 <meta name="description" content="MU の AI 自動執筆 Field log。毎朝 JST 9:00 に Gemini が生成。">
 <meta property="og:type" content="article">
@@ -52787,7 +52787,7 @@ async fn ma_lottery_page(
     let chain_pos = if position == 0 { "1st (winner)".to_string() }
                     else { format!("{}/7 (relay)", position) };
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU 4/7 Founder Relay — 選択</title>
 <style>
 body{{margin:0;padding:0;background:#0A0A0A;color:#F5F5F0;font-family:'Noto Serif JP','Helvetica Neue',serif;line-height:1.85;font-size:15px}}
@@ -52888,7 +52888,7 @@ async fn ma_lottery_explainer(State(db): State<Db>) -> Html<String> {
         )).collect::<Vec<_>>().join("\n")
     };
     Html(format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>4/7 Founder Relay — 終了 | MU</title>
 <meta name="description" content="MU の 4/7 Founder Relay (100 日に 1 回 MA を誰かに贈る) は 2026-05-16 に終了しました。今後 MA は MUGEN+stack 経由 または 個別 invite のみ。">
 <meta name="robots" content="noindex,follow">
@@ -53083,7 +53083,7 @@ async fn wearing_log_page(State(db): State<Db>) -> Html<String> {
         }).collect::<Vec<_>>().join("\n")
     };
     Html(format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Wearing Log — MU を着る人々 | MU</title>
 <meta name="description" content="MU は永遠に有名人や顔を使わない。代わりに、実際にそれを着ている人々の anonymous log がブランドの主役。">
 <meta property="og:title" content="Wearing Log — MU">
@@ -53481,7 +53481,7 @@ async fn ma_ship_page(
         };
         let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><title>間 ({}) · 発送情報受領 · MU</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex">
 <style>
 body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,"Hiragino Sans",Menlo,sans-serif;margin:0;padding:32px 20px;font-size:14px;line-height:1.7}}
 .wrap{{max-width:560px;margin:0 auto}}
@@ -53539,7 +53539,7 @@ code{{background:#050505;padding:2px 6px;border-radius:3px;color:#aaa;font-size:
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><title>間 ({pname}) · 発送先入力 · MU</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><meta name="robots" content="noindex">
 <style>
 body{{background:#0A0A0A;color:#F5F5F0;font-family:ui-monospace,"Hiragino Sans",Menlo,sans-serif;margin:0;padding:32px 20px;font-size:14px;line-height:1.7}}
 .wrap{{max-width:560px;margin:0 auto}}
@@ -54050,7 +54050,7 @@ async fn ma_retired_ledger(State(db): State<Db>) -> Html<String> {
         )).collect::<Vec<_>>().join("\n")
     };
     Html(format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Retired — 死を持つ服 | MU</title>
 <meta name="description" content="MU MA piece は明示的な expiry を持つ。返却された服の公開 ledger。Fast fashion の対極。">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -54359,7 +54359,7 @@ async fn region_landing(
     };
 
     let html = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{jp} EDITION — MU Regional · {tag} | wearmu.com</title>
 <meta name="description" content="MU {jp} EDITION — AI が描く {jp} の {tag}。 1 着 47 名限定、 ¥4,900 (entry) / ¥6,800 (standard)。 利益の 50% を弟子屈町に寄付。">
 <meta property="og:type" content="product">
@@ -54527,7 +54527,7 @@ async fn cities_page(State(db): State<Db>) -> Html<String> {
     }).collect::<Vec<_>>().join("\n");
 
     Html(format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Cities — MU の都市 | wearmu.com</title>
 <meta name="description" content="MU は protocol。Teshikaga が origin、Honolulu が pilot。誰でも自分の都市の MU を立ち上げる構想。">
 <meta property="og:title" content="MU Cities — Teshikaga (origin) + satellites">
@@ -55363,7 +55363,7 @@ async fn show_sweep_page(
 
     let pw_attr = html_attr_escape(&pw);
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × SWEEP — Draft preview (BJJ collab) | wearmu.com</title>
 <meta name="description" content="MU と北参道の BJJ アパレル SWEEP のコラボ draft。ラッシュガード / ファイトショーツ / スパッツ / フーディ / T。SWEEP社確認前のため非公開。">
 <meta name="robots" content="noindex,nofollow">
@@ -55795,7 +55795,7 @@ async fn show_kokon_page(State(db): State<Db>) -> Response {
     )}).collect::<Vec<_>>().join("\n");
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × kokon.tokyo — 焼肉店ブランド公式グッズ | wearmu.com</title>
 <!-- KOKON page below; BOOSTTECH page (show_boosttech_page) is separately defined later. -->
 <meta name="description" content="MU と kokon.tokyo (都内焼肉店) のコラボ。T / クルーネック / トート / エナメルマグ / エプロン / キャップ / ステッカー / 缶クーラー。POD 各社 (Printful / SUZURI / Gelato 等) から 10-14 日に発送。">
@@ -56105,7 +56105,7 @@ async fn show_boosttech_page(State(db): State<Db>, headers: HeaderMap) -> Respon
     )}).collect::<Vec<_>>().join("\n");
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × BOOSTTECH — ブーストテック ノベルティグッズ | wearmu.com</title>
 <meta name="description" content="MU と BOOSTTECH株式会社 (AI 搭載型 SaaS — SHORTBOOSTER / HPBOOSTER / PeopleBooster / 切り抜きBOOSTER) の公式コラボ。Tee / フーディ / クルーネック / マグ / スナップバック / トート / ラップトップスリーブ / AirPods ケース / マウスパッド / ステッカー 計 10 SKU を Printful 経由で 10〜14 日に発送。">
 <meta property="og:title" content="MU × BOOSTTECH — ブーストテック 公式グッズ">
@@ -56456,7 +56456,7 @@ async fn show_nakamura_page(State(db): State<Db>) -> Response {
     } else { cards };
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × Nakamura Brothers — UFC日本人選手 公式コラボ | wearmu.com</title>
 <meta name="description" content="中村倫也 (Rinya) と 中村京一郎 (Keiichiro) — UFC日本人選手 公式コラボ。売上の50%が Sen-Dojo Foundation (千道場) 経由で地方の道場・若手アスリート育成に流れる。在庫ゼロ、POD製造、世界中へ直送。">
 <meta property="og:title" content="MU × Nakamura Brothers — 中村兄弟 UFC公式コラボ">
@@ -56847,7 +56847,7 @@ async fn show_siiieep_partner_page(
     let tot_margin = tot_rev - tot_cost;
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × SIIIEEP — Partner Console</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -57577,7 +57577,7 @@ async fn show_partner_proposal_page(
     };
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × {pretty} — 商品提案 + サンプルまとめ買い</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -57995,7 +57995,7 @@ fn partner_proposal_gate_html(partner: &str, label: &str) -> String {
     let action = format!("/{}/proposal", partner);
     let public_path = format!("/{}", partner);
     format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × {pretty} — 商品提案ログイン</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -58650,7 +58650,7 @@ const GI_EDITION_01_HTML: &str = r##"<!doctype html>
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × JiuFlow Sponsored Gi — Edition 00 / 限定 30 着</title>
 <meta name="description" content="背中で 18 ブランドの物語を語る、世界初のスポンサード黒 BJJ 道着。CYBRIDGE × ENABLER 紋章、金糸 QR 刺繍、内ライニング sublimation。限定 30 着 / ¥98,000 先行予約受付中。">
 <meta property="og:title" content="MU × JiuFlow Sponsored Gi / Edition 00">
@@ -59388,7 +59388,7 @@ async fn show_gi_sponsor_recruit_page(
     let title = format!("MU × JiuFlow Sponsored Gi — Edition {canonical} スポンサー募集");
     let html = format!(r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title}</title>
 <meta name="description" content="MU × JiuFlow Sponsored Gi (限定 30 着) の刺繍スポンサー枠を募集中。¥50,000 〜 ¥1,200,000 の 5 ティア。背中・襟・袖・内側に貴社ブランドを縫い込みます。">
 <meta property="og:title" content="{title}">
@@ -60202,7 +60202,7 @@ async fn show_collab_apply_page() -> Response {
 #[allow(dead_code)]
 async fn show_collab_apply_page_legacy() -> Response {
     let body = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU で コラボグッズを作る — 提案リクエスト</title>
 <meta name="description" content="貴社のサイトとメールを登録するだけで、MU がコラボグッズの提案ページを自動生成します。在庫リスクゼロ、原価サンプル発注、海外オンデマンド + 国内 OEM のハイブリッド製造ネットワーク。">
 <meta property="og:title" content="MU で コラボグッズを作る — 1 分で提案リクエスト">
@@ -60693,7 +60693,7 @@ async fn show_collab_result_page(
     let pitch_html = html_escape(&ai_pitch).replace('\n', "<br>");
 
     let body = format!(r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × {company} コラボ提案サマリ</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -60755,7 +60755,7 @@ footer a{{color:#e6c449;text-decoration:none}}
 }
 
 const SIIIEEP_PARTNER_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × SIIIEEP — Partner Login</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -60792,7 +60792,7 @@ button:hover{opacity:0.85}
 </body></html>"#;
 
 const SWEEP_GATE_HTML: &str = r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × SWEEP — Restricted preview</title>
 <meta name="robots" content="noindex,nofollow">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -61131,7 +61131,7 @@ async fn admin_sweep_dashboard(
     let total_pct = if total_revenue > 0 { total_margin * 100 / total_revenue } else { 0 };
 
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU × SIIIEEP — Admin Dashboard</title>
 <meta name="robots" content="noindex,nofollow">
 <style>
@@ -61666,7 +61666,7 @@ fn ensure_nakamura_sku_owners_table(conn: &rusqlite::Connection) {
 
 async fn show_nakamura_create_page() -> Response {
     let body = r##"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>SKU を追加する — MU × NAKAMURA / wearmu.com</title>
 <meta name="description" content="30 pt で 1 SKU を /nakamura に追加。Printful Mockup 自動生成、追加後にカスタマイズ可能。売上 50% は Sen-Dojo へ。">
 <style>
@@ -62331,7 +62331,7 @@ async fn admin_nakamura_page(
     let token_attr = html_attr_escape(q.get("token").map(String::as_str).unwrap_or(""));
 
     let body = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>Admin · Nakamura SKU Manager</title>
 <style>
 :root{{--bg:#0a0a0a;--fg:#f5f5f0;--mute:rgba(245,245,240,0.62);--gold:#ffd700;--card:#111;--red:#ff3b30}}
@@ -65495,7 +65495,7 @@ fn render_share_page(
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title}</title>
 <meta name="description" content="{description}">
 <meta name="theme-color" content="#0A0A0A">
@@ -71024,9 +71024,10 @@ async fn main() {
         .route("/api/nakamura/checkout", post(nakamura_checkout))
         .route("/admin/nakamura", get(admin_nakamura_page))
         .route("/api/admin/nakamura/add_sku", post(admin_nakamura_add_sku))
-        .route("/nakamura/create", get(show_nakamura_create_page))
-        .route("/api/nakamura/user_create", post(nakamura_user_create))
-        .route("/api/nakamura/user_update", post(nakamura_user_update))
+        // NAKAMURA user-SKU 企画は2026-07-31ペンディング(本人指示) — 再開時にコメント解除
+        // .route("/nakamura/create", get(show_nakamura_create_page))
+        // .route("/api/nakamura/user_create", post(nakamura_user_create))
+        // .route("/api/nakamura/user_update", post(nakamura_user_update))
         .route("/api/sweep/signal", post(sweep_signal))
         .route("/api/sweep/signals", get(sweep_signals_summary))
         .route("/api/admin/sweep_signals", get(admin_sweep_signals))
@@ -75358,7 +75359,7 @@ fn assign_email_variant(to: &str, kind: &str) -> &'static str {
 /// for email-client compatibility (Gmail/Outlook strip <style>).
 fn email_shell(subject_label: &str, hero_title: &str, when_jst: &str, body_html: &str) -> String {
     format!(r#"<!DOCTYPE html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{subject_label}</title></head>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252"><title>{subject_label}</title></head>
 <body style="margin:0;padding:0;background:#0A0A0A;font-family:ui-monospace,Menlo,'SF Mono',Monaco,Consolas,monospace;color:#F5F5F0;font-size:13px;line-height:1.65;-webkit-text-size-adjust:100%;">
 <table cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#0A0A0A;">
 <tr><td align="center" style="padding:40px 16px;">
@@ -81082,7 +81083,7 @@ async fn admin_agents_dashboard(
     }
 
     let html = format!(r#"<!doctype html><html lang="ja"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU マルチエージェント — Admin</title>
 <meta name="robots" content="noindex,nofollow">
 <style>

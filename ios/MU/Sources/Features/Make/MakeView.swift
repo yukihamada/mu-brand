@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import StoreKit
 
 // 1案ぶんの状態。複数案をスワイプで見比べられるよう、着画/磨き/スコアは案ごとに持つ。
 struct DesignVariant: Identifiable {
@@ -19,6 +20,7 @@ struct DesignVariant: Identifiable {
 struct MakeView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var app: AppState
+    @Environment(\.requestReview) private var requestReview
 
     @StateObject private var voice = VoiceInput()
     @State private var voiceBasePrompt = ""   // 録音開始時の入力(認識結果を追記する土台)
@@ -850,6 +852,20 @@ struct MakeView: View {
         }
     }
 
+    // レビュー促進: デザインが生まれた高揚の瞬間に、控えめに(2/8/25回目のみ)。
+    // 初回はpush許可プロンプトと重なるので出さない。OSが年3回までに間引く。
+    private func maybeRequestReview() {
+        let key = "mu.makeSuccessCount"
+        let n = UserDefaults.standard.integer(forKey: key) + 1
+        UserDefaults.standard.set(n, forKey: key)
+        guard [2, 8, 25].contains(n) else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000) // 着画の余韻を待つ
+            await MainActor.run { requestReview() }
+            Analytics.track("review_prompt", ["at": "after_make", "n": n])
+        }
+    }
+
     private func make() {
         // 二重発火ガード(オンボーディング受け渡し+連打)。課金が二重に走るのを防ぐ。
         guard !isMaking else { return }
@@ -881,6 +897,7 @@ struct MakeView: View {
                     successHaptic()
                     withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
                     maybePromptPush()
+                    maybeRequestReview()
                     startPolling(sku: r.sku)
                 }
                 // いろいろスワイプで見比べられるよう、もう1案を裏で生成して追加。
