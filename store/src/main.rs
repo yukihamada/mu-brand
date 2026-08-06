@@ -13921,7 +13921,7 @@ async fn challenge_100_progress_json(State(db): State<Db>) -> Json<serde_json::V
         "deadline": CHALLENGE_100_DEADLINE_UTC,
         "breakdown": {
             "b2b_bulk": b2b,
-            "b2b_bulk_note": "JIU FIGHT 100着一括 (5/24 TOKYO LIVE EVENT)。Stripe非経由・入金確認待ち。",
+            "b2b_bulk_note": "JIU FIGHT 100着一括 (5/24 TOKYO LIVE EVENT)。Stripe非経由・入金確認済み (2026-08)。",
             "dogfood": dogfood,
             "dogfood_note": "yuki 本人購入。",
             "third_party": third,
@@ -42950,13 +42950,13 @@ footer a:hover{{color:var(--y)}}
     <h2>100枚 challenge · 5/18 → 5/31</h2>
     <p>MU の最初の商業的試金石。14日で 100着売る。結果で MSA / MU への投下時間を決める (70%+ なら倍投下、 50% 以下なら maintenance に戻す)。隠さず、内訳まで出す。</p>
     <div class="row"><span class="k">期間内 sold (5/18 00:00 → 5/31 23:59 JST)</span><span class="v {t100_class}">{t100_sold_s} / 100</span></div>
-    <div class="row"><span class="k">うち B2B 一括 (JIU FIGHT 100着 · Stripe 非経由)</span><span class="v warn">{t100_b2b_s} — 入金確認待ち</span></div>
+    <div class="row"><span class="k">うち B2B 一括 (JIU FIGHT 100着 · Stripe 非経由)</span><span class="v good">{t100_b2b_s} — 入金済み (2026-08 確認)</span></div>
     <div class="row"><span class="k">うち dogfood (yuki 本人購入)</span><span class="v">{t100_dogfood_s}</span></div>
     <div class="row"><span class="k">うち 第三者 (Stripe live 決済)</span><span class="v">{t100_third_s} / 100 = {t100_third_pct}%</span></div>
     <div style="background:#0e0e0e;border-radius:4px;height:8px;margin:14px 0 6px;overflow:hidden">
       <div style="background:var(--y);height:100%;width:{t100_pct}%;transition:width .3s"></div>
     </div>
-    <p style="font-size:11.5px;opacity:0.7;margin-top:8px">正直に言うと: 第三者がカードを切ってくれたのは {t100_third_s} 着 = {t100_third_pct}%。{t100_b2b_s} 着は 5/24 TOKYO LIVE EVENT の JIU FIGHT 一括発注で、Stripe を通っておらず入金もまだ確認できていない。入金が確認できたら {t100_if_paid_s}/100 (第三者+B2B)、確認できなければ第三者の {t100_third_s}/100 が本当の数字。期限後の購入はカウントしない (以前は混入して「109/100 達成」と出ていた。直した)。</p>
+    <p style="font-size:11.5px;opacity:0.7;margin-top:8px">正直に言うと: 期間内に第三者がカードを切ってくれたのは {t100_third_s} 着 = {t100_third_pct}%。{t100_b2b_s} 着は 5/24 TOKYO LIVE EVENT の JIU FIGHT 一括発注 (Stripe 非経由) で、入金は 2026-08 に確認済み → {t100_if_paid_s}/100 (第三者+B2B) が確定。ただしカードを切った第三者は {t100_third_s} 着のまま — ここは盛らない。期限後の購入はカウントしない (以前は混入して「109/100 達成」と出ていた。直した)。</p>
     <p style="font-size:11.5px;opacity:0.55;margin-top:8px"><a href="/100">/100 で 詳細</a> · 数字は毎リクエスト 再計算 · 1着 = mu_purchases.created_at が challenge 期間内</p>
   </div>
 
@@ -42964,8 +42964,8 @@ footer a:hover{{color:var(--y)}}
   <div class="section">
     <h2>Fleet status · 14 product 並列</h2>
     <p>1人 founder が 並列 で 動かしている プロダクト の honest grade。 「active dev = 新機能 / 顧客対応 を 今月 やってる」、 「maintenance = security patch + 既存顧客 サポート のみ」、 「private MSA = 中身 は MSA 経由 で読める」。</p>
-    <div class="row"><span class="k">JiuFlow (jiuflow.com)</span><span class="v good">active · MRR ¥180k · 161 active subs</span></div>
-    <div class="row"><span class="k">MU / wearmu</span><span class="v warn">active · 100枚 challenge {t100_sold_s}/100 (うち B2B 一括 {t100_b2b_s}=入金確認待ち · 第三者 {t100_third_s}) — 内訳は上の節</span></div>
+    <div class="row"><span class="k">JiuFlow (jiuflow.com)</span><span class="v good">active · 153 active subs (本番DB実測 2026-08-06)</span></div>
+    <div class="row"><span class="k">MU / wearmu</span><span class="v good">active · 100枚 challenge {t100_sold_s}/100 (B2B 一括 {t100_b2b_s}=入金済み · 第三者 {t100_third_s}) — 内訳は上の節</span></div>
     <div class="row"><span class="k">chatweb.ai / teai.io (nanobot)</span><span class="v">active · 公開 · #42 #43 fix済</span></div>
     <div class="row"><span class="k">StayFlow (stayflowapp.com)</span><span class="v good">active · MRR — · Stripe Live · 民泊 SaaS</span></div>
     <div class="row"><span class="k">Koe Device (koe.live)</span><span class="v">active · ハードウェア試作中</span></div>
@@ -48629,7 +48629,7 @@ fn public_transparency_inner(conn: &rusqlite::Connection) -> serde_json::Value {
                 "dogfood": c100_dogfood,
                 "third_party": c100_third,
             },
-            "note": "b2b_bulk = JIU FIGHT 100着一括 (Stripe非経由・入金確認待ち) / dogfood = yuki本人 / third_party = 第三者のStripe live決済。入金が確認できたら第三者+B2B、未確認の間は第三者分のみが検証済みの実売。",
+            "note": "b2b_bulk = JIU FIGHT 100着一括 (Stripe非経由・入金確認済み 2026-08) / dogfood = yuki本人 / third_party = 第三者のStripe live決済。第三者+B2B が確定実売。カード決済の実測は third_party のみ。",
         },
         "missing_drops": detect_missing_drops(conn),
         "recent_purchases": recent_purchases,
