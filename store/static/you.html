@@ -387,15 +387,13 @@ footer a:hover{opacity:1}
       Email だけで始めて、 30 日 毎日 1 案。
     </div>
     <div style="font-size:13px;opacity:0.75;line-height:1.9;margin-bottom:18px">
-      気に入った日だけ、 ¥6,800 で 1 着仕立てる。 30 日 経っても続けたい場合のみ料金 (詳細は登録後に表示)。
+      気に入った日だけ、 ¥6,800 で 1 着仕立てる。 30 日 経っても続ける方法はひとつ — <strong>MU の T シャツを 1 着買う</strong>。 それで永久メンバー。 月額プランはありません。
     </div>
     <details style="font-size:11px;opacity:0.55;text-align:left">
       <summary style="cursor:pointer;letter-spacing:0.18em;text-transform:uppercase;list-style:none">+ 価格詳細 / PT 経済を見る</summary>
       <div style="margin-top:10px;line-height:1.95">
-        ① <strong>MU Tシャツを 1 着買う</strong> → 支払額分の <strong style="color:#e6c449">PT が貯まる</strong> (¥6,800 → 6,800 PT)<br>
-        ② <strong>3 ヶ月パック ¥2,500</strong> (自動更新なし)<br>
-        ③ <strong>サブスク ¥1,480/月</strong> (いつでも解約 OK)<br>
-        <span style="font-size:10.5px;opacity:0.75;margin-top:6px;display:block">— burn: <strong>1 SKU 作成 = 30 PT</strong>。 ¥6,800 = 226 回生成。 PT は /you 生成、 次の購入、 collab 等に使える MU エコ内ユニット。</span>
+        <strong>MU Tシャツを 1 着買う</strong> → 支払額分の <strong style="color:#e6c449">PT が貯まる</strong> (¥6,800 → 6,800 PT) + <strong>/you 永久メンバー</strong><br>
+        <span style="font-size:10.5px;opacity:0.75;margin-top:6px;display:block">— burn: <strong>1 SKU 作成 = 30 PT</strong>。 ¥6,800 = 226 回生成。 PT は /you 生成、 次の購入、 collab 等に使える MU エコ内ユニット。 月額サブスク (¥1,480/月) は 2026-08 に廃止しました。</span>
       </div>
     </details>
   </div>
@@ -549,8 +547,7 @@ footer a:hover{opacity:1}
         <div id="pv-lifetime" style="display:none;font-size:11px;letter-spacing:0.15em;color:#5a9e6f;background:rgba(90,158,111,0.08);padding:8px 14px;border-left:2px solid #5a9e6f">★ MU 所有者 — PT 残高で生成 (1 SKU = 30 PT)</div>
         <!-- Paid-plan / portal switch — shows the right button for the user's current state. -->
         <div id="pv-paid-cta" style="display:none;margin:8px 0">
-          <button id="paid-subscribe-btn" type="button" class="btn btn-secondary" style="font-size:11px;padding:9px 14px">¥980/月で続ける →</button>
-          <button id="paid-3mo-btn" type="button" class="btn btn-ghost" style="font-size:11px;padding:9px 14px;margin-left:6px">3 ヶ月パック ¥2,500 (-15%)</button>
+          <a id="lifetime-cta" class="btn btn-secondary" href="/shop?ref=you-lifetime" style="font-size:11px;padding:9px 14px;text-decoration:none">MU を 1 着買う → 永久メンバー</a>
           <button id="paid-portal-btn" type="button" class="btn btn-ghost" style="display:none;font-size:11px;padding:9px 14px;margin-left:6px">サブスクを管理</button>
           <span id="paid-msg" style="font-size:10px;opacity:0.65;margin-left:6px"></span>
         </div>
@@ -958,7 +955,7 @@ function applySubscriptionUI(sub, dayNum, styleName){
     if (progressEl) {
       progressEl.style.display = 'block';
       progressEl.style.color = '#C8362C';
-      progressEl.textContent = '無料トライアル終了 — MU 1 着 か ¥980/月 で再開';
+      progressEl.textContent = '無料トライアル終了 — MU を 1 着買うと永久に再開';
     }
     if (barEl) barEl.style.display = 'none';
     if (lifetimeEl) lifetimeEl.style.display = 'none';
@@ -1115,23 +1112,8 @@ async function loadDaily(tk){
 
 // Wire paid-subscription + portal buttons.
 document.addEventListener('DOMContentLoaded', () => {
-  const sub = document.getElementById('paid-subscribe-btn');
-  if (sub) sub.addEventListener('click', async () => {
-    if (!token) return;
-    sub.disabled = true; sub.textContent = '読み込み中…';
-    try {
-      const r = await fetch('/api/you/subscribe-paid', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({token}),
-      });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const d = await r.json();
-      if (d.url) window.location.href = d.url;
-    } catch (e) {
-      sub.disabled = false; sub.textContent = '¥980/月で続ける →';
-      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
-    }
-  });
+  // ¥980/月 subscribe + 3-mo pack buttons removed 2026-08 (lifetime-only model).
+  // API endpoints kept server-side for existing-subscriber safety.
   const portal = document.getElementById('paid-portal-btn');
   if (portal) portal.addEventListener('click', async () => {
     if (!token) return;
@@ -1149,33 +1131,11 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
     }
   });
-  // 3-month prepaid pack (¥2,500 one-time, 15% off ¥2,940 list) — Stripe Checkout payment mode.
-  const pack3 = document.getElementById('paid-3mo-btn');
-  if (pack3) pack3.addEventListener('click', async () => {
-    if (!token) return;
-    pack3.disabled = true; pack3.textContent = '読み込み中…';
-    try {
-      const r = await fetch('/api/you/subscribe-3mo', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({token}),
-      });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const d = await r.json();
-      if (d.url) window.location.href = d.url;
-    } catch (e) {
-      pack3.disabled = false; pack3.textContent = '3 ヶ月パック ¥2,500 (-15%)';
-      document.getElementById('paid-msg').textContent = 'エラー: ' + e.message;
-    }
-  });
-
-  // Auto-trigger subscribe flow when arriving from the trial-end email
-  // (`/you?subscribe=1`). Wait for token to be loaded, then click.
+  // Legacy `/you?subscribe=1` links (old trial-end emails): scroll to the
+  // lifetime CTA instead of the removed subscribe flow.
   if (new URLSearchParams(location.search).get('subscribe') === '1') {
-    const tryClick = () => {
-      if (token && sub) { sub.click(); }
-      else { setTimeout(tryClick, 300); }
-    };
-    setTimeout(tryClick, 600);
+    const cta = document.getElementById('lifetime-cta');
+    if (cta) setTimeout(() => cta.scrollIntoView({behavior:'smooth', block:'center'}), 600);
   }
 });
 

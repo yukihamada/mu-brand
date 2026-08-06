@@ -25850,6 +25850,10 @@ async fn index(State(db): State<Db>, is_en: bool) -> Response {
                 r#"seo-original-tshirt-1mai">Make a custom tee from just one (JA)</a>"#,
             )
             .replace(
+                r#"<a href="/tsukurikata/">🛠️ つくりかた事典 — 世の中のモノの作り方 42 選</a>"#,
+                r#"<a href="/tsukurikata/">🛠️ Tsukurikata — how things are made, 42 guides (JA)</a>"#,
+            )
+            .replace(
                 r#"seo-bjj-rashguard-order">柔術ラッシュガード・BJJ Tシャツのオーダーメイド</a>"#,
                 r#"seo-bjj-rashguard-order">Custom BJJ rashguards &amp; tees (JA)</a>"#,
             )
@@ -42928,9 +42932,9 @@ footer a:hover{{color:var(--y)}}
 
   <!-- /you -->
   <div class="section">
-    <h2>/you サブスクリプション</h2>
-    <p>毎朝あなた専用の T シャツが AI に生成される /you。 30 日無料トライアル、 その後 ¥1,480/月 (または ¥980/月年払い)。 MU Tシャツを買うと <strong style="color:#e6c449">支払額分の PT</strong> が貯まる (¥1 = 1 PT)、 1 SKU 作成 = 30 PT 消費。 PT は /you 生成・次の購入・collab 等に使える。</p>
-    <div class="row"><span class="k">有料サブスク</span><span class="v {you_paid_class}">{you_paid_s}</span></div>
+    <h2>/you — 購入者特典</h2>
+    <p>毎朝あなた専用の T シャツが AI に生成される /you。 30 日無料で試せて、 続ける方法はひとつ — <strong>MU の T シャツを 1 着買うと永久メンバー</strong>。 月額プラン (¥1,480/月) は 2026-08 に廃止した (トライアル 23 人 → 有料転換 0。 この数字も隠さない)。 MU Tシャツを買うと <strong style="color:#e6c449">支払額分の PT</strong> が貯まる (¥1 = 1 PT)、 1 SKU 作成 = 30 PT 消費。 PT は /you 生成・次の購入・collab 等に使える。</p>
+    <div class="row"><span class="k">有料サブスク (月額プランは 2026-08 廃止)</span><span class="v {you_paid_class}">{you_paid_s}</span></div>
     <div class="row"><span class="k">ライフタイムメンバー</span><span class="v">{you_lifetime_s}</span></div>
     <div class="row"><span class="k">無料トライアル中</span><span class="v">{you_free_s}</span></div>
     <div class="row"><span class="k">概算 MRR</span><span class="v {mrr_class}">¥{you_mrr_s}</span></div>
@@ -43072,7 +43076,7 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">MUGEN — 毎時 1 案 / 1〜108 着限定</span><span class="v">¥5,000〜</span></div>
     <div class="row"><span class="k">MUON — 毎日 1 案 / 気温 = 枚数</span><span class="v">¥5,000〜</span></div>
     <div class="row"><span class="k">間 MA — 週次 / 7 日オークション / 世界に 1 着</span><span class="v">¥30,000〜</span></div>
-    <div class="row"><span class="k">/you — 毎朝あなた専用の AI デザイン</span><span class="v">30 日無料 → ¥1,480/月</span></div>
+    <div class="row"><span class="k">/you — 毎朝あなた専用の AI デザイン</span><span class="v">30 日無料 → MU 1 着で永久メンバー</span></div>
     <div class="row"><span class="k">バウンティ — バグ発見で MUGEN 報酬</span><span class="v">最大 5 着 + ¥50,000</span></div>
     <p style="margin-top:14px">
       MU Tシャツを買うと <strong style="color:var(--y)">支払額分の PT</strong> が貯まる (¥1 = 1 PT)、 1 SKU 作成 = 30 PT 消費。
@@ -43390,7 +43394,7 @@ footer a:hover{{color:var(--y)}}
 
   <div class="section">
     <h2>/you subscription</h2>
-    <p>A new T-shirt designed for you every morning by AI. 30-day free trial, then ¥1,480/month (or ¥980/month annual). Buy a single MUGEN or MUON and /you is free for life.</p>
+    <p>A new T-shirt designed for you every morning by AI. 30-day free trial; the only way to keep it is to buy one MU tee — that makes you a lifetime member. The monthly plan (¥1,480/mo) was retired in Aug 2026 (23 trials → 0 paid conversions. We publish that number too).</p>
     <div class="row"><span class="k">Paid subscribers</span><span class="v {you_paid_class}">{you_paid_s}</span></div>
     <div class="row"><span class="k">Lifetime members</span><span class="v">{you_lifetime_s}</span></div>
     <div class="row"><span class="k">Free trial active</span><span class="v">{you_free_s}</span></div>
@@ -43523,7 +43527,7 @@ footer a:hover{{color:var(--y)}}
     <div class="row"><span class="k">MUGEN — hourly drop / 1–108 pieces only</span><span class="v">from ¥5,000</span></div>
     <div class="row"><span class="k">MUON — daily drop / temperature = edition size</span><span class="v">from ¥5,000</span></div>
     <div class="row"><span class="k">MA — weekly / 7-day auction / one piece worldwide</span><span class="v">from ¥30,000</span></div>
-    <div class="row"><span class="k">/you — your private AI-generated design, daily</span><span class="v">30d free → ¥1,480/mo</span></div>
+    <div class="row"><span class="k">/you — your private AI-generated design, daily</span><span class="v">30d free → one MU tee = lifetime</span></div>
     <div class="row"><span class="k">Bounty — find a bug, earn a MUGEN</span><span class="v">up to 5 pieces + ¥50,000</span></div>
     <p style="margin-top:14px">
       Buy a single MUGEN/MUON/MA and <strong style="color:var(--y)">/you is free for life</strong>.
@@ -64818,13 +64822,11 @@ fn send_trial_expired_notice_if_needed(
   <div style="font-size:18px;font-weight:300;line-height:1.5;margin-bottom:24px">30 日間のトライアル、ここまで届けてくれてありがとう。</div>
   <p style="font-size:12px;line-height:1.85;opacity:0.75;margin-bottom:24px">
     今日からは、毎朝 9 時のデザイン配信は一旦停止します。<br><br>
-    <strong>もう一度 ON にする方法は 2 つ</strong>:<br>
-    ① MU の T シャツを <strong>1 着</strong> 買う (¥6,800〜) → 支払額分の PT が貯まり、 1 SKU 30 PT で生成できる (¥6,800 = 226 回)。<br>
-    ② サブスク <strong>¥980/月</strong> (いつでも解約)。<br><br>
-    どちらでも、明日からまた毎朝、あなただけの一着が届きます。
+    <strong>もう一度 ON にする方法はひとつ</strong>:<br>
+    MU の T シャツを <strong>1 着</strong> 買う (¥6,800〜) → <strong>永久メンバー</strong>。支払額分の PT が貯まり、 1 SKU 30 PT で生成できる (¥6,800 = 226 回)。<br><br>
+    それだけで、明日からまた毎朝、あなただけの一着が届きます。
   </p>
-  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px;margin-bottom:8px">MU を買う →</a>
-  <a href="https://wearmu.com/you?subscribe=1" style="display:inline-block;border:1px solid #e6c449;color:#e6c449;padding:13px 22px;font-size:10px;letter-spacing:0.25em;text-transform:uppercase;text-decoration:none;font-weight:700">¥980/月で続ける</a>
+  <a href="https://wearmu.com/mugen" style="display:inline-block;background:#e6c449;color:#000;padding:14px 28px;font-size:11px;letter-spacing:0.3em;text-transform:uppercase;text-decoration:none;font-weight:700;margin-right:8px;margin-bottom:8px">MU を買う → 永久メンバー</a>
   <p style="font-size:10px;opacity:0.5;margin-top:32px;line-height:1.7">
     トライアル中の 30 案は <a href="https://wearmu.com/you" style="color:#e6c449">あなたのページ</a> でいつでも見返せます。
   </p>
@@ -70735,6 +70737,8 @@ async fn main() {
         .nest_service("/foundation", ServeDir::new("static/foundation"))
         // つくりかた事典 — SEO流入→MUで作る動線→受注ファネル (see tasks/tsukurikata note)
         .nest_service("/tsukurikata", ServeDir::new("static/tsukurikata"))
+        // 声のかたち — 実声波形の記念品LP (KOE × MU)
+        .nest_service("/koe-no-katachi", ServeDir::new("static/koe-no-katachi"))
         .nest_service("/bjj", ServeDir::new("static/bjj"))
         .nest_service("/roll", ServeDir::new("static/roll"))
         // Generic DB-driven brand LP — works for any catalog_brands slug.
