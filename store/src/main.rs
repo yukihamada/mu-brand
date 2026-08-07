@@ -70735,6 +70735,8 @@ async fn main() {
         }))
         .nest_service("/will", ServeDir::new("static/will"))
         .nest_service("/foundation", ServeDir::new("static/foundation"))
+        // MuMuMu MV/CM — ブランドフィルム (トップ「唄」セクション + brand.html で使用)
+        .nest_service("/mv", ServeDir::new("static/mv"))
         // つくりかた事典 — SEO流入→MUで作る動線→受注ファネル (see tasks/tsukurikata note)
         .nest_service("/tsukurikata", ServeDir::new("static/tsukurikata"))
         // 声のかたち — 実声波形の記念品LP (KOE × MU)
