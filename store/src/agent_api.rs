@@ -535,18 +535,6 @@ fn guest_ip_gate() -> &'static std::sync::Mutex<HashMap<String, (u32, i64)>> {
     G.get_or_init(|| std::sync::Mutex::new(HashMap::new()))
 }
 
-fn client_ip(headers: &HeaderMap) -> String {
-    for h in ["fly-client-ip", "x-real-ip", "x-forwarded-for"] {
-        if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
-            if let Some(first) = v.split(',').next() {
-                let ip = first.trim();
-                if !ip.is_empty() { return ip.to_string(); }
-            }
-        }
-    }
-    "unknown".to_string()
-}
-
 /// True if this IP may mint another guest key now (records the attempt).
 fn guest_ip_allow(ip: &str, now_s: i64) -> bool {
     const WINDOW: i64 = 3600;
@@ -571,7 +559,8 @@ pub async fn agent_guest(
 ) -> Response {
     use rand::Rng;
     let now_s: i64 = crate::chrono_now().parse().unwrap_or(0);
-    let ip = client_ip(&headers);
+    let ip = crate::client_ip(&headers);
+    let ip = if ip.is_empty() { "unknown".to_string() } else { ip };
     if !guest_ip_allow(&ip, now_s) {
         return json_err(
             StatusCode::TOO_MANY_REQUESTS,

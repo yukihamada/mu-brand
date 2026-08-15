@@ -9058,6 +9058,13 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     };
     {
         let conn = db.lock().unwrap();
+        // Per-IP gate BEFORE the global cap: MAKE_HOURLY_CAP is a single global
+        // bucket, so one bot could eat all 40/hr and DoS the feature for every
+        // legit user. 5 req/hr per IP (same shape as the remix limiter).
+        let ip = crate::client_ip(&headers);
+        if !ip.is_empty() && !crate::rate_limit_hit_ok(&conn, &format!("make:{}", ip), 5) {
+            return (StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({"ok":false,"error":"作成は1時間に5回まで。少し時間をおいて試してください。"}))).into_response();
+        }
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM catalog_products WHERE brand='minna' AND created_at > datetime('now','-1 hour')",
             [], |r| r.get(0)).unwrap_or(0);

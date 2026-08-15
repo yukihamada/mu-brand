@@ -27137,12 +27137,11 @@ pub(crate) fn collab_auth_verify_core(
     if expires < now_s {
         return Err((StatusCode::UNAUTHORIZED, "code expired"));
     }
-    use sha2::{Sha256, Digest};
-    let mut h = Sha256::new();
-    h.update(email.as_bytes());
-    h.update(now_s.to_string().as_bytes());
-    h.update(env::var("ADMIN_TOKEN").unwrap_or_default().as_bytes());
-    let token = hex::encode(&h.finalize()[..16]);
+    // M3 fix: token is stored server-side and looked up by value, so it only
+    // needs to be unguessable — use 128 bits of CSPRNG randomness. The old
+    // SHA256(email ∥ now ∥ ADMIN_TOKEN) was predictable if ADMIN_TOKEN leaked
+    // or was weak/unset.
+    let token = format!("{:016x}{:016x}", rand::random::<u64>(), rand::random::<u64>());
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
@@ -27189,12 +27188,9 @@ a{{color:#e6c449}}</style></head><body><div class="b">
     if db_code.is_empty() || db_code != code { return err_html("invalid code"); }
     if expires < now_s { return err_html("code expired (15 min)"); }
 
-    use sha2::{Sha256, Digest};
-    let mut h = Sha256::new();
-    h.update(email.as_bytes());
-    h.update(now_s.to_string().as_bytes());
-    h.update(env::var("ADMIN_TOKEN").unwrap_or_default().as_bytes());
-    let token = hex::encode(&h.finalize()[..16]);
+    // M3 fix: purely random 128-bit token (stored server-side, looked up by
+    // value). Old SHA256(email ∥ now ∥ ADMIN_TOKEN) was predictable.
+    let token = format!("{:016x}{:016x}", rand::random::<u64>(), rand::random::<u64>());
     {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
