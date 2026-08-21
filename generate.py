@@ -32,8 +32,7 @@ try:
 except Exception:
     pass
 
-from google import genai
-from google.genai import types
+from openai import OpenAI
 
 # Optional: sold/bid-driven design steerer. Lives in scripts/winner_picker.py.
 # Guarded so generate.py keeps running on a fresh checkout without the file.
@@ -42,16 +41,30 @@ try:
 except Exception:
     _pick_winners = None  # type: ignore
 
-GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+def _service_teai_key(svc: str) -> str:
+    """サービス別 teai API キー (~/.config/teai/service-keys.json)。
+    キー別に使用量が teai ダッシュボードで追跡できる。"""
+    try:
+        p = os.path.expanduser("~/.config/teai/service-keys.json")
+        return json.load(open(p)).get(svc, "")
+    except Exception:
+        return ""
+
+
+TEAI_API_KEY = _service_teai_key("mu-brand") or os.environ.get("TEAI_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or os.environ.get("GEMINI_API_KEY") or ""
 PRINTFUL_KEY   = os.environ["PRINTFUL_API_KEY"]
 DB_PATH        = Path(__file__).parent / "products.db"
 DESIGNS_DIR    = Path(__file__).parent / "designs"
 DESIGNS_DIR.mkdir(exist_ok=True)
-GEMINI_MODEL   = "gemini-3-pro-image-preview"
 PF_BASE        = "https://api.printful.com"
 PF_HDR         = {"Authorization": f"Bearer {PRINTFUL_KEY}", "Content-Type": "application/json"}
 STORE_URL      = os.environ.get("MU_STORE_URL", "https://wearmu.com")
 ADMIN_TOKEN    = os.environ.get("MU_ADMIN_TOKEN", "mu-admin")
+
+# teai優先 → OpenRouter フォールバック。モデルはflash系（安価）
+TEAI_BASE      = os.environ.get("TEAI_BASE", "https://api.teai.io/v1")
+OR_BASE        = os.environ.get("OPENROUTER_BASE", "https://openrouter.ai/api/v1")
+IMAGE_MODEL    = os.environ.get("MU_IMAGE_MODEL", "google/gemini-3.1-flash-image")
 
 # Printful product IDs
 PF_PRODUCT     = 71   # Bella+Canvas 3001 Unisex Tee
@@ -212,21 +225,53 @@ def time_mood():
     ]
     return moods[h]
 
-# ── Gemini Image Generation ───────────────────────────────
-def generate_design(prompt: str) -> bytes:
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=[prompt],
-        config=types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"])
+# ── Image Generation (teai優先 → OpenRouter フォールバック) ───────────────
+# 2026-08-21: teai 画像生成は503のため、現状はOpenRouterが実際の動作系。
+# TEAI_API_KEY が設定されていても teai が503なら自動でOpenRouterに切替。
+def _openrouter_key() -> str:
+    """OPENROUTER_API_KEY: env → ~/.config/teai/.keycache-OPENROUTER_API_KEY"""
+    k = os.environ.get("OPENROUTER_API_KEY")
+    if k:
+        return k
+    try:
+        return open(os.path.expanduser("~/.config/teai/.keycache-OPENROUTER_API_KEY")).read().strip()
+    except Exception:
+        return ""
+
+
+def _image_client():
+    if TEAI_API_KEY:
+        return OpenAI(base_url=TEAI_BASE, api_key=TEAI_API_KEY)
+    key = _openrouter_key()
+    if key:
+        return OpenAI(base_url=OR_BASE, api_key=key)
+    raise RuntimeError("TEAI_API_KEY or OPENROUTER_API_KEY is required for image generation")
+
+
+def _try_image(client, prompt: str) -> bytes:
+    resp = client.images.generate(
+        model=IMAGE_MODEL,
+        prompt=prompt,
+        size="1024x1024",
+        response_format="b64_json",
     )
-    for part in response.candidates[0].content.parts:
-        if hasattr(part, "inline_data") and part.inline_data:
-            data = part.inline_data.data
-            if isinstance(data, str):
-                return base64.b64decode(data)
-            return data
-    raise RuntimeError("Gemini returned no image")
+    b64 = resp.data[0].b64_json
+    if not b64:
+        raise RuntimeError("image API returned no image")
+    return base64.b64decode(b64)
+
+
+def generate_design(prompt: str) -> bytes:
+    # teai優先 → 503ならOpenRouterにフォールバック
+    if TEAI_API_KEY:
+        try:
+            return _try_image(_image_client(), prompt)
+        except Exception as e:
+            print(f"  [teai image failed: {type(e).__name__} {e}] fallback to openrouter", flush=True)
+    key = _openrouter_key()
+    if not key:
+        raise RuntimeError("No image API key available (TEAI_API_KEY or OPENROUTER_API_KEY)")
+    return _try_image(OpenAI(base_url=OR_BASE, api_key=key), prompt)
 
 # ── Printful ─────────────────────────────────────────────
 def upload_to_imgur(image_bytes: bytes, filename: str = "design.png") -> str:

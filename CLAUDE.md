@@ -100,8 +100,12 @@ new arm, not a new column or table.
 ## Where things live
 
 - Catalog engine: `store/src/catalog.rs`
-- Gemini integration: `store/src/gemini.rs` (`call_gemini` for image,
-  `call_gemini_text` for text)
+- Image/Text generation: `store/src/gemini.rs` — 2026-08-21 から Gemini 直叩き
+  をやめ **teai 優先 → OpenRouter フォールバック** (`call_gemini` for image,
+  `call_gemini_text` for text)。サーバには env `TEAI_API_KEY` (mu-store
+  サービス別キー) と `OPENROUTER_API_KEY` が必要。ローカルの cron スクリプト
+  `generate.py` も同じ経路 (キーは `~/.config/teai/service-keys.json` の
+  `mu-brand`)。画像モデルは flash 系 ($0.042/枚)、`MU_IMAGE_MODEL` で変更可
 - Stripe / Printful: `store/src/main.rs` (huge file; grep for the route)
 - Migrations / seed: `store/migrations/catalog_seed.sql` (1MB, bundled)
 - Contract: `docs/CATALOG_CONTRACT.md`

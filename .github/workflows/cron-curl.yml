@@ -35,9 +35,10 @@ on:
     # Every 6h :30 — konbini-reminder (poke buyers with unpaid Konbini sessions
     # before the 3-day expiry, two buckets: 24h-old and ~24h-before-expiry)
     - cron: '30 */6 * * *'
-    # Hourly :25 — MUGEN auto-generate (Gemini 3 Pro Image → Printful → DB).
-    # Watchdog on Fly alerts if no new MUGEN in 6h.
-    - cron: '25 * * * *'
+    # REMOVED 2026-08-21: MUGEN hourly (:25) — was duplicating the local cron job
+    # (generate.py mugen), causing 2x Gemini image cost. Local cron continues.
+    # See: /Users/yuki/workspace/tasks/human-gates.md 00d3
+    # - cron: '25 * * * *'
     # 6-hourly :40 — EN copy backfill for new SKUs (SEO: PDP ?lang=en body).
     - cron: '40 */6 * * *'
     # Every 5 min — external uptime watcher. Pings /healthz from outside Fly
