@@ -1,4 +1,8 @@
-// Gemini 3 Pro Image — MU × YOU collab tee design generator.
+// Image/Text generation for MU — teai.io 経由 (2026-08-21 Gemini 直叩きから移行)。
+//
+// プライマリ: teai (TEAI_API_KEY=mu-store サービス別キー → 使用量をキー別追跡)
+// フォールバック: OpenRouter (OPENROUTER_API_KEY) — teai 画像生成が 503 の間は
+// こちらが実際の動作系。テキストは teai のみ。
 //
 // Each subscriber's daily design (mood + palette + scene + day seed) becomes
 // a photorealistic T-shirt mockup image. Cached as bytes in SQLite, served
@@ -12,6 +16,209 @@ const MODEL: &str = "gemini-3-pro-image-preview";
 pub struct GeneratedImage {
     pub bytes: Vec<u8>,
     pub mime: String,
+}
+
+// ── teai / OpenRouter network layer ────────────────────────────────────────
+
+fn teai_base() -> String {
+    std::env::var("TEAI_BASE").unwrap_or_else(|_| "https://api.teai.io/v1".into())
+}
+
+fn or_base() -> String {
+    std::env::var("OPENROUTER_BASE").unwrap_or_else(|_| "https://openrouter.ai/api/v1".into())
+}
+
+fn image_model() -> String {
+    std::env::var("MU_IMAGE_MODEL").unwrap_or_else(|_| "google/gemini-2.5-flash-image".into())
+}
+
+fn teai_key() -> Option<String> {
+    std::env::var("TEAI_API_KEY").ok().filter(|k| !k.is_empty())
+}
+
+fn or_key() -> Option<String> {
+    std::env::var("OPENROUTER_API_KEY").ok().filter(|k| !k.is_empty())
+}
+
+fn http_client(secs: u64) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(secs))
+        .build()
+        .map_err(|e| format!("client: {}", e))
+}
+
+/// POST {base}/images/generations (OpenAI 互換)。b64 画像を返す。
+async fn post_images_generate(base: &str, key: &str, prompt: &str) -> Result<GeneratedImage, String> {
+    let client = http_client(180)?;
+    let body = json!({
+        "model": image_model(),
+        "prompt": prompt,
+        "size": "1024x1024",
+        "response_format": "b64_json",
+    });
+    let resp = client
+        .post(format!("{}/images/generations", base))
+        .bearer_auth(key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("images {}: {}", status, &txt[..txt.len().min(300)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let b64 = json["data"][0]["b64_json"]
+        .as_str()
+        .ok_or("no b64_json in images response")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("b64 decode: {}", e))?;
+    Ok(GeneratedImage { bytes, mime: "image/png".into() })
+}
+
+/// テキストプロンプトのみの画像生成: teai 優先 → OpenRouter フォールバック。
+async fn gen_image(prompt: &str) -> Result<GeneratedImage, String> {
+    if let Some(k) = teai_key() {
+        match post_images_generate(&teai_base(), &k, prompt).await {
+            Ok(img) => return Ok(img),
+            Err(e) => tracing::warn!("teai image failed, fallback to openrouter: {}", e),
+        }
+    }
+    let k = or_key().ok_or("no image API key (TEAI_API_KEY / OPENROUTER_API_KEY)")?;
+    post_images_generate(&or_base(), &k, prompt).await
+}
+
+/// chat/completions 経由の画像生成 (参照画像つき)。message.images[0] を返す。
+async fn post_chat_image(
+    base: &str,
+    key: &str,
+    prompt: &str,
+    refs: &[(String, String)],
+) -> Result<GeneratedImage, String> {
+    let client = http_client(180)?;
+    let mut content = vec![json!({"type": "text", "text": prompt})];
+    for (mime, b64) in refs {
+        content.push(json!({
+            "type": "image_url",
+            "image_url": {"url": format!("data:{};base64,{}", mime, b64)},
+        }));
+    }
+    let body = json!({
+        "model": image_model(),
+        "modalities": ["image", "text"],
+        "messages": [{"role": "user", "content": content}],
+    });
+    let resp = client
+        .post(format!("{}/chat/completions", base))
+        .bearer_auth(key)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("chat-image {}: {}", status, &txt[..txt.len().min(300)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let url = json["choices"][0]["message"]["images"][0]["image_url"]["url"]
+        .as_str()
+        .ok_or("no images in chat response")?;
+    // data:<mime>;base64,<b64>
+    let (mime, b64) = url
+        .strip_prefix("data:")
+        .and_then(|s| s.split_once(";base64,"))
+        .ok_or("unexpected image data uri")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("b64 decode: {}", e))?;
+    Ok(GeneratedImage { bytes, mime: mime.to_string() })
+}
+
+/// テキスト chat (teai)。model は gemini-2.5-flash 等。
+async fn teai_chat(prompt: &str, model: &str, max_tokens: u32) -> Result<String, String> {
+    let k = teai_key().ok_or("TEAI_API_KEY not set")?;
+    let client = http_client(90)?;
+    let body = json!({
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3,
+        "max_tokens": max_tokens,
+    });
+    let resp = client
+        .post(format!("{}/chat/completions", teai_base()))
+        .bearer_auth(k)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("teai chat {}: {}", status, &txt[..txt.len().min(300)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "no content in teai chat response".into())
+}
+
+/// 画像URLをサーバ側で取得して (mime, b64) にする。
+async fn fetch_image_b64(client: &reqwest::Client, url: &str) -> Result<(String, String), String> {
+    let resp = client
+        .get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("fetch image {}: {}", url, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("fetch image {}: status {}", url, resp.status()));
+    }
+    let mime = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
+        .unwrap_or_else(|| "image/png".to_string());
+    let bytes = resp.bytes().await.map_err(|e| format!("read image: {}", e))?;
+    Ok((mime, base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+/// 画像1枚 + テキスト → テキスト (vision)。teai chat + data URI。
+async fn teai_vision(prompt: &str, mime: &str, b64: &str, model: &str, max_tokens: u32) -> Result<String, String> {
+    let k = teai_key().ok_or("TEAI_API_KEY not set")?;
+    let client = http_client(90)?;
+    let body = json!({
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt},
+            {"type": "image_url", "image_url": {"url": format!("data:{};base64,{}", mime, b64)}},
+        ]}],
+        "temperature": 0.1,
+        "max_tokens": max_tokens,
+    });
+    let resp = client
+        .post(format!("{}/chat/completions", teai_base()))
+        .bearer_auth(k)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("teai vision {}: {}", status, &txt[..txt.len().min(300)]));
+    }
+    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "no content in teai vision response".into())
 }
 
 pub struct TeeDesign<'a> {
@@ -47,60 +254,7 @@ pub async fn generate_print_file(p: &TeeDesign<'_>) -> Result<GeneratedImage, St
 }
 
 pub async fn call_gemini(prompt: &str) -> Result<GeneratedImage, String> {
-    let key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
-
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        MODEL, key
-    );
-    let body = json!({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    let resp = client
-        .post(&url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("send: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
-    let parts = json["candidates"][0]["content"]["parts"]
-        .as_array()
-        .ok_or_else(|| {
-            let pf = json["promptFeedback"].clone();
-            format!("no parts (promptFeedback={})", pf)
-        })?
-        .clone();
-    for part in parts {
-        for k in &["inline_data", "inlineData"] {
-            if let Some(d_obj) = part.get(*k) {
-                if let Some(b64) = d_obj.get("data").and_then(|v| v.as_str()) {
-                    let mime = d_obj
-                        .get("mimeType")
-                        .or_else(|| d_obj.get("mime_type"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("image/png")
-                        .to_string();
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(b64)
-                        .map_err(|e| format!("b64 decode: {}", e))?;
-                    return Ok(GeneratedImage { bytes, mime });
-                }
-            }
-        }
-    }
-    Err("no image data in gemini response".into())
+    gen_image(prompt).await
 }
 
 /// Variant of `call_gemini` that conditions image generation on one or more
@@ -118,69 +272,20 @@ pub async fn call_gemini_with_image(
     prompt: &str,
     image_urls: &[&str],
 ) -> Result<GeneratedImage, String> {
-    let key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    let mut parts: Vec<serde_json::Value> = vec![json!({"text": prompt})];
+    let client = http_client(180)?;
+    let mut refs: Vec<(String, String)> = Vec::new();
     for img_url in image_urls {
-        let resp = client.get(*img_url)
-            .timeout(std::time::Duration::from_secs(30))
-            .send().await
-            .map_err(|e| format!("fetch ref image {}: {}", img_url, e))?;
-        if !resp.status().is_success() {
-            return Err(format!("fetch ref image {}: status {}", img_url, resp.status()));
-        }
-        let mime = resp.headers().get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
-            .unwrap_or_else(|| "image/png".to_string());
-        let bytes = resp.bytes().await
-            .map_err(|e| format!("read ref image: {}", e))?;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        parts.push(json!({"inline_data": {"mime_type": mime, "data": b64}}));
+        refs.push(fetch_image_b64(&client, img_url).await?);
     }
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        MODEL, key
-    );
-    let body = json!({
-        "contents": [{"parts": parts}],
-        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
-    });
-    let resp = client.post(&url).json(&body).send().await
-        .map_err(|e| format!("send: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
-    let parts = json["candidates"][0]["content"]["parts"]
-        .as_array()
-        .ok_or_else(|| {
-            let pf = json["promptFeedback"].clone();
-            format!("no parts (promptFeedback={})", pf)
-        })?
-        .clone();
-    for part in parts {
-        for k in &["inline_data", "inlineData"] {
-            if let Some(d_obj) = part.get(*k) {
-                if let Some(b64) = d_obj.get("data").and_then(|v| v.as_str()) {
-                    let mime = d_obj.get("mimeType").or_else(|| d_obj.get("mime_type"))
-                        .and_then(|v| v.as_str()).unwrap_or("image/png").to_string();
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(b64)
-                        .map_err(|e| format!("b64 decode: {}", e))?;
-                    return Ok(GeneratedImage { bytes, mime });
-                }
-            }
+    // teai 優先 → OpenRouter フォールバック
+    if let Some(k) = teai_key() {
+        match post_chat_image(&teai_base(), &k, prompt, &refs).await {
+            Ok(img) => return Ok(img),
+            Err(e) => tracing::warn!("teai chat-image failed, fallback to openrouter: {}", e),
         }
     }
-    Err("no image data in gemini response".into())
+    let k = or_key().ok_or("no image API key (TEAI_API_KEY / OPENROUTER_API_KEY)")?;
+    post_chat_image(&or_base(), &k, prompt, &refs).await
 }
 
 /// Brand spec for `/api/proposal/:slug/extras/order` — partner-flavoured
@@ -206,57 +311,7 @@ pub struct PartnerSkuBrief<'a> {
 /// bytes (PNG/JPEG depending on Gemini). Caller is responsible for uploading
 /// to R2 and storing the URL in proposal_extras_skus + proposal_skus.
 pub async fn generate_partner_sku(b: &PartnerSkuBrief<'_>) -> Result<GeneratedImage, String> {
-    let key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
-
-    let prompt = build_partner_sku_prompt(b);
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        MODEL, key
-    );
-    let body = json!({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]}
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    let resp = client.post(&url).json(&body).send().await
-        .map_err(|e| format!("send: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
-    let parts = json["candidates"][0]["content"]["parts"]
-        .as_array()
-        .ok_or_else(|| {
-            let pf = json["promptFeedback"].clone();
-            format!("no parts (promptFeedback={})", pf)
-        })?
-        .clone();
-    for part in parts {
-        for k in &["inline_data", "inlineData"] {
-            if let Some(d_obj) = part.get(*k) {
-                if let Some(b64) = d_obj.get("data").and_then(|v| v.as_str()) {
-                    let mime = d_obj
-                        .get("mimeType")
-                        .or_else(|| d_obj.get("mime_type"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("image/png")
-                        .to_string();
-                    let bytes = base64::engine::general_purpose::STANDARD
-                        .decode(b64)
-                        .map_err(|e| format!("b64 decode: {}", e))?;
-                    return Ok(GeneratedImage { bytes, mime });
-                }
-            }
-        }
-    }
-    Err("no image data in gemini response".into())
+    gen_image(&build_partner_sku_prompt(b)).await
 }
 
 /// Text-only Gemini call. Returns the concatenated text parts from the
@@ -268,50 +323,7 @@ pub async fn generate_partner_sku(b: &PartnerSkuBrief<'_>) -> Result<GeneratedIm
 /// directly. The 2.5-pro variant burned all of our 800-token cap on
 /// "thoughtsTokenCount" and returned 0 visible chars in testing.
 pub async fn call_gemini_text(prompt: &str) -> Result<String, String> {
-    const TEXT_MODEL: &str = "gemini-2.5-flash";
-    let key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        TEXT_MODEL, key
-    );
-    let body = json!({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseModalities": ["TEXT"],
-            "maxOutputTokens": 2000,
-            "temperature": 0.4,
-            "thinkingConfig": {"thinkingBudget": 0}
-        }
-    });
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    let resp = client.post(&url).json(&body).send().await
-        .map_err(|e| format!("send: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        return Err(format!("gemini {}: {}", status, &txt[..txt.len().min(400)]));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
-    let parts = json["candidates"][0]["content"]["parts"]
-        .as_array()
-        .ok_or_else(|| format!("no parts (feedback={})", json["promptFeedback"]))?
-        .clone();
-    let mut out = String::new();
-    for part in parts {
-        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
-            out.push_str(t);
-            out.push('\n');
-        }
-    }
-    if out.is_empty() {
-        return Err("no text in gemini response".into());
-    }
-    Ok(out.trim().to_string())
+    teai_chat(prompt, "gemini-2.5-flash", 2000).await
 }
 
 /// MUスコア — 5-axis AI design score for catalog products.
@@ -340,34 +352,9 @@ pub async fn call_gemini_judge(
     title: &str,
     desc: &str,
 ) -> Result<DesignScore, String> {
-    // Same non-thinking flash model as call_gemini_text — cheap, multimodal,
-    // and doesn't burn the token cap on hidden chain-of-thought.
     const JUDGE_MODEL: &str = "gemini-2.5-flash";
-    let key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(90))
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    // Fetch the product image server-side and inline it as base64.
-    let resp = client
-        .get(image_url)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| format!("fetch product image {}: {}", image_url, e))?;
-    if !resp.status().is_success() {
-        return Err(format!("fetch product image {}: status {}", image_url, resp.status()));
-    }
-    let mime = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
-        .unwrap_or_else(|| "image/png".to_string());
-    let bytes = resp.bytes().await.map_err(|e| format!("read product image: {}", e))?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let client = http_client(90)?;
+    let (mime, b64) = fetch_image_b64(&client, image_url).await?;
 
     let title_s = sanitize_prompt_input(title, 120);
     let desc_s = sanitize_prompt_input(desc, 600);
@@ -387,118 +374,24 @@ pub async fn call_gemini_judge(
         title = title_s,
         desc = desc_s,
     );
-    let parts = vec![
-        json!({"text": prompt}),
-        json!({"inline_data": {"mime_type": mime, "data": b64}}),
-    ];
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        JUDGE_MODEL, key
-    );
-    let body = json!({
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["TEXT"],
-            "responseMimeType": "application/json",
-            "maxOutputTokens": 600,
-            "temperature": 0.3,
-            "thinkingConfig": {"thinkingBudget": 0}
-        }
-    });
-    let resp = client.post(&url).json(&body).send().await
-        .map_err(|e| format!("send: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        let head: String = txt.chars().take(400).collect();
-        return Err(format!("gemini {}: {}", status, head));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
-    let parts = json["candidates"][0]["content"]["parts"]
-        .as_array()
-        .ok_or_else(|| format!("no parts (feedback={})", json["promptFeedback"]))?
-        .clone();
-    let mut out = String::new();
-    for part in parts {
-        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
-            out.push_str(t);
-        }
-    }
+
+    let out = teai_vision(&prompt, &mime, &b64, JUDGE_MODEL, 600).await?;
     parse_judge_json(&out)
 }
-
 /// Vision moderation for USER-UPLOADED design images (/make 添付).
 /// AI生成と違い持ち込み画像は生成側の安全フィルタを通っていない上、/make は
 /// 匿名なので、公開(live)前にここで権利・不適切チェックを1回だけ同期で行う。
 /// Returns (flagged, reason_ja). Caller treats Err as flagged (fail-safe).
 pub async fn call_gemini_image_check(image_url: &str) -> Result<(bool, String), String> {
     const CHECK_MODEL: &str = "gemini-2.5-flash";
-    let key = std::env::var("GEMINI_API_KEY")
-        .or_else(|_| std::env::var("GOOGLE_API_KEY"))
-        .map_err(|_| "GEMINI_API_KEY not set".to_string())?;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build()
-        .map_err(|e| format!("client: {}", e))?;
-    let resp = client
-        .get(image_url)
-        .timeout(std::time::Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| format!("fetch upload {}: {}", image_url, e))?;
-    if !resp.status().is_success() {
-        return Err(format!("fetch upload {}: status {}", image_url, resp.status()));
-    }
-    let mime = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
-        .unwrap_or_else(|| "image/png".to_string());
-    let bytes = resp.bytes().await.map_err(|e| format!("read upload: {}", e))?;
-    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let client = http_client(60)?;
+    let (mime, b64) = fetch_image_b64(&client, image_url).await?;
     let prompt = "あなたはECサイトの公開前審査員。添付はユーザーが持ち込んだ、Tシャツ等にプリントして即販売される画像。\
          次のどれかに当てはまる場合のみ flagged=true: 実在ブランドのロゴ/商標、実在人物の顔や名前、\
          著作権のあるキャラクター/アートワークの複製、性的/暴力的/差別的/違法な内容。\
          個人の写真・自作イラスト・風景・ペット・抽象アートなどは flagged=false。迷ったら false に寄せる。\
          出力はJSONのみ: {\"flagged\":true|false,\"reason\":\"日本語で30字以内(falseなら空)\"}";
-    let parts = vec![
-        json!({"text": prompt}),
-        json!({"inline_data": {"mime_type": mime, "data": b64}}),
-    ];
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-        CHECK_MODEL, key
-    );
-    let body = json!({
-        "contents": [{"parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["TEXT"],
-            "responseMimeType": "application/json",
-            "maxOutputTokens": 200,
-            "temperature": 0.0,
-            "thinkingConfig": {"thinkingBudget": 0}
-        }
-    });
-    let resp = client.post(&url).json(&body).send().await
-        .map_err(|e| format!("send: {}", e))?;
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let txt = resp.text().await.unwrap_or_default();
-        let head: String = txt.chars().take(400).collect();
-        return Err(format!("gemini {}: {}", status, head));
-    }
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
-    let parts = json["candidates"][0]["content"]["parts"]
-        .as_array()
-        .ok_or_else(|| format!("no parts (feedback={})", json["promptFeedback"]))?
-        .clone();
-    let mut out = String::new();
-    for part in parts {
-        if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
-            out.push_str(t);
-        }
-    }
+    let out = teai_vision(prompt, &mime, &b64, CHECK_MODEL, 200).await?;
     let t = out.trim();
     let v: serde_json::Value = serde_json::from_str(t)
         .or_else(|e| match (t.find('{'), t.rfind('}')) {
