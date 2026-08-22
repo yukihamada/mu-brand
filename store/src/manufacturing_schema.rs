@@ -95,6 +95,32 @@ pub fn ensure_manufacturing_schema(conn: &Connection) {
         CREATE INDEX IF NOT EXISTS idx_quote_requests_supplier_kind
             ON quote_requests(supplier_id, kind, status);
         CREATE INDEX IF NOT EXISTS idx_quote_requests_spec ON quote_requests(spec_id);
+
+        -- (D) 受注状態機械（Phase3）。RFQ received → 発注(ordered) → 生産中 → 発送 → 完了。
+        -- ロットロック: MOQ 未満の注文は lot_lock=1 でロット(lot_id)が埋まるまで保留、
+        -- lock_deadline 超過で refund_pending（返金実行は人間ゲート）。
+        CREATE TABLE IF NOT EXISTS manufacturing_orders (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            rfq_id         INTEGER,
+            supplier_id    TEXT NOT NULL,
+            kind           TEXT NOT NULL,
+            qty            INTEGER NOT NULL DEFAULT 1,
+            unit_jpy       INTEGER,
+            status         TEXT NOT NULL DEFAULT 'ordered'
+                           CHECK(status IN ('ordered','production','shipped','completed','refund_pending','refunded')),
+            lot_lock       INTEGER NOT NULL DEFAULT 0,
+            lot_id         TEXT,
+            lock_deadline  TEXT,
+            refund_flag    INTEGER NOT NULL DEFAULT 0,
+            refund_reason  TEXT,
+            note           TEXT,
+            owner_email    TEXT,
+            created_at     TEXT DEFAULT (datetime('now')),
+            updated_at     TEXT DEFAULT (datetime('now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_rfq ON manufacturing_orders(rfq_id);
+        CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_status ON manufacturing_orders(status);
+        CREATE INDEX IF NOT EXISTS idx_manufacturing_orders_lot ON manufacturing_orders(lot_id, status);
         ",
     );
     // per-agent 所有者列（後付け・既存テーブルにも足す）。重複時エラーは握り潰す。

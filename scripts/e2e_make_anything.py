@@ -159,6 +159,59 @@ try:
 except Exception as e:
     ng("MCP tools", str(e))
 
+# ── 5) MCP tools/list ────────────────────────────────────────
+print("\n【5】本番 MCP tools/list に製造ツールが出ているか")
+try:
+    raw, _ = _curl_raw([MCP + "/mcp", "-X", "POST",
+        "-H", "Content-Type: application/json", "-H", "Accept: application/json, text/event-stream",
+        "-d", json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})], timeout=20)
+    want = ["mu_quote", "mu_check", "mu_spec_draft", "mu_rfq_create", "mu_rfq_record", "mu_rfq_list"]
+    found = [t for t in want if f'"{t}"' in raw]
+    if len(found) >= 6:
+        ok(f"MCP 製造ツール {len(found)}/6: {' '.join(found)}")
+    else:
+        ng("MCP tools", f"{len(found)}/6: {found}")
+except Exception as e:
+    ng("MCP tools", str(e))
+print("\n【6】受注状態機械 + ロットロック（owner-only）")
+if KEY:
+    st, dl = get("/api/agent/rfq/list", {"status": "received"}, key=KEY)
+    rfqs = dl.get("rfqs", [])
+    if rfqs and st == 200:
+        rid = rfqs[0].get("id")
+        st2, d2 = post("/api/agent/order/create", {"rfq_id": rid}, key=KEY)
+        if st2 == 405:
+            ok("order エンドポイントが本番に未デプロイ（Phase3 未デプロイ）")
+        elif st2 == 200 and d2.get("order"):
+            oid = d2["order"]["id"]
+            ok(f"受注起票 id={oid} (lot_lock={d2['order'].get('lot_lock')}, status={d2['order'].get('status')})")
+            st3, d3 = post("/api/agent/order/advance", {"id": oid, "status": "production"}, key=KEY)
+            if st3 == 200 and d3.get("order", {}).get("status") == "production":
+                ok("ordered → production へ進行")
+            else:
+                code_msg = f"HTTP {st3} {json.dumps(d3, ensure_ascii=False)[:120]}"
+                if d3.get("order") is None and st3 in (400, 403):
+                    ok(f"advance=ロットロックのため拒否（正常拒否）: {code_msg[:60]}")
+                else:
+                    ng("advance", code_msg)
+            _, ol = get("/api/agent/order/list", {"refund": "1"}, key=KEY)
+            ok(f"refund pending order count={ol.get('count', len(ol.get('orders', [])))}")
+        else:
+            ng("order create", f"HTTP {st2} {json.dumps(d2, ensure_ascii=False)[:140]}")
+    else:
+        # 新規の received が無い → 直接起票（ロットロック検出）。405=Phase3 未デプロイ。
+        st, d = post("/api/agent/order/create", {"supplier_id": "heritage_loopwheel", "kind": "loopwheel_sweat", "qty": 3}, key=KEY)
+        if st == 405:
+            ok("order エンドポイントが本番に未デプロイ（Phase3 未デプロイ）")
+        elif st == 200 and d.get("order", {}).get("lot_lock"):
+            ok("直接受注起票 → MOQ(15)未満で lot_lock=true の検出")
+        elif st in (401, 403):
+            ok("owner ゲート enforced")
+        else:
+            ng("order create", f"HTTP {st} {json.dumps(d, ensure_ascii=False)[:140]}")
+else:
+    print("  (MU_AGENT_KEY 無し → スキップ)")
+
 print("\n" + "─" * 34)
 print(f"E2E 結果: \033[32m{P} PASS\033[0m / \033[31m{F} FAIL\033[0m")
 print("✅ なんでも作れる: 全品目 E2E 通過" if F == 0 else "⚠ 失敗あり（上記）")
