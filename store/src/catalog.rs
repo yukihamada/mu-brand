@@ -12592,7 +12592,7 @@ pub async fn shop_pdp(
             r#"<details style="margin-top:10px"><summary style="font-size:12.5px;color:var(--gold);cursor:pointer">🎁 前回のお届け先でワンクリック購入</summary>
 <div style="display:flex;gap:8px;margin-top:8px">
 <input id="ocemail" type="email" autocomplete="email" placeholder="購入時のメール" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px">
-<button type="button" class="oc2" onclick="oneclick('{}', document.getElementById('ocemail').value.trim())" style="background:transparent;border:1px solid var(--gold);color:var(--gold);padding:11px 14px;border-radius:3px;cursor:pointer;font-weight:600;white-space:nowrap">購入</button>
+<button type="button" class="oc2" onclick="window.location.href='/api/shop/checkout?sku={}&one_click_email='+encodeURIComponent(document.getElementById('ocemail').value.trim())" style="background:transparent;border:1px solid var(--gold);color:var(--gold);padding:11px 14px;border-radius:3px;cursor:pointer;font-weight:600;white-space:nowrap">購入</button>
 </div>
 <div style="font-size:11px;color:#777;margin-top:5px">そのメールでの購入履歴があれば、登録済みのお届け先に発送します（住所は表示されません）。</div></details>"#, sku
         );
