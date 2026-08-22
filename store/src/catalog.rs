@@ -12587,12 +12587,23 @@ pub async fn shop_pdp(
         } else {
             (String::new(), String::new())
         };
+        // One-click purchase button for returning customers
+        let oneclick_html = format!(
+            r#"<details style="margin-top:10px"><summary style="font-size:12.5px;color:var(--gold);cursor:pointer">🎁 前回のお届け先でワンクリック購入</summary>
+<div style="display:flex;gap:8px;margin-top:8px">
+<input id="ocemail" type="email" autocomplete="email" placeholder="購入時のメール" style="flex:1;background:#0a0a0a;border:1px solid #1f1f1f;color:#fff;padding:11px;font-size:14px;border-radius:3px">
+<button type="button" class="oc2" onclick="oneclick('{}', document.getElementById('ocemail').value.trim())" style="background:transparent;border:1px solid var(--gold);color:var(--gold);padding:11px 14px;border-radius:3px;cursor:pointer;font-weight:600;white-space:nowrap">購入</button>
+</div>
+<div style="font-size:11px;color:#777;margin-top:5px">そのメールでの購入履歴があれば、登録済みのお届け先に発送します（住所は表示されません）。</div></details>"#, sku
+        );
+        
         format!(
-            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" rel="nofollow" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{cross_script}{phone_script}{acctgift_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" rel="nofollow" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{oneclick_html}{cross_script}{phone_script}{acctgift_script}"#,
             cross_html = cross_html,
             phone_html = phone_html,
             gift_html = gift_html,
             acctgift_html = acctgift_html,
+            oneclick_html = oneclick_html,
             base = base,
             price = format_jpy(price_jpy),
             fulfil_note = fulfil_note,
@@ -13841,6 +13852,10 @@ pub struct CheckoutQuery {
     pub gift_msg: Option<String>,
     #[serde(default)]
     pub gift_from: Option<String>,
+    /// One-click purchase: if provided and has past submitted order with address,
+    /// skip Stripe address collection and pre-fill for fulfillment.
+    #[serde(default)]
+    pub one_click_email: Option<String>,
 }
 
 /// Pull a referral code from the `mu_ref` cookie (set by `/r/:code`).
@@ -14359,6 +14374,41 @@ pub async fn shop_checkout(
         cf_n += 1;
     }
     let _ = cf_n;
+    // One-click purchase: if email provided and has past submitted order with address,
+    // skip Stripe address collection and pre-fill metadata for fulfillment
+    if let Some(email) = q.one_click_email.as_deref().filter(|e| !e.is_empty()) {
+        if looks_like_email(email) {
+            let past: Option<(String, String, String)> = {
+                let conn = db.lock().unwrap();
+                conn.query_row(
+                    "SELECT COALESCE(customer_name,''), COALESCE(customer_phone,''), COALESCE(shipping_address_json,'') \
+                     FROM catalog_orders \
+                     WHERE LOWER(customer_email)=? AND status='submitted' AND COALESCE(shipping_address_json,'')!='' \
+                     ORDER BY created_at DESC LIMIT 1",
+                    rusqlite::params![email.to_lowercase()],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                ).ok()
+            };
+            if let Some((cust_name, cust_phone, sa_raw)) = past {
+                let sa: serde_json::Value = serde_json::from_str(&sa_raw).unwrap_or(serde_json::json!({}));
+                let line1 = sa["line1"].as_str().unwrap_or("");
+                let city = sa["city"].as_str().unwrap_or("");
+                let postal = sa["postal_code"].as_str().unwrap_or("");
+                if !line1.is_empty() && !city.is_empty() && !postal.is_empty() {
+                    // Pre-fill shipping address in metadata for fulfillment
+                    let addr = serde_json::json!({
+                        "name": cust_name, "line1": line1, "line2": sa["line2"].as_str().unwrap_or(""),
+                        "city": city, "state": sa["state"].as_str().unwrap_or(""), "postal_code": postal,
+                        "country": sa["country"].as_str().unwrap_or("JP"), "phone": cust_phone,
+                    });
+                    form.push(("metadata[one_click_address]", addr.to_string()));
+                    form.push(("metadata[one_click_email]", email.to_lowercase()));
+                    // Skip Stripe shipping address collection
+                    // (we'll handle fulfillment with the pre-filled address)
+                }
+            }
+        }
+    }
     // Affiliate attribution: explicit ?ref= wins, else the mu_ref cookie set
     // by /r/:code. Validated/resolved to a commission at the webhook.
     if let Some(rc) = q.referrer.as_deref().and_then(sanitize_ref)
