@@ -9,6 +9,7 @@ mod manufacturing_schema;
 mod manufacturing_req;
 mod spec;
 mod rfq;
+mod order;
 mod work;
 mod creators;
 mod nouns;
@@ -71201,6 +71202,11 @@ async fn main() {
         .route("/api/agent/rfq/record", post(agent_api::agent_rfq_record))
         .route("/api/agent/rfq/list", get(agent_api::agent_rfq_list))
         .route("/api/agent/rfq/page", get(agent_api::agent_rfq_page))
+        // Phase3: 受注状態機械 + ロットロック
+        .route("/api/agent/order/create", post(agent_api::agent_order_create))
+        .route("/api/agent/order/advance", post(agent_api::agent_order_advance))
+        .route("/api/agent/order/list", get(agent_api::agent_order_list))
+        .route("/api/agent/order/page", get(agent_api::agent_order_page))
         .route("/admin/requirements/upsert", post(agent_api::admin_requirements_upsert))
         .route("/admin/requirements/refresh", get(agent_api::admin_requirements_refresh))
         .route("/api/ma/review/queue", get(agent_api::ma_review_queue))
