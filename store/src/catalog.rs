@@ -9415,7 +9415,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         };
         // DTG: 白(or黒)背景 → 後処理で背景透過にしてから保存（色生地でも四角が出ない）。
         // AOP/full-bleed/ジャケット: 全面なので透過キーは禁止（フチまで色を残す）→ そのまま使う。
-        let (design_bytes, design_mime) = if is_aop || is_full_bleed || kind == "song" {
+        let (mut design_bytes, mut design_mime) = if is_aop || is_full_bleed || kind == "song" {
             (img.bytes.clone(), img.mime.clone())
         } else {
             match make_design_transparent(&img.bytes) {
@@ -9423,6 +9423,34 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 None => (img.bytes.clone(), img.mime.clone()),
             }
         };
+        // Gemini が紙テクスチャ/色付き背景等の「白でない背景」で返すと透過キーが効かず、
+        // 生地に四角いパッチとして刷られる(design_remix と同じ既知の失敗モード)。
+        // 非透過率が高すぎたら一度だけ純白背景を強要して織り直す(+生成1回分の台帳記録)。
+        if !(is_aop || is_full_bleed || kind == "song")
+            && design_tone_stats(&design_bytes).map(|(_, _, cov)| cov > 85).unwrap_or(false)
+        {
+            let retried = {
+                let conn = db.lock().unwrap();
+                spend_or_refuse(&conn, "ai_image", GEMINI_IMAGE_COST_JPY,
+                    &format!("public_make retry(bg) sku={}", sku), Some(&sku))
+            };
+            if retried {
+                let retry_prompt = format!(
+                    "{} CRITICAL: the background MUST be pure #FFFFFF white — \
+                     NO paper texture, NO canvas, NO panel, NO frame, NO off-white tint. \
+                     Only the artwork itself on plain white.", design_prompt);
+                if let Ok(img2) = if use_local { local_gen_image(&retry_prompt).await } else { crate::gemini::call_gemini(&retry_prompt).await } {
+                    let (b2, m2) = match make_design_transparent(&img2.bytes) {
+                        Some(b) => (b, "image/png".to_string()),
+                        None => (img2.bytes.clone(), img2.mime.clone()),
+                    };
+                    if design_tone_stats(&b2).map(|(_, _, cov)| cov <= 85).unwrap_or(false) {
+                        design_bytes = b2;
+                        design_mime = m2;
+                    }
+                }
+            }
+        }
         let key = format!("catalog/{}.png", sku);
         let Some(u) = crate::store_r2_bytes(&key, &design_bytes, &design_mime).await else {
             return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像アップロードに失敗しました"}))).into_response();
