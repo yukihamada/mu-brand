@@ -3,11 +3,15 @@ import Foundation
 enum APIError: LocalizedError {
     case badStatus(Int)
     case message(String)
+    // サーバが 401 + need_register:true を返した(=作るには登録が必要)。
+    // MakeView はこれを見て通常のエラー表示ではなく登録シートを開く。
+    case needRegister
 
     var errorDescription: String? {
         switch self {
         case .badStatus(let code): return "HTTP \(code)"
         case .message(let m): return m
+        case .needRegister: return String(localized: "make.registerGate.title")
         }
     }
 }
@@ -79,6 +83,10 @@ struct MUAPI {
         guard let http = resp as? HTTPURLResponse else { throw APIError.badStatus(-1) }
         guard (200...299).contains(http.statusCode) else {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            // 2026-08-28: 作るには登録必須。未ログインは 401+need_register=true。
+            if http.statusCode == 401, json?["need_register"] as? Bool == true {
+                throw APIError.needRegister
+            }
             throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
         }
         return try JSONDecoder().decode(MakeResult.self, from: data)
@@ -120,6 +128,10 @@ struct MUAPI {
         guard let http = resp as? HTTPURLResponse else { throw APIError.badStatus(-1) }
         guard (200...299).contains(http.statusCode) else {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            // 2026-08-28: 作るには登録必須。未ログインは 401+need_register=true。
+            if http.statusCode == 401, json?["need_register"] as? Bool == true {
+                throw APIError.needRegister
+            }
             throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
         }
         return try JSONDecoder().decode(MakeResult.self, from: data)

@@ -32,6 +32,9 @@ struct MakeView: View {
     @State private var showCheckout = false
     @State private var showGift = false
     @State private var showAIConsent = false
+    // 2026-08-28: 作るには登録必須。未ログインで作ろうとしたら登録シートを開き、
+    // 完了したら自動でもう一度 performMake() を叩く(onDismiss)。
+    @State private var showAuthGate = false
     @FocusState private var promptFocused: Bool
 
     // デザイン依頼: このお題を誰かに頼む(相手が作る→自分が受け取る→作手に印税)。
@@ -243,6 +246,9 @@ struct MakeView: View {
                 Text("完成のお知らせ・受け取りに使います")
             }
             .aiConsentAlert(isPresented: $showAIConsent) { performMake() }
+            .sheet(isPresented: $showAuthGate, onDismiss: { if session.isLoggedIn { performMake() } }) {
+                AuthGateSheet()
+            }
         }
     }
 
@@ -752,6 +758,8 @@ struct MakeView: View {
                     successHaptic()
                     startPolling(sku: nr.sku)
                 }
+            } catch APIError.needRegister {
+                await MainActor.run { isRemixing = false; showAuthGate = true }
             } catch {
                 await MainActor.run { errorMessage = error.localizedDescription; isRemixing = false }
             }
@@ -904,6 +912,8 @@ struct MakeView: View {
                 // (案を増やしすぎると時間あたりの生成上限に当たるので控えめに。
                 //  さらに欲しい人は「もう1案つくる」で追加できる。)
                 await autoVariations(prompt: text, count: 1)
+            } catch APIError.needRegister {
+                await MainActor.run { isMaking = false; showAuthGate = true }
             } catch {
                 await MainActor.run { errorMessage = error.localizedDescription; isMaking = false }
             }
@@ -955,6 +965,34 @@ struct MakeView: View {
         let gen = UINotificationFeedbackGenerator()
         gen.prepare()
         gen.notificationOccurred(.success)
+    }
+}
+
+// 2026-08-28: 作るには登録必須(無断使用/著作権侵害の防止・1人1日5点まで)。
+// 既存の ClosetView.AuthView(メール→6桁コード)をそのまま再利用し、
+// ログインが成立したら自動で閉じる(呼び出し側の onDismiss が作成を再試行)。
+private struct AuthGateSheet: View {
+    @EnvironmentObject private var session: Session
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(localized: "make.registerGate.title"))
+                    .font(.headline)
+                Text(String(localized: "make.registerGate.subtitle"))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding([.horizontal, .top])
+            AuthView()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(String(localized: "make.cancel")) { dismiss() }
+                    }
+                }
+        }
+        .onChange(of: session.isLoggedIn) { _, loggedIn in if loggedIn { dismiss() } }
     }
 }
 

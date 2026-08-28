@@ -91,6 +91,8 @@
 "pdp.seller" = "販売者: 株式会社イネブラ（Enabler Inc.）— お支払いは Enabler Inc. 名義で処理されます";
 "pdp.openWeb" = "Webで開く（ギフト・詳細）";
 
+"make.registerGate.title" = "作るには登録が必要です";
+"make.registerGate.subtitle" = "無断使用や著作権侵害を防ぐためです。1人1日5点まで作れます。";
 "auth.lead" = "メールアドレスに6桁のコードを送ります。コードを入れるだけでログイン完了。パスワードはありません。";
 "auth.email" = "メールアドレス";
 "auth.code" = "6桁コード";

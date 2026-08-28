@@ -26052,6 +26052,7 @@ const BLOG_100_IN_20_RAW: &str = include_str!("../static/blog/100-in-20-days-str
 const BLOG_ALL_IN_ON_MU_RAW: &str = include_str!("../static/blog/all-in-on-mu.md");
 const BLOG_BJJ_SHIRT_RASHGUARD_RAW: &str = include_str!("../static/blog/bjj-shirt-rashguard-guide.md");
 const BLOG_JIUFLOW_ZERO_INVENTORY_RAW: &str = include_str!("../static/blog/jiuflow-zero-inventory-drop.md");
+const BLOG_MAKE_REGISTRATION_RAW: &str = include_str!("../static/blog/make-registration-and-daily-cap.md");
 
 fn render_blog_md(title: &str, md: &str) -> String {
     let body = md_to_html_simple(md);
@@ -26131,6 +26132,10 @@ async fn blog_bjj_shirt_rashguard() -> Html<String> {
 
 async fn blog_jiuflow_zero_inventory() -> Html<String> {
     Html(render_blog_md("JiuFlowユーザー限定グッズを、在庫ゼロのままAIで作った話", BLOG_JIUFLOW_ZERO_INVENTORY_RAW))
+}
+
+async fn blog_make_registration() -> Html<String> {
+    Html(render_blog_md("「作る」に登録必須 + 1日5点までにした話", BLOG_MAKE_REGISTRATION_RAW))
 }
 
 /// /lp/:persona — Google Ads landing pages, persona-keyed.
@@ -71139,6 +71144,7 @@ async fn main() {
         .route("/blog/all-in-on-mu", get(blog_all_in_on_mu))
         .route("/blog/bjj-shirt-rashguard-guide", get(blog_bjj_shirt_rashguard))
         .route("/blog/jiuflow-zero-inventory-drop", get(blog_jiuflow_zero_inventory))
+        .route("/blog/make-registration-and-daily-cap", get(blog_make_registration))
         .route("/lp/:persona", get(landing_page))
         .route("/grachan82", get(grachan82_page))
         .route("/sato-ion", get(grachan82_page))

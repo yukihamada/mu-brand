@@ -2388,6 +2388,9 @@ pub async fn design_remix_create(
             "ok": false, "error": "リミックスは1時間に5回まで。少し時間をおいて試してください。"
         }))).into_response();
     }
+    // 登録必須+1日上限ゲート(2026-08-28・/make と共通)。Gemini を叩く前に弾く。
+    let maker_email = match require_maker_email(&db, &headers) { Ok(e) => e, Err(r) => return r };
+    { let conn = db.lock().unwrap(); if let Err(r) = check_daily_make_cap(&conn, &maker_email) { return r; } }
     let (base_label, design, base_meta, base_price) = {
         let conn = db.lock().unwrap();
         let Some((_b, label, _d, design, meta)) = design_variant_base_row(&conn, &base_sku) else {
@@ -2525,15 +2528,6 @@ pub async fn design_remix_create(
     };
     let retail_jpy = base_price.max(spec.retail_jpy);
     let (is_active_i, status_s): (i64, &str) = if flagged { (0, "review") } else { (1, "live") };
-    let maker_email = crate::bearer_or_session_email(&db, &headers, None)
-        .or_else(|| {
-            headers.get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
-                .and_then(|v| urlencoding::decode(v).ok())
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| s.contains('@') && s.len() <= 254)
-        });
     let edit_token = format!("{:016x}", rand::random::<u64>());
     {
         let conn = db.lock().unwrap();
@@ -2553,9 +2547,7 @@ pub async fn design_remix_create(
         if let Some(ome) = base_meta.get("maker_email").and_then(|v| v.as_str()) {
             m.insert("original_maker_email".into(), serde_json::Value::from(ome));
         }
-        if let Some(me) = &maker_email {
-            m.insert("maker_email".into(), serde_json::Value::from(me.clone()));
-        }
+        m.insert("maker_email".into(), serde_json::Value::from(maker_email.clone()));
         let desc = format!("{} — {}", display, hook);
         let _ = conn.execute(
             "INSERT INTO catalog_products (
@@ -5777,6 +5769,59 @@ footer a:hover{{color:var(--gold)}}
 /// Cost guard for the unauthenticated /make endpoint: max public creations/hour.
 const MAKE_HOURLY_CAP: i64 = 40;
 
+/// 2026-08-28 本人指示: 匿名の使い捨て生成(著作権丸投げ/濫用)を防ぐため、
+/// 商品作成(/make・/design-remix)は登録(メールログイン)必須+1人1日この点数まで。
+const MAKE_DAILY_CAP_PER_MAKER: i64 = 5;
+
+/// 呼び出し元の作者メールを解決する。Bearer api_key / mu_collab_session cookie
+/// (crate::bearer_or_session_email — アプリ/サイト共通の認証)を優先し、
+/// 旧 /make メール認証だけ済ませた端末は mu_make_email cookie にフォールバック。
+fn resolve_maker_email(db: &Db, headers: &axum::http::HeaderMap) -> Option<String> {
+    crate::bearer_or_session_email(db, headers, None)
+        .or_else(|| {
+            headers.get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
+                .and_then(|v| urlencoding::decode(v).ok())
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| s.contains('@') && s.len() <= 254)
+        })
+}
+
+/// 商品作成の入り口ゲート: 未登録は 401(need_register=true)。クライアントは
+/// POST /api/collab/auth/start {email} → /api/collab/auth/verify {email,code}
+/// (mu_collab_session cookie) か、アプリの POST /api/agent/register(同じ経路の
+/// エイリアス、api_key を Authorization: Bearer で送る)で先に登録する。
+fn require_maker_email(db: &Db, headers: &axum::http::HeaderMap) -> Result<String, Response> {
+    resolve_maker_email(db, headers).ok_or_else(|| {
+        (StatusCode::UNAUTHORIZED, axum::Json(serde_json::json!({
+            "ok": false,
+            "need_register": true,
+            "error": "作るには登録(メールでログイン)が必要です。",
+        }))).into_response()
+    })
+}
+
+/// 1人1日 MAKE_DAILY_CAP_PER_MAKER 点まで(/make + /design-remix 合算)。
+/// 超過は 429。maker_email は catalog_products.meta_json に作成時点で必ず刻まれる
+/// (require_maker_email が先に通っている前提)。
+fn check_daily_make_cap(conn: &rusqlite::Connection, email: &str) -> Result<(), Response> {
+    let made_today: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM catalog_products \
+         WHERE legacy_source IN ('public_make','design_remix') \
+         AND LOWER(json_extract(meta_json,'$.maker_email'))=? \
+         AND created_at > datetime('now','-1 day')",
+        rusqlite::params![email], |r| r.get(0),
+    ).unwrap_or(0);
+    if made_today >= MAKE_DAILY_CAP_PER_MAKER {
+        return Err((StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({
+            "ok": false,
+            "error": format!("1日に作れるのは{}点までです。また明日お試しください。", MAKE_DAILY_CAP_PER_MAKER),
+        }))).into_response());
+    }
+    Ok(())
+}
+
 /// 「作る動線」: 全ページに貼れる自己完結CTA（インラインstyle）。`src`はfunnel計測タグ。
 /// 作る数の最大化が目的 — どのページからでも1タップで /make へ。
 pub fn make_cta_banner(src: &str) -> String {
@@ -6872,16 +6917,16 @@ pub(crate) const MAKE_EN_T: &[(&str, &str)] = &[
         (r#"<!doctype html><html lang="ja">"#, r#"<!doctype html><html lang="en">"#),
         ("<title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>",
          "<title>Make a Custom AI T-Shirt — Say One Line · From 1 Piece · Zero Stock | MU MAKE · wearmu.com</title>"),
-        (r#"content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。""#,
-         r#"content="Say one line and AI designs your original tee or hoodie. Done in ~30 seconds, buy from a single piece (¥4,900+). No login, zero stock. Your piece joins the shop — every sale pays the maker 10% (¥490+/tee).""#),
+        (r#"content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。メール登録(10秒・1日5点まで)・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。""#,
+         r#"content="Say one line and AI designs your original tee or hoodie. Done in ~30 seconds, buy from a single piece (¥4,900+). Free email sign-up (10s, 5/day), zero stock. Your piece joins the shop — every sale pays the maker 10% (¥490+/tee).""#),
         (r#"<link rel="canonical" href="https://wearmu.com/make">"#,
          r#"<link rel="canonical" href="https://wearmu.com/make?lang=en">"#),
         (r#"<meta property="og:url" content="https://wearmu.com/make">"#,
          r#"<meta property="og:url" content="https://wearmu.com/make?lang=en">"#),
         (r#"content="MU つくる""#, r#"content="MU MAKE""#),
         ("言うだけで、Tシャツができる。— MU MAKE", "Say it, and your tee exists. — MU MAKE"),
-        (r#"content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら売上の10%が作り手に。ログイン不要。""#,
-         r#"content="AI designs it in seconds → buy from one piece (¥4,900+). Your piece joins the shop; every sale pays you 10%. No login.""#),
+        (r#"content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら売上の10%が作り手に。メール登録(無料・10秒)。""#,
+         r#"content="AI designs it in seconds → buy from one piece (¥4,900+). Your piece joins the shop; every sale pays you 10%. Free email sign-up (10s).""#),
         // ── JSON-LD (長い複合文字列 — 短い対の前に置く) ──
         (r#""name":"AIでオリジナルTシャツを作る方法（MU MAKE）""#,
          r#""name":"How to make a custom AI T-shirt (MU MAKE)""#),
@@ -6891,8 +6936,8 @@ pub(crate) const MAKE_EN_T: &[(&str, &str)] = &[
          r#""name":"AI draws","text":"In about 30 seconds the AI generates the design and a product page.""#),
         (r#""name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび売上の10%が作り手の報酬。""#,
          r#""name":"Buy it · it joins the shop","text":"Buy from a single piece on the spot (tees from ¥4,900). Your piece joins the shared shelf and every sale pays the maker 10%.""#),
-        (r#""name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}"#,
-         r#""name":"Is it really login-free?","acceptedAnswer":{"@type":"Answer","text":"Yes. Create and buy on the spot with no account."}"#),
+        (r#""name":"アカウント登録は必要ですか？","acceptedAnswer":{"@type":"Answer","text":"作るにはメールで6桁コードを受け取る10秒の登録が必要です(パスワード不要・1人1日5点まで)。無断使用や著作権侵害を防ぐためです。買うだけなら登録不要です。"}"#,
+         r#""name":"Do I need to register?","acceptedAnswer":{"@type":"Answer","text":"To create, yes — a 10-second email code, no password (1 person, 5/day). This is to stop anonymous misuse and rights abuse. Buying doesn’t require an account."}"#),
         (r#""name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、ラッシュガード¥9,800〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}"#,
          r#""name":"How much does it cost?","acceptedAnswer":{"@type":"Answer","text":"Tees from ¥4,900, rashguards from ¥9,800, sweatshirts from ¥7,800, hoodies from ¥8,800. Made to order from a single piece."}"#),
         (r#""name":"作ったデザインはすぐ公開されますか？","acceptedAnswer":{"@type":"Answer","text":"ほとんどは即公開・即購入できます。商標・実在人物など権利リスクがあるものだけ人が確認してから公開します。"}"#,
@@ -6910,10 +6955,10 @@ pub(crate) const MAKE_EN_T: &[(&str, &str)] = &[
          "Or hit the REST API directly: register → generate designs → sell, end to end."),
         ("使い方とツール一覧 → /build", "Docs &amp; tool list → /build"),
         // ── A/B/C バリアント (JS内・長い方から) ──
-        ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>（<a href=\"/credit\" style=\"color:#ffd700\">仕組み</a>）。",
-         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone’s shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b> (<a href=\"/credit\" style=\"color:#ffd700\">how it works</a>)."),
-        ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
-         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. No login, zero stock. Your piece joins everyone’s shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b>."),
+        ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。在庫ゼロ・メール登録(10秒)だけ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>（<a href=\"/credit\" style=\"color:#ffd700\">仕組み</a>）。",
+         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. Zero stock, just a 10s email sign-up. Your piece joins everyone’s shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b> (<a href=\"/credit\" style=\"color:#ffd700\">how it works</a>)."),
+        ("ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。在庫ゼロ・メール登録(10秒)だけ。あなたの一着はみんなの棚にも並び、<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
+         "Say one line and AI designs it → <b>buy from a single piece on the spot</b>. Zero stock, just a 10s email sign-up. Your piece joins everyone’s shelf and <b style=\"color:#ffd700\">every sale pays you 10%</b>."),
         ("考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style=\"color:#ffd700\">売れたら売上の10%</b>。",
          "Faster than thinking. <b>Just tap one below</b> and AI turns it into a piece. Free input works too. <b style=\"color:#ffd700\">Every sale pays you 10%</b>."),
         ("ひとことどうぞ。話すように書けば、AI があなたの一着にします。<b style=\"color:#ffd700\">売れたら売上の10%が作り手に</b>。",
@@ -7082,7 +7127,7 @@ fn make_html_en(mut h: String) -> String {
 const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>AIでオリジナルTシャツ作成 — 言うだけ10秒・1枚から・在庫ゼロ | MU MAKE · wearmu.com</title>
-<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。ログイン不要・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
+<meta name="description" content="ひとこと言うだけでAIがオリジナルTシャツ・パーカーをデザイン。30秒ほどで完成、その場で1枚から購入OK（¥4,900〜）。メール登録(10秒・1日5点まで)・在庫ゼロ。作った一着は店に並び、売れたら売上の10%が作り手に(Tシャツなら¥490〜/枚)。">
 <link rel="canonical" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="ja" href="https://wearmu.com/make">
 <link rel="alternate" hreflang="en" href="https://wearmu.com/make?lang=en">
@@ -7097,7 +7142,7 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://wearmu.com/make">
 <meta property="og:title" content="言うだけで、Tシャツができる。— MU MAKE">
-<meta property="og:description" content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら売上の10%が作り手に。ログイン不要。">
+<meta property="og:description" content="AIが10秒でデザイン→1枚から買える（¥4,900〜）。あなたの一着が店に並び、売れたら売上の10%が作り手に。メール登録(無料・10秒)。">
 <meta property="og:image" content="https://wearmu.com/static/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="言うだけで、Tシャツができる。— MU MAKE">
@@ -7110,7 +7155,7 @@ const MAKE_HTML: &str = r##"<!doctype html><html lang="ja"><head>
    {"@type":"HowToStep","position":2,"name":"AIが描く","text":"30秒ほどでAIがデザインを生成し、商品ページができる。"},
    {"@type":"HowToStep","position":3,"name":"買える・並ぶ","text":"その場で1枚から購入できる（Tシャツ¥4,900〜）。作った一着はみんなの棚に並び、売れるたび売上の10%が作り手の報酬。"}]},
  {"@type":"FAQPage","mainEntity":[
-  {"@type":"Question","name":"本当にログイン不要ですか？","acceptedAnswer":{"@type":"Answer","text":"はい。アカウント登録なしで、その場で作成・購入できます。"}},
+  {"@type":"Question","name":"アカウント登録は必要ですか？","acceptedAnswer":{"@type":"Answer","text":"作るにはメールで6桁コードを受け取る10秒の登録が必要です(パスワード不要・1人1日5点まで)。無断使用や著作権侵害を防ぐためです。買うだけなら登録不要です。"}},
   {"@type":"Question","name":"価格はいくらですか？","acceptedAnswer":{"@type":"Answer","text":"Tシャツ¥4,900〜、ラッシュガード¥9,800〜、スウェット¥7,800〜、パーカー¥8,800〜。1枚から受注生産です。"}},
   {"@type":"Question","name":"作ったデザインはすぐ公開されますか？","acceptedAnswer":{"@type":"Answer","text":"ほとんどは即公開・即購入できます。商標・実在人物など権利リスクがあるものだけ人が確認してから公開します。"}},
   {"@type":"Question","name":"売れたらどうなりますか？","acceptedAnswer":{"@type":"Answer","text":"あなたの一着が売れるたび、売上の10%(Tシャツなら¥490〜/枚)をMUクレジットとして受け取れます。詳細は wearmu.com/credit。"}}]}]}
@@ -7214,7 +7259,7 @@ button:disabled{opacity:.5;cursor:default}
 <nav><a class="brand" href="/make">MU MAKE</a><div><a href="/make?lang=en" style="opacity:.6">EN</a> <a href="/start" data-funnel="cta_click" data-funnel-cta="make_nav_start" style="color:#ffd700">作って売る</a> <a href="/shop">SHOP</a></div></nav>
 <div class="wrap">
   <h1 id="mkH1">言うだけで、Tシャツができる。</h1>
-  <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>（<a href="/credit" style="color:#ffd700">仕組み</a>）。</div>
+  <div class="sub" id="mkSub">ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。在庫ゼロ・メール登録(10秒)だけ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>（<a href="/credit" style="color:#ffd700">仕組み</a>）。</div>
   <div class="steps">
     <div class="step"><div class="n">STEP 1</div><div class="t">言う</div><div class="d">作りたいものを一言。日本語でOK。</div></div>
     <div class="step"><div class="n">STEP 2</div><div class="t">AIが描く</div><div class="d">30秒ほどでデザインと商品ページが完成。</div></div>
@@ -7318,7 +7363,7 @@ var VIS=muVisitor();
 // バリアント定義（コピー＋入力UX）。design/parseプロンプトはサーバ共通（品質担保）。
 var MKV_DEFS={
   a:{h1:'言うだけで、Tシャツができる。',
-     sub:'ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。ログインも在庫もゼロ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>。',
+     sub:'ひとこと言えば AI がデザイン → <b>その場で 1 枚から買える</b>。在庫ゼロ・メール登録(10秒)だけ。あなたの一着はみんなの棚にも並び、<b style="color:#ffd700">売れたら売上の10%が作り手に</b>。',
      ph:'例：富士山をミニマルな一本線で描いた黒Tシャツ', quick:false},
   b:{h1:'タップして、Tシャツ。',
      sub:'考えるより早い。<b>下から選ぶだけ</b>で AI が一着にします。自由入力もOK。<b style="color:#ffd700">売れたら売上の10%</b>。',
@@ -7447,7 +7492,12 @@ async function runMake(){
     const j=await r.json();
     if(myRun!==RUNSEQ) return; // より新しい生成が走っている → この結果は捨てる
     genDone();
-    if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
+    if(r.status===401&&j.need_register){
+      // 2026-08-28: 作るには登録必須。ここでメール認証を済ませたら自動で再送する。
+      $('#out').innerHTML=registerGateHtml();
+      wireRegisterGate();
+    }
+    else if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
       // 添付は1作品で消費(次の作成に紛れ込まない)。
       ATT=null;attF.value='';attRender();
@@ -7529,6 +7579,56 @@ async function muRemix(e,sku){
     renderResult(j,w,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));
   }catch(err){btn.disabled=false;btn.textContent=old;alert('通信エラー。もう一度お試しください。');}
   return false;
+}
+// 登録ゲート(2026-08-28): 作るには先にメール登録が必要(著作権丸投げ/濫用防止・1日5点まで)。
+// claimCardHtml と同じ見た目・同じ6桁コードの仕組み(/api/collab/auth/*)。
+// 認証が済むと mu_collab_session cookie が付き、runMake() を自動で再送する。
+function registerGateHtml(){
+  return '<div class="card gate">'
+    +'<div class=gatebody>'
+    +'<div class=gateh>まず、<b>メールで登録</b>。</div>'
+    +'<div class=gatesub>6桁コード・10秒で完了。無断使用/著作権侵害を防ぐための本人確認です。1日に作れるのは<b>5点まで</b>。メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>。</div>'
+    +'<div id=rStep1><div class=saverow><input id=rEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=rSend>コードを送る</button></div></div>'
+    +'<div id=rStep2 style="display:none"><div class=saverow><input id=rCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=rVerify>登録して作る</button></div><button id=rBack class=gback>メールアドレスを入れ直す</button></div>'
+    +'<div class=savemsg id=rMsg></div>'
+    +'</div></div>';
+}
+function wireRegisterGate(){
+  var email='';
+  var msg=$('#rMsg');
+  function showMsg(t,err){msg.style.color=err?'#ff8a7a':'rgba(245,245,240,.7)';msg.textContent=t;}
+  var send=$('#rSend');
+  send.onclick=function(){
+    email=$('#rEmail').value.trim();
+    if(!email||email.indexOf('@')<1){$('#rEmail').focus();return;}
+    send.disabled=true;showMsg('送信中…',false);
+    fetch('/api/collab/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})})
+      .then(function(r){return r.json().then(function(x){return {ok:r.ok,body:x};});})
+      .then(function(res){
+        send.disabled=false;
+        if(!res.ok){showMsg(res.body.error||'送信に失敗しました',true);return;}
+        showMsg('コードを送りました(15分有効)',false);
+        var s1=$('#rStep1'),s2=$('#rStep2'); if(s1)s1.style.display='none'; if(s2)s2.style.display='';
+        var rc=$('#rCode'); if(rc)rc.focus();
+      }).catch(function(){send.disabled=false;showMsg('通信エラー',true);});
+  };
+  var back=$('#rBack');
+  if(back)back.onclick=function(){$('#rStep2').style.display='none';$('#rStep1').style.display='';showMsg('',false);};
+  var verify=$('#rVerify');
+  if(verify)verify.onclick=function(){
+    var code=$('#rCode').value.trim();
+    if(!code){$('#rCode').focus();return;}
+    verify.disabled=true;showMsg('確認中…',false);
+    fetch('/api/collab/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email,code:code})})
+      .then(function(r){return r.json().then(function(x){return {ok:r.ok,body:x};});})
+      .then(function(res){
+        verify.disabled=false;
+        if(!res.ok){showMsg(res.body.error||'コードが違います',true);return;}
+        showMsg('登録できました。作っています…',false);
+        muEvent('cta_click',{cta:'make_register_ok'});
+        runMake();
+      }).catch(function(){verify.disabled=false;showMsg('通信エラー',true);});
+  };
 }
 // 名義化カード: デザインは見せた上で「あなたの名義にする」だけをメール認証ゲートに。
 function claimCardHtml(){
@@ -9028,6 +9128,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"作りたいものを入力してください（300文字以内）"}))).into_response();
     }
+    // 登録必須+1日上限ゲート(2026-08-28)。Gemini を叩く前に弾く。
+    let maker_email = match require_maker_email(&db, &headers) { Ok(e) => e, Err(r) => return r };
+    { let conn = db.lock().unwrap(); if let Err(r) = check_daily_make_cap(&conn, &maker_email) { return r; } }
     // 添付（/api/make/upload が返した自ホスト URL のみ受ける）。外部 URL の
     // 持ち込みは権利リスク評価不能なので弾く（MCP の agent 経路と同じ思想）。
     let valid_attach = |u: &Option<String>| -> Result<Option<String>, Response> {
@@ -9374,19 +9477,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     // A/B/C: 投稿に variant と visitor を刻む（勝者UU判定の母数）。
     let ab_variant = make_variant_norm(q.v.as_deref());
     let ab_visitor = q.visitor.as_deref().map(str::trim).filter(|s| !s.is_empty() && s.len() <= 80);
-    // 作者帰属: ログイン済み(/studio・/make どちらでも)なら maker_email を即刻印。
-    // 未ログインでも、過去に /make のメール認証を済ませた端末は mu_make_email
-    // cookie から刻む(ゲートスキップ時に2作目以降が無帰属になる穴を塞ぐ)。
-    // maker_email が付いた作品は、売れるたびに作者へ 10% (apply_maker_commission)。
-    let maker_email = crate::bearer_or_session_email(&db, &headers, None)
-        .or_else(|| {
-            headers.get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
-                .and_then(|v| urlencoding::decode(v).ok())
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| s.contains('@') && s.len() <= 254)
-        });
+    // 作者帰属: 登録必須ゲート(require_maker_email)を通っているので常に確定済み。
+    // 売れるたびに作者へ 10% (apply_maker_commission)。
     // あとから編集(/make/edit)用の合言葉。作成者の端末(localStorage)と
     // レスポンスにだけ渡す — メール認証より軽い「作った本人」の証明。
     let edit_token = format!("{:016x}", rand::random::<u64>());
@@ -9395,7 +9487,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         if let Some(v) = ab_variant { m.insert("make_variant".into(), serde_json::Value::from(v)); }
         if use_local { m.insert("gen_engine".into(), serde_json::Value::from("local")); }
         if let Some(vis) = ab_visitor { m.insert("make_visitor".into(), serde_json::Value::from(vis)); }
-        if let Some(me) = &maker_email { m.insert("maker_email".into(), serde_json::Value::from(me.clone())); }
+        m.insert("maker_email".into(), serde_json::Value::from(maker_email.clone()));
         // 作り手の印税率(商品単位)。apply_maker_commission がブランド既定より優先して使う。
         m.insert("maker_pct".into(), serde_json::Value::from(maker_pct));
         // 音源: kind=song なら購入時の配信物(issue_digital)、アパレル等なら
@@ -9519,7 +9611,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         });
     }
 
-    let mut note = if flagged {
+    let note = if flagged {
         let r = if flag_reason.is_empty() { "内容".to_string() } else { flag_reason.clone() };
         format!("つくりました。少し確認したい点（{}）があるので人の目を通します。OKならすぐ公開・購入できます。", r)
     } else if is_contrado {
@@ -9533,11 +9625,6 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     } else {
         "できました！もう棚に並びました。今すぐ買えます。着用イメージは数十秒で反映されます。".to_string()
     };
-    // 「作ったのに報酬が宙に浮く」防止: 無帰属の生成には受け取り方を必ず添える
-    // (web の /make はメール認証ゲートで帰属されるが、API 直叩きはここが頼り)。
-    if maker_email.is_none() {
-        note.push_str(" ※この作品はまだ誰の名義でもありません。メール認証(画面の指示 または https://wearmu.com/start で登録後に作成)すると、売れるたび売上の10%があなたに入ります。");
-    }
     let buy_url = if flagged { serde_json::Value::Null } else { serde_json::json!(format!("https://wearmu.com/shop/{}", sku)) };
     // 生成直後が購入意欲のピーク。PDP を経由せず Stripe Checkout に直行できる
     // リンクも返す(サイズ/住所は Stripe 側の custom_fields で完結する)。
@@ -9546,9 +9633,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     if let (Some(t), Some(re)) = (req_token.clone(), request_to.clone()) {
         tokio::spawn(send_design_request_ready_email(re, t));
     }
-    // 作って広める=報酬: 作者が判っていれば、その人の紹介リンク(/r/<code>)を返す
-    // (広めて売れた分の10%が作者に入る = 既存 maker 印税×アフィリエイト)。
-    let affiliate_link = maker_email.as_ref().map(|me| format!("https://wearmu.com/r/{}", crate::referral_code_for(me)));
+    // 作って広める=報酬: 登録必須になったので作者は常に判っている →
+    // 紹介リンク(/r/<code>)を返す(広めて売れた分の10%が作者に入る)。
+    let affiliate_link = Some(format!("https://wearmu.com/r/{}", crate::referral_code_for(&maker_email)));
     axum::Json(serde_json::json!({
         "ok": true,
         "sku": sku,
@@ -13209,6 +13296,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
       .then(function(j){
         if(j.ok&&j.status==='live'){st.textContent=j.note||'';location.href=j.pdp_url;}
         else if(j.ok){st.textContent=j.note||'';btn.disabled=false;btn.style.opacity='1';}
+        else if(j.need_register){st.innerHTML='まず<a href="/make" style="color:#e6c449">/make</a>でメール登録（10秒・無料）してからお試しください。';btn.disabled=false;btn.style.opacity='1';}
         else{st.textContent=j.error||f.dataset.fail;btn.disabled=false;btn.style.opacity='1';}
       })
       .catch(function(){st.textContent=f.dataset.fail;btn.disabled=false;btn.style.opacity='1';});
