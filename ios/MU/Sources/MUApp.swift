@@ -18,6 +18,7 @@ struct MUApp: App {
                 .fullScreenCover(isPresented: .constant(!hasOnboarded)) {
                     OnboardingView()
                         .environmentObject(app)
+                        .environmentObject(session)
                 }
         }
     }

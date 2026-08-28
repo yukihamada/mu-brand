@@ -117,6 +117,9 @@ struct MakeResult: Codable {
     let editToken: String?
     let makerPct: Int?
     let makerEarnJpy: Int?
+    // 2026-08-28: 登録必須化に伴い作者は常に判明 → 紹介リンクも常に返る。
+    // 広めて売れた分の10%が作者に入る(サーバ側 apply_maker_commission と同率)。
+    let affiliateLink: String?
 
     enum CodingKeys: String, CodingKey {
         case ok, sku, kind, display, hook, status, note
@@ -129,6 +132,7 @@ struct MakeResult: Codable {
         case editToken = "edit_token"
         case makerPct = "maker_pct"
         case makerEarnJpy = "maker_earn_jpy"
+        case affiliateLink = "affiliate_link"
     }
 
     var designURL: URL? { URL(string: designUrl) }

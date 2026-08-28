@@ -2604,6 +2604,8 @@ pub async fn design_remix_create(
         "edit_token": edit_token,
         "remix_of": base_sku,
         "note": note,
+        // public_make と同じく登録必須(2026-08-28)→ 作者は常に判明している。
+        "affiliate_link": format!("https://wearmu.com/r/{}", crate::referral_code_for(&maker_email)),
     })).into_response()
 }
 
@@ -7198,6 +7200,9 @@ button:disabled{opacity:.5;cursor:default}
 .own{font-size:14.5px;color:rgba(245,245,240,.88);margin:26px 0 10px;line-height:1.65}
 .own b{color:#ffd700}
 .own .pq{display:block;color:rgba(245,245,240,.5);font-size:12.5px;margin-top:2px}
+/* はじめての一着だけの「自分で着る/友達に贈る」バナー(ブラウザごとに1回) */
+.firstpiece{background:rgba(255,215,0,.10);border:1px solid rgba(255,215,0,.35);border-radius:10px;padding:12px 14px;margin:0 0 14px;font-size:13px;color:rgba(245,245,240,.85);line-height:1.6}
+.firstpiece b{color:#ffd700}
 .card.reveal{animation:pop .65s cubic-bezier(.2,.8,.3,1.12) both;box-shadow:0 0 0 1px rgba(255,215,0,.32),0 0 44px rgba(255,215,0,.09)}
 @keyframes pop{from{opacity:0;transform:scale(.93) translateY(10px)}to{opacity:1;transform:scale(1) translateY(0)}}
 .card img{transition:opacity .45s}
@@ -7501,13 +7506,15 @@ async function runMake(){
     else{
       // 添付は1作品で消費(次の作成に紛れ込まない)。
       ATT=null;attF.value='';attRender();
-      // デザインは認証なしで必ず見せる(見るのは無料)。名義化+10%だけメール認証ゲート。
-      renderResult(j,p,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));
+      // 2026-08-28: 作るには登録必須になった → maker_email は生成時点で常に確定済み。
+      // 旧mu_make_okクッキー判定(生成後にメール認証を求める名義化ゲート)は不要になった。
+      renderResult(j,p,true);
     }
   }catch(e){ if(myRun!==RUNSEQ) return; genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
   $('#go').disabled=false; $('#go').textContent='つくる';
 }
-// 生成済みの結果カードを描画。ok=メール認証済み端末か(未認証でもデザインは見せる)。
+// 生成済みの結果カードを描画。ok は旧仕様(生成後メール認証)の名残り —
+// 2026-08-28 以降は登録済みでないと生成自体ができないため常に true で呼ばれる。
 function renderResult(j,p,ok){
   if(ok===undefined)ok=true;
   // あとから編集の合言葉をこの端末に保存(編集リンクは作成者だけが持つ)。
@@ -7545,9 +7552,20 @@ function renderResult(j,p,ok){
   // さっきの案: 作り直しても前の案は棚に残る。サムネで戻れるようにする。
   if(!MK_HIST.length||MK_HIST[MK_HIST.length-1].sku!==j.sku)MK_HIST.push({sku:j.sku,img:j.design_url,pdp:j.pdp_url||''});
   var hist = MK_HIST.length>1 ? '<div class=hist><div class=histlead>さっきの案（どれも棚に残っています）</div><div class=histrow>'+MK_HIST.slice(0,-1).map(function(h){return h.pdp?'<a href="'+h.pdp+'" target="_blank" rel="noopener"><img loading=lazy src="'+h.img+'" alt=""></a>':'';}).reverse().join('')+'</div></div>' : '';
-  var spread = (ok && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。'+(j.affiliate_link?'<a href="'+j.affiliate_link+'" style="color:#ffd700">あなたの紹介リンクで広める →</a>':'<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a>')+'</div>' : '';
+  // j.pdp_url は flagged(審査待ち)でも常に返るので url だけでは判定できない —
+  // auto_approved を必ず条件に入れる(でないと審査待ちの品にも「棚に並びました」と出る)。
+  var spread = (ok && j.auto_approved && url) ? '<div class=spread>棚にも並びました。広めるほどこの子が売れる → 売上の10%が作り手のあなたに。'+(j.affiliate_link?'<a href="'+j.affiliate_link+'" style="color:#ffd700">あなたの紹介リンクで広める →</a>':'<a href="/start?ref=make_result" style="color:#ffd700">クリエイター登録(無料)で売上と報酬を管理 →</a>')+'</div>' : '';
   var one = j.auto_approved ? '<div class=one>🌱 <b>世界に1枚。</b>同じ絵は二度と生成されません。ファーストオーナーは、まだいません。</div>' : '';
   var nt = j.auto_approved ? '' : '<div class=note>'+(j.note||'つくりました。確認後に公開・購入できます。')+'</div>';
+  // はじめての一着だけ、「自分で着る/友達に贈る」を言語化する(ブラウザごとに1回)。
+  // IKEA効果(自作品への愛着)が一番強い瞬間に、次の一歩を具体的に示す。
+  var firstPiece = '';
+  try {
+    if (j.auto_approved && !localStorage.getItem('mu_first_piece_done')) {
+      localStorage.setItem('mu_first_piece_done', '1');
+      firstPiece = '<div class=firstpiece>🎉 <b>はじめての一着ができました。</b>自分で着るもよし、友達にサプライズで贈るもよし。贈った相手には金額は見えません。</div>';
+    }
+  } catch (e) {}
   $('#out').innerHTML=own+'<div class="card reveal"><img id=mkImg src="'+j.design_url+'" alt=""><div class=meta>'
     +'<div class=nm>'+(j.display||'')+'</div>'
     +'<div class=by>DESIGNED BY YOU × MU</div>'
@@ -7555,7 +7573,7 @@ function renderResult(j,p,ok){
     +'<div style="font-size:13px;color:rgba(245,245,240,.7)">'+(j.hook||'')+'</div>'
     + one
     +'<div class=fitnote id=mkFit>'+(j.auto_approved&&j.kind!=='song'?mkPrep(j.kind):'')+'</div>'
-    + buy + route + share + spread + nt
+    + firstPiece + buy + route + share + spread + nt
     +'</div></div>'
     +hist
     +(ok?'':claimCardHtml());
@@ -7575,8 +7593,16 @@ async function muRemix(e,sku){
   try{
     var r=await fetch('/api/design-remix',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'sku='+encodeURIComponent(sku)+'&words='+encodeURIComponent(w)});
     var j=await r.json();
+    if(r.status===401&&j.need_register){
+      // 2026-08-28: セッション切れ等で未登録扱いに戻った場合、登録ゲートを出して再送させる。
+      btn.disabled=false;btn.textContent=old;
+      $('#out').innerHTML=registerGateHtml();
+      wireRegisterGate();
+      return false;
+    }
     if(!j.ok){btn.disabled=false;btn.textContent=old;alert(j.error||'作り直せませんでした。少し時間をおいて試してください。');return false;}
-    renderResult(j,w,/(?:^|;\s*)mu_make_ok=1/.test(document.cookie));
+    // 2026-08-28: 作るには登録必須になった → maker_email は生成時点で常に確定済み。
+    renderResult(j,w,true);
   }catch(err){btn.disabled=false;btn.textContent=old;alert('通信エラー。もう一度お試しください。');}
   return false;
 }

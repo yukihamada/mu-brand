@@ -5,12 +5,22 @@ import SwiftUI
 // MU の魔法 = 言えば作れる。そのアハ体験までを 20 秒で届ける。
 struct OnboardingView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var session: Session
     @AppStorage("hasOnboarded") private var hasOnboarded = false
 
     @State private var page = 0
     @State private var hero: [FeedProduct] = []
     @State private var prompt = ""
     @State private var typed = ""   // タイプライター演出用
+
+    // 2026-08-28: /api/make が登録必須になったため、doPage の「作る」を押した
+    // 瞬間に登録シートへ中断されないよう、doPage の中で先に済ませてしまう。
+    // (サプライズで割り込む登録より、最初から織り込まれた登録の方が離脱しない)
+    @State private var obEmail = ""
+    @State private var obCode = ""
+    @State private var obCodeSent = false
+    @State private var obBusy = false
+    @State private var obError: String?
 
     // 最初の一着の“幸せプロンプト”候補(A/B/C)。決め打ちでなくランダム割当で
     // どれが活性化に効くかを計測(科学的にデータで勝者を決める)。
@@ -141,57 +151,162 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 36)
 
-            // 入力(タイプライターでお手本が流れる → そのまま作れる)
-            TextField("", text: $prompt, prompt: Text(typed).foregroundColor(.white.opacity(0.4)), axis: .vertical)
-                .lineLimit(2...4)
-                .font(.body)
+            if session.isLoggedIn {
+                composeFields
+            } else {
+                registerFields
+            }
+            Spacer()
+        }
+    }
+
+    // 作る本体: 入力(タイプライターでお手本が流れる)+お手本チップ+作るボタン。
+    @ViewBuilder
+    private var composeFields: some View {
+        TextField("", text: $prompt, prompt: Text(typed).foregroundColor(.white.opacity(0.4)), axis: .vertical)
+            .lineLimit(2...4)
+            .font(.body)
+            .foregroundStyle(.white)
+            .padding(14)
+            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(gold.opacity(0.4), lineWidth: 1))
+            .padding(.horizontal, 28)
+
+        // お手本チップ
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(seeds, id: \.self) { key in
+                    Button {
+                        prompt = String(localized: String.LocalizationValue(key))
+                        Analytics.track("onboarding_seed_pick", ["seed": key])
+                    } label: {
+                        Text(String(localized: String.LocalizationValue(key)))
+                            .font(.caption)
+                            .lineLimit(1)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(.white.opacity(0.08), in: Capsule())
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
+                }
+            }
+            .padding(.horizontal, 28)
+        }
+
+        Button {
+            let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            let final = text.isEmpty ? String(localized: String.LocalizationValue(defaultSeedKey)) : text
+            // 計測: どのバリアント/プロンプトで作ったか(後で購入率まで追える)
+            Analytics.track("onboarding_make", ["variant": seedVariant, "prompt": final])
+            finish(final)
+        } label: {
+            HStack {
+                Image(systemName: "sparkles")
+                Text(String(localized: "onb.do.make"))
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(gold)
+        .foregroundStyle(.black)
+        .padding(.horizontal, 28)
+    }
+
+    // 登録(メール→6桁コード・パスワードなし)。作るボタンの手前で先に済ませ、
+    // 押した瞬間に別シートへ中断されないようにする(=離脱ポイントを1つ減らす)。
+    @ViewBuilder
+    private var registerFields: some View {
+        Text(String(localized: "onb.register.why"))
+            .font(.caption)
+            .foregroundStyle(.white.opacity(0.55))
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 32)
+
+        if !obCodeSent {
+            TextField(String(localized: "auth.email"), text: $obEmail)
+                .keyboardType(.emailAddress)
+                .textContentType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .foregroundStyle(.white)
                 .padding(14)
                 .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
                 .overlay(RoundedRectangle(cornerRadius: 14).stroke(gold.opacity(0.4), lineWidth: 1))
                 .padding(.horizontal, 28)
 
-            // お手本チップ
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(seeds, id: \.self) { key in
-                        Button {
-                            prompt = String(localized: String.LocalizationValue(key))
-                            Analytics.track("onboarding_seed_pick", ["seed": key])
-                        } label: {
-                            Text(String(localized: String.LocalizationValue(key)))
-                                .font(.caption)
-                                .lineLimit(1)
-                                .padding(.horizontal, 12).padding(.vertical, 7)
-                                .background(.white.opacity(0.08), in: Capsule())
-                                .foregroundStyle(.white.opacity(0.85))
-                        }
-                    }
-                }
-                .padding(.horizontal, 28)
-            }
-
             Button {
-                let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-                let final = text.isEmpty ? String(localized: String.LocalizationValue(defaultSeedKey)) : text
-                // 計測: どのバリアント/プロンプトで作ったか(後で購入率まで追える)
-                Analytics.track("onboarding_make", ["variant": seedVariant, "prompt": final])
-                finish(final)
+                Task { await obSendCode() }
             } label: {
-                HStack {
-                    Image(systemName: "sparkles")
-                    Text(String(localized: "onb.do.make"))
-                }
-                .font(.headline)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
+                if obBusy { ProgressView().tint(.black) }
+                else { Text(String(localized: "auth.sendCode")).font(.headline).frame(maxWidth: .infinity).padding(.vertical, 8) }
             }
             .buttonStyle(.borderedProminent)
             .tint(gold)
             .foregroundStyle(.black)
             .padding(.horizontal, 28)
-            Spacer()
+            .disabled(obBusy || obEmail.trimmingCharacters(in: .whitespaces).isEmpty)
+        } else {
+            TextField(String(localized: "auth.code"), text: $obCode)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.white)
+                .padding(14)
+                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(gold.opacity(0.4), lineWidth: 1))
+                .padding(.horizontal, 28)
+
+            Button {
+                Task { await obVerifyCode() }
+            } label: {
+                if obBusy { ProgressView().tint(.black) }
+                else { Text(String(localized: "auth.verify")).font(.headline).frame(maxWidth: .infinity).padding(.vertical, 8) }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(gold)
+            .foregroundStyle(.black)
+            .padding(.horizontal, 28)
+            .disabled(obBusy || obCode.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button(String(localized: "auth.restart")) {
+                obCodeSent = false; obCode = ""; obError = nil
+            }
+            .font(.footnote)
+            .foregroundStyle(.white.opacity(0.6))
         }
+
+        if let obError {
+            Text(obError).font(.caption).foregroundStyle(.red.opacity(0.85)).multilineTextAlignment(.center).padding(.horizontal, 28)
+        }
+    }
+
+    private func obSendCode() async {
+        let email = obEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard email.contains("@") else { obError = String(localized: "auth.email"); return }
+        obBusy = true; obError = nil
+        do {
+            try await MUAPI.register(email: email)
+            obCodeSent = true
+            Analytics.track("onboarding_register_code_sent")
+        } catch {
+            obError = error.localizedDescription
+        }
+        obBusy = false
+    }
+
+    private func obVerifyCode() async {
+        let email = obEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let code = obCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        obBusy = true; obError = nil
+        do {
+            let key = try await MUAPI.verify(email: email, code: code)
+            session.logIn(email: email, apiKey: key)
+            Analytics.track("onboarding_register_done")
+        } catch {
+            obError = error.localizedDescription
+        }
+        obBusy = false
     }
 
     // ── parts ──

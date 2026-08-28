@@ -21,6 +21,10 @@ struct MakeView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var app: AppState
     @Environment(\.requestReview) private var requestReview
+    @Environment(\.openURL) private var openURL
+
+    // 「自分で着る/友達に贈る」の言語化バナーは、はじめての一着だけ出す。
+    @AppStorage("mu.hasCreatedFirstPiece") private var hasCreatedFirstPiece = false
 
     @StateObject private var voice = VoiceInput()
     @State private var voiceBasePrompt = ""   // 録音開始時の入力(認識結果を追記する土台)
@@ -548,6 +552,12 @@ struct MakeView: View {
             .buttonStyle(.bordered).tint(.yellow).disabled(isPolishing)
         }
 
+        // はじめての一着だけ、「自分で着る/友達に贈る」の選択を言語化して見せる。
+        // 2つ目以降は既に分かっているので出さない(ノイズにしない)。
+        if r.checkoutUrl != nil && !hasCreatedFirstPiece {
+            firstPieceBanner
+        }
+
         if r.checkoutUrl != nil {
             Button { Analytics.track("make_buy", ["sku": r.sku]); showCheckout = true } label: {
                 Label(String(localized: "pdp.buy"), systemImage: "bolt.fill")
@@ -559,6 +569,7 @@ struct MakeView: View {
                     .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 4)
             }
             .buttonStyle(.bordered).disabled(isPolishing)
+            .onAppear { hasCreatedFirstPiece = true }
         } else {
             Label(String(localized: "make.reviewPending"), systemImage: "clock")
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -577,6 +588,39 @@ struct MakeView: View {
                     .font(.subheadline).frame(maxWidth: .infinity)
             }
         }
+
+        // 広める=報酬(Web の /make 結果画面と同じ導線)。作者は登録必須化で常に
+        // 判明しているので affiliate_link は常に返る。
+        if r.autoApproved, let link = r.affiliateLink, let url = URL(string: link) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(String(localized: "make.spread.line"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Button {
+                    Analytics.track("make_spread_link_tap", ["sku": r.sku])
+                    openURL(url)
+                } label: {
+                    Text(String(localized: "make.spread.cta"))
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 2)
+        }
+    }
+
+    // 「言った瞬間に、もう選べる」— はじめての一着でだけ「自分で着る/友達に贈る」を
+    // 明文化する。IKEA効果(自作品への愛着)が一番強い瞬間に、次の一歩を具体的に示す。
+    private var firstPieceBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("🎉 " + String(localized: "make.firstPiece.title"))
+                .font(.subheadline.weight(.bold))
+            Text(String(localized: "make.firstPiece.sub"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
     }
 
     private var hints: some View {

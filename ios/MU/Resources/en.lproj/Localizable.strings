@@ -118,6 +118,11 @@
 "push.why" = "We'll let you know about new drops and when your design sells.";
 "account.worn" = "Your designs have been worn %d times worldwide 🌍";
 "buy.gift" = "Send as a gift 🎁";
+"make.firstPiece.title" = "Your first piece is ready";
+"make.firstPiece.sub" = "Wear it yourself, or surprise a friend with it — gifted pieces never show them the price.";
+"make.spread.line" = "The more you spread it, the more it sells. Every sale pays you 10%.";
+"make.spread.cta" = "Spread it with your referral link →";
+"onb.register.why" = "Creating needs a 10-second email sign-up (no password) — this stops anonymous misuse and copyright abuse.";
 "make.onbody.model" = "On a model";
 "share.cta" = "Share";
 "share.message" = "I made this on MU. Now make it yours →";
