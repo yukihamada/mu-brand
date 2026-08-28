@@ -26859,7 +26859,7 @@ async fn collab_create(
 // Gemini 画像 -0.5 MU。 全イベントを mu_credit_ledger に records。
 // Apply credit changes inside an existing DB lock (caller-provided conn).
 
-fn mu_credit_apply(conn: &rusqlite::Connection, email: &str, delta_jpy: i64, reason: &str, ref_id: Option<&str>) -> bool {
+pub(crate) fn mu_credit_apply(conn: &rusqlite::Connection, email: &str, delta_jpy: i64, reason: &str, ref_id: Option<&str>) -> bool {
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let email_lc = email.to_lowercase();
     let _ = conn.execute(
@@ -71231,6 +71231,10 @@ async fn main() {
         .route("/admin/work/pending", get(work::admin_pending))
         .route("/admin/work/payouts", get(work::admin_payouts))
         .route("/admin/work/mark_paid", get(work::admin_mark_paid))
+        .route("/api/work/proof", post(work::work_proof))
+        .route("/admin/work/review", get(work::admin_review))
+        .route("/work/payouts", get(work::work_payouts))
+        .route("/admin/work/payout_sheet", get(work::admin_payout_sheet))
         .route("/api/collab/session", get(collab_session_info))
         .route("/api/collab/sub/checkout", post(collab_sub_checkout))
         .route("/api/product/collab/:slug", get(api_product_collab))
