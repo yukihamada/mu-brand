@@ -1619,6 +1619,176 @@ pub async fn agent_rfq_list(
     Json(crate::rfq::rfq_list(&conn, supplier_id, kind, status, owner)).into_response()
 }
 
+/// POST /api/agent/order/create — 受注起票（要鍵・呼び手が所有者。RFQ received 前提）。
+pub async fn agent_order_create(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    let (email, _admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
+    let geti = |k: &str| -> Option<i64> {
+        b.get(k).and_then(|v| v.as_i64()).or_else(|| q.get(k).and_then(|s| s.parse().ok()))
+    };
+    let gets = |k: &str| -> Option<String> {
+        b.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).or_else(|| q.get(k).cloned())
+    };
+    let conn = db.lock().unwrap();
+    match crate::order::order_create(
+        &conn,
+        geti("rfq_id"),
+        gets("supplier_id").as_deref(),
+        gets("kind").as_deref(),
+        geti("qty").unwrap_or(0),
+        geti("unit_jpy"),
+        gets("note").as_deref(),
+        Some(&email),
+    ) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+/// POST /api/agent/order/advance — 受注の状態遷移（要鍵・自分の受注のみ／管理者は全件）。
+pub async fn agent_order_advance(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    let (email, admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let b = body.map(|j| j.0).unwrap_or(serde_json::Value::Null);
+    let geti = |k: &str| -> Option<i64> {
+        b.get(k).and_then(|v| v.as_i64()).or_else(|| q.get(k).and_then(|s| s.parse().ok()))
+    };
+    let gets = |k: &str| -> Option<String> {
+        b.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).or_else(|| q.get(k).cloned())
+    };
+    let Some(id) = geti("id") else {
+        return json_err(StatusCode::BAD_REQUEST, "pass `id`");
+    };
+    let Some(to) = gets("status") else {
+        return json_err(StatusCode::BAD_REQUEST, "pass `status`");
+    };
+    let conn = db.lock().unwrap();
+    if !admin {
+        match crate::order::order_owner_email(&conn, id) {
+            Some(o) if o.eq_ignore_ascii_case(&email) => {}
+            _ => return json_err(StatusCode::FORBIDDEN, "この受注は別の所有者のものです"),
+        }
+    }
+    match crate::order::order_advance(&conn, id, &to, gets("note").as_deref()) {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => json_err(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+/// GET /api/agent/order/list — 受注一覧（要鍵・自分の受注／管理者は全件）。refund=1 で自動返金対象のみ。
+pub async fn agent_order_list(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let (email, admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let supplier_id = q.get("supplier_id").map(|s| s.as_str());
+    let status = q.get("status").map(|s| s.as_str());
+    let refund = q.get("refund").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let owner = if admin { None } else { Some(email.as_str()) };
+    let conn = db.lock().unwrap();
+    Json(crate::order::order_list(&conn, supplier_id, status, refund, owner)).into_response()
+}
+
+/// GET /api/agent/order/page — 受注一覧の「面」（要鍵・HTML）。
+pub async fn agent_order_page(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
+) -> Response {
+    let (email, is_admin) = match rfq_caller(&db, &headers, &q) {
+        Ok(x) => x,
+        Err(e) => return e,
+    };
+    let force_mine = q.get("view").map(|v| v == "mine").unwrap_or(false);
+    let admin_view = is_admin && !force_mine;
+    let owner = if admin_view { None } else { Some(email.as_str()) };
+    let data = {
+        let conn = db.lock().unwrap();
+        crate::order::order_list(&conn, None, None, false, owner)
+    };
+    axum::response::Html(render_order_page(&email, admin_view, &data)).into_response()
+}
+
+fn render_order_page(email: &str, admin: bool, data: &serde_json::Value) -> String {
+    let empty = vec![];
+    let orders = data.get("orders").and_then(|v| v.as_array()).unwrap_or(&empty);
+    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").to_string();
+    let st_ja = |s: &str| -> (String, &'static str) {
+        match s {
+            "ordered" => ("発注".to_string(), "#7c8cff"),
+            "production" => ("生産中".to_string(), "#f59e0b"),
+            "shipped" => ("発送済".to_string(), "#22c55e"),
+            "completed" => ("完了".to_string(), "#22c55e"),
+            "refund_pending" => ("自動返金対象".to_string(), "#ef4444"),
+            "refunded" => ("返金済".to_string(), "#52525b"),
+            other => (other.to_string(), "#71717a"),
+        }
+    };
+    let mut rows = String::new();
+    let colspan = if admin { 9 } else { 8 };
+    for o in orders {
+        let g = |k: &str| o.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let gi = |k: &str| o.get(k).and_then(|v| v.as_i64());
+        let id = o.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let (label, color) = st_ja(&g("status"));
+        let lock = if o.get("lot_lock").and_then(|v| v.as_bool()).unwrap_or(false) {
+            " <span class=pill style=\"background:#f59e0b22;color:#f59e0b\">ロットロック</span>".to_string()
+        } else {
+            String::new()
+        };
+        let owner_td = if admin { format!("<td class=sub>{}</td>", esc(&g("owner_email"))) } else { String::new() };
+        let price = match gi("unit_jpy") {
+            Some(p) => format!("¥{}", p),
+            None => "—".to_string(),
+        };
+        rows.push_str(&format!(
+            "<tr><td class=mono>#{}</td><td>{}</td><td>{}</td><td>{}着</td><td>{}</td>{}<td><span class=pill style=\"background:{}22;color:{}\">{}{}</span></td><td class=sub>{}</td></tr>",
+            id, esc(&g("kind")), esc(&g("supplier_id")), gi("qty").map(|x| x.to_string()).unwrap_or("—".into()), price, owner_td, color, color, label, lock, esc(&g("created_at"))
+        ));
+    }
+    let owner_th = if admin { "<th>発注者</th>" } else { "" };
+    if rows.is_empty() {
+        rows = format!("<tr><td colspan={} class=sub>まだ受注がありません</td></tr>", colspan);
+    }
+    let title = if admin { "MU 受注（管理者・全件）" } else { "あなたの受注" };
+    format!(
+        "<!doctype html><html><head><meta charset=utf-8><title>{}</title>\
+         <style>body{{font-family:ui-sans-serif,system-ui;background:#0b0b10;color:#e5e7eb;margin:2rem}}\
+         table{{width:100%;border-collapse:collapse;margin-top:1rem}}\
+         th,td{{text-align:left;padding:.4rem;border-bottom:1px solid #1e1e26;font-size:.9rem}}\
+         .sub{{color:#a1a1aa}}\
+         .mono{{font-family:ui-monospace,monospace}}\
+         .pill{{padding:.1rem .5rem;border-radius:999px;font-size:.75rem}}\
+         </style></head><body>\
+         <h1>{}</h1>\
+         <p class=sub>{}</p>\
+         <table><thead><tr><th>ID</th><th>品目</th><th>供給先</th><th>数量</th><th>単価</th>{}<th>状態</th><th>作成</th></tr></thead>\
+         <tbody>{}</tbody></table>\
+         <p class=sub style=\"margin-top:2rem\">自動返金対象（refund_pending）は人間ゲートで返金を実行した後、order_advance で refunded にしてください。</p>\
+         </body></html>",
+        title, title, email, owner_th, rows
+    )
+}
+
 /// GET /api/agent/rfq/page — RFQ 一覧の「面」（要鍵・HTML）。
 /// 一般エージェント=自分のRFQ（ユーザーページ）、管理者=全件（管理者ページ）。
 pub async fn agent_rfq_page(
