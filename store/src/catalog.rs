@@ -1363,6 +1363,75 @@ pub fn route_request(
     })
 }
 
+// ─── Instant Credit Purchase — decision core (設計フェーズ・DB/HTTP非依存) ──
+//
+// 「teai.io のクレジットで MU 商品をそのまま購入する」体験の可否判定。
+// teai 側の残高保持・hold/capture API は別サービス(nanobot-core)の実装が要るため
+// 対象外（設計は Fable(claude-fable-5, teai経由) と協働）。ここは「注文を承認して
+// よいか・何 credit 課金するか」を決める純粋関数のみ。DB/HTTP 非依存・決定的。
+// mode="quote"(価格未確定) は defense in depth で二重に弾く（呼び出し側と本関数の両方）。
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SupplierMode {
+    Auto,
+    Quote,
+}
+
+#[derive(Debug, Clone)]
+pub struct CreditOrderRequest {
+    pub supplier_mode: SupplierMode,
+    /// JPY 単価。mode="quote" や未確定時は None。
+    pub unit_price_jpy: Option<u64>,
+    /// 呼び出し元の生入力をそのまま通せるよう符号あり。0/負は本関数が弾く。
+    pub quantity: i64,
+    pub credit_balance: u64,
+    /// 1 credit あたりの JPY レート。0 は 1 として扱う（ゼロ割回避）。
+    pub jpy_per_credit: u64,
+    pub per_order_credit_cap: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditOrderRejection {
+    /// mode="quote" または unit_price_jpy 未確定。
+    PriceNotConfirmed,
+    InsufficientBalance,
+    ExceedsPerOrderCap,
+    InvalidQuantity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditOrderDecision {
+    Approved { charge_credits: u64 },
+    Rejected(CreditOrderRejection),
+}
+
+/// 注文承認可否と課金 credit 数を決める。副作用なし・決定的。
+pub fn decide_credit_order(req: &CreditOrderRequest) -> CreditOrderDecision {
+    if req.quantity <= 0 {
+        return CreditOrderDecision::Rejected(CreditOrderRejection::InvalidQuantity);
+    }
+    if req.supplier_mode == SupplierMode::Quote {
+        return CreditOrderDecision::Rejected(CreditOrderRejection::PriceNotConfirmed);
+    }
+    let Some(unit_price_jpy) = req.unit_price_jpy else {
+        return CreditOrderDecision::Rejected(CreditOrderRejection::PriceNotConfirmed);
+    };
+
+    // u128 で計算しオーバーフローを避け、端数は切り上げ（自社が損しない丸め）。
+    let total_jpy = unit_price_jpy as u128 * req.quantity as u128;
+    let rate = (req.jpy_per_credit as u128).max(1);
+    let charge_credits = ((total_jpy + rate - 1) / rate) as u64;
+
+    // 上限チェックを残高チェックより先に行う: 誤発注ガードは残高多寡に関わらず効くべき。
+    if charge_credits > req.per_order_credit_cap {
+        return CreditOrderDecision::Rejected(CreditOrderRejection::ExceedsPerOrderCap);
+    }
+    if charge_credits > req.credit_balance {
+        return CreditOrderDecision::Rejected(CreditOrderRejection::InsufficientBalance);
+    }
+    CreditOrderDecision::Approved { charge_credits }
+}
+
 struct ProductSpec {
     kind: &'static str,
     printful_product_id: i64,
@@ -19587,6 +19656,106 @@ mod manufacturing_router_tests {
         let q = route_request(None, None, 1, None, None, None);
         assert_eq!(q["makeable"], false);
         assert!(q["all_suppliers"].as_array().unwrap().len() >= 5);
+    }
+}
+
+#[cfg(test)]
+mod credit_order_decision_tests {
+    use super::*;
+
+    fn base_req() -> CreditOrderRequest {
+        CreditOrderRequest {
+            supplier_mode: SupplierMode::Auto,
+            unit_price_jpy: Some(4900), // tee floor
+            quantity: 1,
+            credit_balance: 1000,
+            jpy_per_credit: 100, // 1cr = ¥100
+            per_order_credit_cap: 500,
+        }
+    }
+
+    #[test]
+    fn approves_auto_priced_order_within_balance_and_cap() {
+        // ¥4900 / ¥100 = 49cr ちょうど。cap500・残高1000内。
+        let decision = decide_credit_order(&base_req());
+        assert_eq!(decision, CreditOrderDecision::Approved { charge_credits: 49 });
+    }
+
+    #[test]
+    fn rounds_up_fractional_credit_amount() {
+        // ¥1000 / ¥300/cr = 3.33... → 切り上げ4cr(自社が損しない丸め)。
+        let req = CreditOrderRequest { unit_price_jpy: Some(1000), jpy_per_credit: 300, ..base_req() };
+        assert_eq!(decide_credit_order(&req), CreditOrderDecision::Approved { charge_credits: 4 });
+    }
+
+    #[test]
+    fn rejects_quote_mode_as_price_not_confirmed() {
+        let req = CreditOrderRequest { supplier_mode: SupplierMode::Quote, ..base_req() };
+        assert_eq!(
+            decide_credit_order(&req),
+            CreditOrderDecision::Rejected(CreditOrderRejection::PriceNotConfirmed)
+        );
+    }
+
+    #[test]
+    fn rejects_auto_mode_with_missing_price() {
+        // mode=auto でも unit_price_jpy が None(未確定) なら defense-in-depth で弾く。
+        let req = CreditOrderRequest { unit_price_jpy: None, ..base_req() };
+        assert_eq!(
+            decide_credit_order(&req),
+            CreditOrderDecision::Rejected(CreditOrderRejection::PriceNotConfirmed)
+        );
+    }
+
+    #[test]
+    fn rejects_zero_or_negative_quantity() {
+        let zero = CreditOrderRequest { quantity: 0, ..base_req() };
+        let negative = CreditOrderRequest { quantity: -3, ..base_req() };
+        assert_eq!(
+            decide_credit_order(&zero),
+            CreditOrderDecision::Rejected(CreditOrderRejection::InvalidQuantity)
+        );
+        assert_eq!(
+            decide_credit_order(&negative),
+            CreditOrderDecision::Rejected(CreditOrderRejection::InvalidQuantity)
+        );
+    }
+
+    #[test]
+    fn rejects_when_exceeds_per_order_cap() {
+        // qty20 × 49cr相当 = 980cr > cap500。
+        let req = CreditOrderRequest { quantity: 20, credit_balance: 100_000, ..base_req() };
+        assert_eq!(
+            decide_credit_order(&req),
+            CreditOrderDecision::Rejected(CreditOrderRejection::ExceedsPerOrderCap)
+        );
+    }
+
+    #[test]
+    fn rejects_when_balance_insufficient() {
+        // 49cr必要・残高10cr → cap内だが残高不足。
+        let req = CreditOrderRequest { credit_balance: 10, ..base_req() };
+        assert_eq!(
+            decide_credit_order(&req),
+            CreditOrderDecision::Rejected(CreditOrderRejection::InsufficientBalance)
+        );
+    }
+
+    #[test]
+    fn approves_when_charge_exactly_equals_cap() {
+        // 境界値: charge_credits == per_order_credit_cap はまだ承認(超過のみ拒否)。
+        let req = CreditOrderRequest { per_order_credit_cap: 49, ..base_req() };
+        assert_eq!(decide_credit_order(&req), CreditOrderDecision::Approved { charge_credits: 49 });
+    }
+
+    #[test]
+    fn cap_rejection_takes_priority_over_balance_rejection() {
+        // cap にも残高にも同時に引っかかる場合、誤発注ガード(cap)を優先して報告する。
+        let req = CreditOrderRequest { quantity: 20, credit_balance: 5, per_order_credit_cap: 500, ..base_req() };
+        assert_eq!(
+            decide_credit_order(&req),
+            CreditOrderDecision::Rejected(CreditOrderRejection::ExceedsPerOrderCap)
+        );
     }
 }
 
