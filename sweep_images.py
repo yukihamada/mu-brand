@@ -15,7 +15,7 @@ from google import genai
 from google.genai import types
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-GEMINI_MODEL   = "gemini-3-pro-image-preview"
+GEMINI_MODEL   = os.environ.get("MU_IMAGE_MODEL", "gemini-3.1-flash-image")  # 2026-08-30: 3-proの約半額・同等品質(実測比較済)
 STORE_URL      = os.environ.get("MU_STORE_URL", "https://wearmu.com")
 ADMIN_TOKEN    = os.environ.get("MU_ADMIN_TOKEN", "mu-admin-2026")
 WRANGLER_BIN   = os.environ.get("WRANGLER_BIN", "/opt/homebrew/bin/wrangler")
