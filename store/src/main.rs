@@ -28235,9 +28235,16 @@ async fn products_legacy_redirect(
 ) -> Response {
     let serial: Option<String> = {
         let conn = db.lock().unwrap();
+        // The path segment is `:id` and current shop drop cards link by
+        // `products.id` (shop_drop_cards → /products/{slug}/{id}), while older
+        // links used `drop_num`. Resolve either so neither form 404s; prefer an
+        // id match when both exist. 2026-06: fixes drop cards falling through to
+        // the SPA shell (id passed where only drop_num was matched).
         conn.query_row(
             "SELECT serial_code FROM products
-             WHERE brand=? AND drop_num=? AND serial_code IS NOT NULL AND serial_code != ''",
+             WHERE brand=?1 AND (id=?2 OR drop_num=?2)
+               AND serial_code IS NOT NULL AND serial_code != ''
+             ORDER BY (id=?2) DESC LIMIT 1",
             params![brand, drop_num],
             |r| r.get::<_, String>(0),
         ).ok()
