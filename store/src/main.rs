@@ -13,6 +13,7 @@ mod order;
 mod work;
 mod creators;
 mod nouns;
+mod consign;
 
 use axum::{
     extract::{Path, State},
@@ -70225,6 +70226,7 @@ async fn main() {
         manufacturing_req::seed_requirements(&conn);
         rfq::seed_rfq_drafts(&conn);
         ito::ensure_tables(&conn);
+        consign::init_db(&conn);
         catalog::seed_if_empty(&conn);
         catalog::seed_roll_brand(&conn);
         catalog::seed_atsume_brand(&conn);
@@ -70377,6 +70379,17 @@ async fn main() {
         // remains at /nouns-proposal.html for transparency (linked in-page).
         .route("/nouns", get(nouns::nouns_page))
         .route("/api/nouns/create", post(nouns::nouns_create))
+        // ── MU 出品代行 (consignment: 買取 / 委託 / 預ける) ──
+        .route("/consign", get(consign::consign_page))
+        .route("/consign/balance", get(consign::balance_page))
+        .route("/consign/sellers", get(consign::sellers_page))      // 取引DPF法: 販売業者情報・苦情窓口
+        .route("/consign/tokushoho", get(consign::tokushoho_page))  // 特商法表記
+        .route("/consign/verify", get(consign::verify_page))        // メール所有確認 (マジックリンク着地)
+        .route("/api/consign/quote", post(consign::api_quote))
+        .route("/api/consign/submit", post(consign::api_submit))
+        .route("/api/consign/verify/request", post(consign::api_verify_request)) // 確認メール送信
+        .route("/api/admin/consign/partner", post(consign::admin_partner_add))
+        .route("/api/admin/consign/intents", get(consign::admin_intents))
         // Product detail SPA routes.
         // 2026-05-21: this legacy URL form 301-redirects to /p/<serial_code>
         // when the row has a serial; falls back to the SPA index when not.

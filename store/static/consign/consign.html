@@ -1,0 +1,315 @@
+<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>写真を撮るだけで査定 — 買取・委託・預ける | MU 出品代行 · wearmu.com</title>
+<meta name="description" content="持ち物の写真を撮るだけでAIがその場で査定。①いますぐ買取 / ②待って高く委託 / ③預ける から選べます。受け取りはMU内で使える残高（有効期限つき）。">
+<link rel="canonical" href="https://wearmu.com/consign">
+<meta name="theme-color" content="#0a0a0a">
+<meta name="robots" content="index,follow">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh}
+nav{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center}
+nav a{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.85}
+nav .brand{font-weight:900;letter-spacing:.4em}
+.wrap{max-width:680px;margin:0 auto;padding:48px 22px 100px}
+h1{font-size:30px;font-weight:800;letter-spacing:-.01em;margin-bottom:8px}
+.sub{color:rgba(245,245,240,.6);font-size:14px;margin-bottom:28px}
+
+/* ── 準備中バナー（partner gate が閉じているとき表示） ── */
+.gatewall{background:#1a1407;border:1px solid rgba(255,215,0,.3);border-radius:12px;padding:18px 18px;margin:0 0 24px;font-size:14px;line-height:1.7}
+.gatewall b{color:#ffd700}
+.gatewall .small{font-size:12px;color:rgba(245,245,240,.55);margin-top:8px}
+
+/* ── アップロード ── */
+.drop{border:1px dashed rgba(255,255,255,.22);border-radius:14px;padding:34px 18px;text-align:center;cursor:pointer;background:#121212;transition:border-color .2s}
+.drop:hover,.drop.hot{border-color:#ffd700}
+.drop .ic{font-size:34px;margin-bottom:8px}
+.drop .lead{font-size:16px;font-weight:700}
+.drop .hint{font-size:12px;color:rgba(245,245,240,.5);margin-top:6px}
+#file{display:none}
+.preview{display:none;margin-top:14px}
+.preview img{width:100%;max-height:300px;object-fit:contain;background:#141414;border-radius:12px;border:1px solid rgba(255,255,255,.1)}
+.row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
+select{background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:12px 14px;font-size:15px;flex:1;min-width:140px}
+input.note{flex:2;min-width:180px;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:12px 14px;font-size:15px;font-family:inherit}
+input.note:focus,select:focus{outline:none;border-color:#ffd700}
+button.cta{width:100%;margin-top:14px;background:#ffd700;color:#0a0a0a;border:0;border-radius:10px;padding:15px 18px;font-size:16px;font-weight:800;cursor:pointer;letter-spacing:.04em}
+button.cta:disabled{opacity:.5;cursor:default}
+
+/* ── 査定中ゲージ ── */
+.gen{display:none;background:#121212;border:1px solid rgba(255,215,0,.28);border-radius:14px;padding:26px 20px;margin-top:24px;position:relative;overflow:hidden}
+.gen .gtitle{font-size:15px;font-weight:700;margin-bottom:14px}
+.gen .gtitle .spin{display:inline-block;width:15px;height:15px;border:2px solid rgba(255,215,0,.25);border-top-color:#ffd700;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:9px}
+@keyframes s{to{transform:rotate(360deg)}}
+.bar{height:8px;background:#0a0a0a;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,.08)}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#b89400,#ffd700);transition:width .4s ease}
+.steps{margin-top:14px;font-size:12.5px;color:rgba(245,245,240,.55);min-height:18px}
+
+/* ── 査定結果 + 3択 ── */
+#result{display:none;margin-top:26px}
+.qcard{background:#141414;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:20px}
+.qcard .qlabel{font-size:12px;letter-spacing:.2em;color:rgba(245,245,240,.5);text-transform:uppercase}
+.qcard .qamt{font-size:34px;font-weight:800;color:#ffd700;margin:4px 0 2px}
+.qcard .qrange{font-size:13px;color:rgba(245,245,240,.6)}
+.qcard .qreason{font-size:13.5px;color:rgba(245,245,240,.78);margin-top:12px;line-height:1.7;background:#101010;border-left:3px solid rgba(255,215,0,.4);border-radius:0 6px 6px 0;padding:11px 13px}
+
+/* 景表法配慮コピー（必須・常時表示） */
+.disclaim{font-size:11.5px;color:rgba(245,245,240,.5);line-height:1.7;margin-top:12px;background:#0d0d0d;border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:11px 13px}
+.disclaim b{color:rgba(255,215,0,.75)}
+
+.choices{margin-top:18px;display:grid;gap:12px}
+.choice{text-align:left;background:#161616;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:16px;cursor:pointer;transition:border-color .15s,background .15s}
+.choice:hover{border-color:#ffd700;background:rgba(255,215,0,.06)}
+.choice.sel{border-color:#ffd700;background:rgba(255,215,0,.1)}
+.choice .ch{font-size:16.5px;font-weight:800}
+.choice .cd{font-size:12.5px;color:rgba(245,245,240,.62);margin-top:4px;line-height:1.6}
+.choice .cv{font-size:18px;font-weight:800;color:#ffd700;margin-top:8px}
+.choice .cv small{font-size:11px;color:rgba(245,245,240,.5);font-weight:600;margin-left:6px}
+.choice.disabled{opacity:.42;cursor:not-allowed;border-style:dashed}
+.choice.disabled:hover{border-color:rgba(255,255,255,.12);background:#161616}
+
+button.submit{width:100%;margin-top:16px;background:#ffd700;color:#0a0a0a;border:0;border-radius:10px;padding:15px;font-size:16px;font-weight:800;cursor:pointer}
+button.submit:disabled{opacity:.45;cursor:default}
+.done{display:none;margin-top:20px;background:#0f1a0f;border:1px solid rgba(120,220,120,.3);border-radius:12px;padding:18px;font-size:14px;line-height:1.7}
+.done b{color:#9fdf9f}
+.err{color:#ff8a7a;font-size:14px;margin-top:10px;min-height:18px}
+.foot{margin-top:30px;font-size:11.5px;color:rgba(245,245,240,.45);line-height:1.8}
+.foot a{color:rgba(255,215,0,.75)}
+</style></head><body>
+<nav><a class="brand" href="/">MU</a><a href="/consign/balance">残高 →</a></nav>
+<div class="wrap">
+  <h1>写真で、出品。</h1>
+  <p class="sub">持ち物を撮るだけ。その場で自動概算（参考値）を出して、3つの出し方から選べます。受け取りはMU内で使える残高。</p>
+
+  <!-- __GATE_BANNER__ : partner gate が閉じているとき .gatewall を、開いていれば空文字を注入 -->
+  __GATE_BANNER__
+
+  <!-- アップロード -->
+  <label class="drop" id="drop" for="file">
+    <div class="ic">📷</div>
+    <div class="lead">写真を撮る / 選ぶ</div>
+    <div class="hint">明るい場所で全体が写るように・1枚でOK（最大8MB）</div>
+  </label>
+  <input type="file" id="file" accept="image/*" capture="environment">
+  <div class="preview" id="preview"><img id="pimg" alt="preview"></div>
+
+  <div class="row">
+    <select id="cat">
+      <option value="apparel">服・衣類</option>
+      <option value="shoes">靴・スニーカー</option>
+      <option value="bag">バッグ・財布</option>
+      <option value="watch">時計</option>
+      <option value="gadget">ガジェット・家電</option>
+      <option value="hobby">ホビー・コレクション</option>
+      <option value="other">その他</option>
+    </select>
+    <input class="note" id="memo" placeholder="ブランド・型番・状態など（任意）" maxlength="120">
+  </div>
+  <div class="row">
+    <input class="note" id="email" type="email" inputmode="email" autocomplete="email"
+           placeholder="メールアドレス（残高の受け取り先・必須）" maxlength="254" style="flex:1">
+  </div>
+  <button class="cta" id="quoteBtn" disabled>自動概算する</button>
+
+  <!-- 査定中ゲージ -->
+  <div class="gen" id="gen">
+    <div class="gtitle"><span class="spin"></span>自動で概算しています…</div>
+    <div class="bar"><i id="barfill"></i></div>
+    <div class="steps" id="steps">画像を解析中…</div>
+  </div>
+
+  <!-- 査定結果 + 3択 -->
+  <div id="result">
+    <div class="qcard">
+      <div class="qlabel">自動概算額（参考値）</div>
+      <div class="qamt" id="qamt">¥0</div>
+      <div class="qrange" id="qrange"></div>
+      <div class="qreason" id="qreason"></div>
+      <div class="disclaim">
+        ※ <b>この金額はカテゴリと記入内容からの自動概算（参考値）で、確約ではありません。</b>画像は確認しておらず、実物の状態確認後に最終額が決まります。<br>
+        ※ <b>「いますぐ買取」は早さと引き換えに減額（査定額の目安70%）が前提です。</b><br>
+        ※ 委託は売れたときに手数料（販売価格の20%）を差し引いてお渡しします。手数料は明示します。<br>
+        ※ お受け取りは<b>MU内で使える残高（付与日から6ヶ月有効）</b>です。現金での払い戻し・換金はできません。
+      </div>
+    </div>
+
+    <div class="choices" id="choices">
+      <button class="choice" data-intent="sell">
+        <div class="ch">① いますぐ買取</div>
+        <div class="cd">その場で残高に反映。早いぶん減額前提（目安70%）。</div>
+        <div class="cv" id="vSell">¥0<small>すぐ残高に</small></div>
+      </button>
+      <button class="choice" data-intent="consign">
+        <div class="ch">② 待って、高く（委託）</div>
+        <div class="cd">提携古物商が販売。売れたら手数料20%を引いて残高に。査定額は到達目安。</div>
+        <div class="cv" id="vConsign">¥0<small>売れたら残高に</small></div>
+      </button>
+      <button class="choice" data-intent="store">
+        <div class="ch">③ 預ける</div>
+        <div class="cd">いまは決めない。お預かりして、あとで買取／委託を選べます。</div>
+        <div class="cv">—<small>保管のみ</small></div>
+      </button>
+    </div>
+
+    <button class="submit" id="submitBtn" disabled>出し方を選んでください</button>
+    <div class="err" id="err"></div>
+    <!-- メール所有確認: 買取で未検証のとき案内 + 「確認メールを送る」導線 -->
+    <div class="verifybox" id="verifybox" style="display:none;margin-top:14px;padding:14px 16px;border:1px solid rgba(255,215,0,0.35);border-radius:12px;background:rgba(255,215,0,0.06);font-size:13px;line-height:1.8">
+      <div id="verifyMsg" style="margin-bottom:10px">買取で残高を受け取るには、メールアドレスの確認が必要です。</div>
+      <button class="cta" id="verifyBtn" style="margin:0">確認メールを送る</button>
+      <div id="verifyDone" style="display:none;margin-top:10px;color:#9fdf9f"></div>
+    </div>
+    <div class="done" id="done"></div>
+  </div>
+
+  <div class="foot">
+    出品代行は提携する古物商（古物営業法の許可業者）が買取・販売を行います。MUは出品の取次・査定・残高付与を担当します。<br>
+    <a href="/consign/balance">残高をみる</a> ·
+    <a href="/consign/sellers">販売業者情報（取引DPF法）</a> ·
+    <a href="/consign/tokushoho">特定商取引法に基づく表記</a> ·
+    <a href="/consign/sellers#complaints">苦情・お問い合わせ窓口</a>
+  </div>
+</div>
+
+<script>
+// __PARTNER_OPEN__ = "1" なら売り系（①②）開放、"0" なら gated（準備中）。サーバが注入。
+var PARTNER_OPEN = "__PARTNER_OPEN__" === "1";
+var fileB64 = null, quote = null, chosen = null;
+var $ = function(id){return document.getElementById(id);};
+function emailOk(v){ v=(v||'').trim(); return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+function refreshQuoteBtn(){ $('quoteBtn').disabled = !(fileB64 && emailOk($('email').value)); }
+$('email').addEventListener('input', refreshQuoteBtn);
+
+$('drop').addEventListener('dragover', function(e){e.preventDefault();$('drop').classList.add('hot');});
+$('drop').addEventListener('dragleave', function(){$('drop').classList.remove('hot');});
+$('file').addEventListener('change', function(e){ handleFile(e.target.files[0]); });
+
+function handleFile(f){
+  if(!f) return;
+  if(f.size > 8*1024*1024){ $('err').textContent='画像が大きすぎます（8MBまで）'; return; }
+  var r = new FileReader();
+  r.onload = function(){
+    fileB64 = r.result; // data:image/...;base64,xxxx
+    $('pimg').src = fileB64;
+    $('preview').style.display='block';
+    refreshQuoteBtn();
+    $('err').textContent='';
+  };
+  r.readAsDataURL(f);
+}
+
+$('quoteBtn').addEventListener('click', runQuote);
+
+function runQuote(){
+  if(!fileB64) return;
+  if(!emailOk($('email').value)){ $('err').textContent='メールアドレスを入力してください'; return; }
+  $('err').textContent=''; $('result').style.display='none';
+  $('gen').style.display='block'; $('quoteBtn').disabled=true;
+  // 進捗ゲージ（演出。実レスポンスを待ちつつ 0→90% へ、到着で 100%）
+  var pct=0; var steps=['記入内容を確認中…','カテゴリ相場と照合中…','概算を算出中…','まとめ中…'];
+  var si=0;
+  var t=setInterval(function(){
+    pct=Math.min(90,pct+Math.random()*16);
+    $('barfill').style.width=pct+'%';
+    if(pct>22*(si+1) && si<steps.length-1){ si++; $('steps').textContent=steps[si]; }
+  },420);
+
+  fetch('/api/consign/quote',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({image:fileB64,category:$('cat').value,memo:$('memo').value,email:$('email').value.trim()})})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    clearInterval(t); $('barfill').style.width='100%'; $('steps').textContent='完了';
+    if(d.error){ $('gen').style.display='none'; refreshQuoteBtn(); $('err').textContent='概算に失敗しました：'+d.error; return; }
+    quote=d;
+    setTimeout(showResult, 350);
+  })
+  .catch(function(e){ clearInterval(t); $('gen').style.display='none'; refreshQuoteBtn(); $('err').textContent='通信エラー：'+e; });
+}
+
+function yen(n){ return '¥'+Number(n||0).toLocaleString('ja-JP'); }
+
+function showResult(){
+  $('gen').style.display='none';
+  $('qamt').textContent = yen(quote.estimate_jpy);
+  $('qrange').textContent = '想定レンジ '+yen(quote.low_jpy)+'〜'+yen(quote.high_jpy);
+  $('qreason').textContent = quote.reason || '';
+  $('vSell').innerHTML = yen(quote.sell_now_jpy)+'<small>すぐ残高に</small>';
+  $('vConsign').innerHTML = yen(quote.consign_target_jpy)+'<small>売れたら残高に</small>';
+  // partner gate: ①② は閉じていれば disabled
+  var chs = document.querySelectorAll('.choice');
+  chs.forEach(function(c){
+    var intent=c.getAttribute('data-intent');
+    if((intent==='sell'||intent==='consign') && !PARTNER_OPEN){
+      c.classList.add('disabled');
+      c.querySelector('.cd').textContent='準備中（提携古物商の登録待ち）。いまは「③ 預ける」を選べます。';
+    }
+    c.addEventListener('click', function(){ pick(c); });
+  });
+  $('result').style.display='block';
+  $('result').scrollIntoView({behavior:'smooth',block:'start'});
+}
+
+function pick(c){
+  if(c.classList.contains('disabled')) return;
+  document.querySelectorAll('.choice').forEach(function(x){x.classList.remove('sel');});
+  c.classList.add('sel');
+  chosen = c.getAttribute('data-intent');
+  var label = {sell:'いますぐ買取で出す',consign:'委託で出す',store:'預ける'}[chosen];
+  $('submitBtn').textContent = label;
+  $('submitBtn').disabled = false;
+}
+
+// メール所有確認: 「確認メールを送る」→ /api/consign/verify/request
+$('verifyBtn').addEventListener('click', function(){
+  if(!emailOk($('email').value)){ $('err').textContent='メールアドレスを入力してください'; return; }
+  $('verifyBtn').disabled=true; $('verifyBtn').textContent='送信中…';
+  fetch('/api/consign/verify/request',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({email:$('email').value.trim()})})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.error){ $('verifyBtn').disabled=false; $('verifyBtn').textContent='確認メールを送る'; $('err').textContent=d.error; return; }
+    $('verifyBtn').style.display='none';
+    $('verifyDone').textContent = d.verified
+      ? 'このメールは確認済みです。もう一度「いますぐ買取」を押してください。'
+      : (d.message || '確認メールを送りました。メール内のリンクを押してから、もう一度「いますぐ買取」を押してください。');
+    $('verifyDone').style.display='block';
+  })
+  .catch(function(e){ $('verifyBtn').disabled=false; $('verifyBtn').textContent='確認メールを送る'; $('err').textContent='通信エラー：'+e; });
+});
+
+$('submitBtn').addEventListener('click', function(){
+  if(!chosen || !quote) return;
+  $('submitBtn').disabled=true; $('err').textContent=''; $('verifybox').style.display='none';
+  fetch('/api/consign/submit',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({quote_id:quote.quote_id, intent:chosen, email:$('email').value.trim()})})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    // メール所有確認が必要（買取・未検証）: 確認導線を出す。quote は消費されていない。
+    if(d.need_verify){
+      $('submitBtn').disabled=false;
+      $('verifyMsg').textContent = d.message || 'buyで残高を受け取るには、メールアドレスの確認が必要です。';
+      $('verifyBtn').style.display='inline-block'; $('verifyBtn').disabled=false; $('verifyBtn').textContent='確認メールを送る';
+      $('verifyDone').style.display='none';
+      $('verifybox').style.display='block';
+      $('verifybox').scrollIntoView({behavior:'smooth',block:'center'});
+      return;
+    }
+    if(d.error){ $('submitBtn').disabled=false; $('err').textContent=d.error; return; }
+    if(d.gated){
+      $('done').innerHTML='<b>準備中</b>：'+ (d.message||'提携古物商の登録が完了するまで、買取・委託はお受けできません。お預かりとして受け付けました。') +'<br>受付ID: '+d.item_id;
+    } else if(chosen==='sell'){
+      $('done').innerHTML='<b>買取が成立しました。</b>'+yen(d.credited_jpy)+' を残高に付与しました（有効期限 '+d.expires_at+'）。<br><a href="/consign/balance" style="color:#9fdf9f">残高をみる →</a>';
+    } else if(chosen==='consign'){
+      $('done').innerHTML='<b>委託で受け付けました。</b>提携古物商が販売します。売れたら手数料20%を引いて残高に反映します。<br>受付ID: '+d.item_id;
+    } else {
+      $('done').innerHTML='<b>お預かりしました。</b>あとで買取／委託を選べます。<br>受付ID: '+d.item_id;
+    }
+    $('done').style.display='block';
+    $('choices').style.opacity='.4';
+    $('done').scrollIntoView({behavior:'smooth',block:'center'});
+  })
+  .catch(function(e){ $('submitBtn').disabled=false; $('err').textContent='通信エラー：'+e; });
+});
+</script>
+</body></html>
