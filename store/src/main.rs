@@ -15495,6 +15495,37 @@ async fn product_sku_page(
         name, drop_num, intl_price_num,
     );
 
+    // ── シェア(バイラルループ) ──
+    // /shop/:sku と同じ実証済みパターンを /p/:sku にも。X / LINE / ネイティブ共有。
+    // data-funnel="share" でファネル計測、?ref=share_* で流入帰属。OG カードは
+    // 上の og:* / Product JSON-LD が描くので、シェア文は短いフックだけにする。
+    let share_block: String = {
+        let share_text = format!("ことば1行から生まれた一着「{}」 — MU #{} #MU #wearmu", name, drop_num);
+        let share_x = format!(
+            "https://x.com/intent/tweet?text={}&url={}",
+            urlencoding::encode(&share_text),
+            urlencoding::encode(&format!("{}?ref=share_x", canonical_url)),
+        );
+        let share_line = format!(
+            "https://social-plugins.line.me/lineit/share?url={}",
+            urlencoding::encode(&format!("{}?ref=share_line", canonical_url)),
+        );
+        format!(
+            r##"<div class="share-row">
+<span class="share-lbl">この一着を広める</span>
+<a href="{x}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="p_share_x">𝕏 ポスト</a>
+<a href="{line}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="p_share_line">LINE</a>
+<button id="shareBtn" type="button" data-funnel="share" data-funnel-cta="p_share_native">リンクをコピー</button>
+</div>
+<script>(function(){{var b=document.getElementById('shareBtn');if(!b)return;b.addEventListener('click',function(){{
+if(navigator.share){{navigator.share({{url:location.href}}).catch(function(){{}});}}
+else if(navigator.clipboard){{navigator.clipboard.writeText(location.href).then(function(){{b.textContent='✓ コピーしました';}});}}
+}});}})();</script>"##,
+            x = html_attr_escape(&share_x),
+            line = html_attr_escape(&share_line),
+        )
+    };
+
     let html = format!(
         r##"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8">
@@ -15502,6 +15533,9 @@ async fn product_sku_page(
 <title>{name} — MU #{drop_num}</title>
 <meta name="description" content="{og_desc_esc}">
 <link rel="canonical" href="{canonical_url}">
+<link rel="alternate" hreflang="ja" href="{canonical_url}">
+<link rel="alternate" hreflang="en" href="{canonical_url}?lang=en">
+<link rel="alternate" hreflang="x-default" href="{canonical_url}">
 <meta property="og:type" content="product">
 <meta property="og:title" content="{name_attr} — MU #{drop_num}">
 <meta property="og:description" content="{og_desc_esc}">
@@ -15552,6 +15586,10 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 .bundle-nudge a:hover{{opacity:0.8}}
 .back{{display:inline-block;margin-top:32px;color:#777;font-size:12px;text-decoration:none}}
 .back:hover{{color:#aaa}}
+.share-row{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:18px 0 0;font-size:12.5px}}
+.share-row .share-lbl{{opacity:.55;margin-right:2px}}
+.share-row a,.share-row button{{color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;background:none;cursor:pointer;font-size:12.5px;font-family:inherit}}
+.share-row a:hover,.share-row button:hover{{border-color:#f5f5f0}}
 .upsell{{margin-top:48px;padding-top:24px;border-top:1px solid rgba(255,255,255,0.08)}}
 .upsell h2{{font-size:11px;letter-spacing:0.32em;text-transform:uppercase;opacity:0.55;margin:0 0 18px;font-weight:500}}
 .upsell-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}}
@@ -15578,6 +15616,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 <div class="bundle-nudge">🎁 2 枚購入で ¥1,000 OFF · <a href="/merch/{brand_lower}">同 brand をもう 1 枚見る →</a></div>
 <p class="ship-line">送料込み · 注文から 5〜7 営業日でお届け · 30 日返品保証</p>
 <div class="trust"><span>Printful 製造</span><span>カード / Apple Pay / Google Pay</span><span>日本国内発送</span></div>
+{share}
 <a class="back" href="/products/{brand}/{drop_num}">仕様詳細・サイズ表 →</a>
 {upsell}
 </main>
@@ -15600,6 +15639,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
         upsell = upsell_html,
         json_ld = json_ld,
         rating = rating_block_html,
+        share = share_block,
         canonical_url = html_attr_escape(&canonical_url),
         og_image_attr = html_attr_escape(&og_image),
         og_desc_esc = html_attr_escape(&og_desc),
@@ -55033,6 +55073,37 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
             enc = enc, image_xml = image_xml,
         ));
     }
+    // ── (d) creator portfolio pages (/u/<code>) ───────────────────────────
+    // 作者が ≥1 件の live 商品を持つ referral コードだけを採録する。空の
+    // ポートフォリオ(0件)を Google に渡すと薄いページ扱いになるため除外。
+    // 各 /u/<code> は CollectionPage JSON-LD + hreflang を持つ固有コンテンツ
+    // 面なので、オーガニックの SEO 入口として sitemap に載せる。
+    let maker_codes: Vec<String> = {
+        let conn = db.lock().unwrap();
+        conn.prepare(&format!(
+            "SELECT DISTINCT r.code
+             FROM mu_referrals r
+             JOIN catalog_products p ON {maker} = LOWER(r.owner_email)
+             WHERE r.owner_email IS NOT NULL AND r.owner_email != ''
+               AND p.is_active=1 AND p.status='live'
+             ORDER BY r.code ASC LIMIT 2000", maker = creators::MAKER_SQL))
+            .ok()
+            .and_then(|mut s| s.query_map([], |r| r.get::<_, String>(0))
+                .ok()
+                .map(|it| it.filter_map(|x| x.ok()).collect()))
+            .unwrap_or_default()
+    };
+    for code in &maker_codes {
+        let enc = urlencoding::encode(code);
+        entries.push_str(&format!(
+            "  <url>\n    <loc>https://wearmu.com/u/{enc}</loc>\n    \
+             <xhtml:link rel=\"alternate\" hreflang=\"ja\" href=\"https://wearmu.com/u/{enc}\"/>\n    \
+             <xhtml:link rel=\"alternate\" hreflang=\"en\" href=\"https://wearmu.com/u/{enc}?lang=en\"/>\n    \
+             <xhtml:link rel=\"alternate\" hreflang=\"x-default\" href=\"https://wearmu.com/u/{enc}\"/>\n    \
+             <changefreq>weekly</changefreq>\n    <priority>0.6</priority>\n  </url>\n",
+            enc = enc));
+    }
+
     let out = if base.contains("</urlset>") {
         base.replace("</urlset>", &format!("{entries}</urlset>"))
     } else {
