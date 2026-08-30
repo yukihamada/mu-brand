@@ -29,6 +29,7 @@ jobs:
       MU_STORE_URL: https://wearmu.com
       MU_ADMIN_TOKEN: ${{ secrets.MU_ADMIN_TOKEN }}
       TEAI_API_KEY: ${{ secrets.TEAI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       PRINTFUL_API_KEY: ${{ secrets.PRINTFUL_API_KEY }}
       HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
