@@ -53,7 +53,7 @@ jobs:
       - name: Install deps
         if: steps.gate.outputs.run == 'true'
         run: |
-          pip install --quiet requests Pillow numpy qrcode google-genai
+          pip install --quiet requests Pillow numpy qrcode google-genai openai
       - name: Generate NEWS draft drop
         if: steps.gate.outputs.run == 'true'
         run: python generate.py news

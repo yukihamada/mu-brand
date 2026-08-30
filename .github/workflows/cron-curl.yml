@@ -413,7 +413,7 @@ jobs:
       - name: Install deps
         # qrcode: generate.py embed_serial_number が import — 無いと毎時の
         # MUGEN 生成が ModuleNotFoundError で落ちる (2026-07-12 実障害)
-        run: pip install --quiet google-genai pillow requests numpy qrcode
+        run: pip install --quiet google-genai pillow requests numpy qrcode openai
       - name: Generate next MUGEN
         # MAX_DELAY_SECS=300: random_delay は素で 0–55分眠る設計だが、
         # timeout-minutes:12 を超えた回は job ごと cancelled=drop 欠番になる

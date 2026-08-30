@@ -43,6 +43,6 @@ jobs:
           cache: pip
       - name: Install deps
         run: |
-          pip install --quiet requests Pillow numpy qrcode google-genai
+          pip install --quiet requests Pillow numpy qrcode google-genai openai
       - name: Generate STAPLE drop
         run: python generate.py staple
