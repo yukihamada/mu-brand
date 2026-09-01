@@ -51357,6 +51357,9 @@ struct BlogPublishBody {
     /// generic fixed copy in show_auto_blog if unset. 1-160 chars recommended.
     #[serde(default)]
     description: Option<String>,
+    /// Optional KOE narration mp3 URL (podcast-style audio player).
+    #[serde(default)]
+    audio_url: Option<String>,
 }
 
 async fn admin_blog_publish(
@@ -51406,10 +51409,10 @@ async fn admin_blog_publish(
             let n = conn.execute(
                 "INSERT OR IGNORE INTO auto_blog_posts
                     (slug, title, body_html, body_md, model, stats_json,
-                     origin, retry_count, published, created_at, description)
-                 VALUES (?,?,?,?,?,?,?,?,1,?,?)",
+                     origin, retry_count, published, created_at, description, audio_url)
+                 VALUES (?,?,?,?,?,?,?,?,1,?,?,?)",
                 params![slug, title, body_html, body_md, model, stats_json,
-                        origin, retry_count, chrono_now(), body.description],
+                        origin, retry_count, chrono_now(), body.description, body.audio_url],
             ).unwrap_or(0);
             (n > 0, false)
         }
@@ -51535,6 +51538,9 @@ struct BlogUpdateBody {
     /// (or the generic fallback) is preserved.
     #[serde(default)]
     description: Option<String>,
+    /// New KOE narration mp3 URL. Optional — if omitted, existing value is preserved.
+    #[serde(default)]
+    audio_url: Option<String>,
 }
 
 /// POST /api/admin/blog_update — overwrite body_md / body_html / title / model
@@ -51588,6 +51594,13 @@ async fn admin_blog_update(
             let _ = conn.execute(
                 "UPDATE auto_blog_posts SET description=? WHERE slug=?",
                 params![d, slug],
+            );
+        }
+        if let Some(a) = body.audio_url.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE auto_blog_posts SET audio_url=? WHERE slug=?",
+                params![a, slug],
             );
         }
     }
@@ -52113,20 +52126,30 @@ async fn show_auto_blog(
     Path(slug): Path<String>,
     State(db): State<Db>,
 ) -> impl IntoResponse {
-    let row: Option<(String, String, String, Option<String>)> = {
+    let row: Option<(String, String, String, Option<String>, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT title, body_html, created_at, description FROM auto_blog_posts
+            "SELECT title, body_html, created_at, description, audio_url FROM auto_blog_posts
              WHERE slug=? AND published=1",
-            params![slug], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            params![slug], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         ).ok()
     };
-    let Some((title, body_html, ts, description)) = row else {
+    let Some((title, body_html, ts, description, audio_url)) = row else {
         return (StatusCode::NOT_FOUND, "auto-blog not found").into_response();
     };
     const DEFAULT_BLOG_DESCRIPTION: &str = "MU の AI 自動執筆 Field log。毎朝 JST 9:00 に Gemini が生成。";
     let desc = description.filter(|d| !d.trim().is_empty()).unwrap_or_else(|| DEFAULT_BLOG_DESCRIPTION.to_string());
     let desc_attr = html_attr_escape(&desc);
+    // 🎧 KOEナレーション(podcast風の音声プレイヤー)。audio_url未設定の記事は何も出さない。
+    let audio_block = audio_url
+        .filter(|a| !a.trim().is_empty())
+        .map(|a| {
+            let a_attr = html_attr_escape(&a);
+            format!(
+                r#"<div class="listen"><div class="listen-label">🎧 音声で聴く <span class="listen-sub">by KOE・本人クローン声</span></div><audio controls preload="none" src="{a_attr}"></audio></div>"#
+            )
+        })
+        .unwrap_or_default();
     let date_iso = iso_date_from_created_at(&ts);
     let title_json = json_escape(&title);
     let title_attr = html_attr_escape(&title);
@@ -52167,6 +52190,10 @@ figure{{margin:24px 0}} figure img{{margin:0 auto 8px}}
 figcaption{{font-size:11px;letter-spacing:0.12em;text-align:center;color:var(--mute);font-family:'Helvetica Neue',Arial,sans-serif}}
 .byline{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.55;margin-bottom:20px}}
 .tag{{display:inline-block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;padding:3px 10px;background:rgba(230,196,73,0.12);color:var(--y);border-radius:2px;margin-right:8px}}
+.listen{{margin:0 0 32px;padding:16px 18px;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:6px}}
+.listen-label{{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11px;letter-spacing:0.12em;color:var(--y);margin-bottom:10px}}
+.listen-sub{{color:var(--mute);letter-spacing:0.05em;text-transform:none;font-size:10px}}
+.listen audio{{width:100%;display:block}}
 footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align:center;font-size:11px;letter-spacing:0.2em;opacity:0.5}}
 </style></head><body>
 <nav><a href="/" class="logo">MU</a><a href="/blog/">/ Notes</a></nav>
@@ -52174,6 +52201,7 @@ footer{{padding:48px 32px;border-top:1px solid rgba(255,255,255,0.06);text-align
   <div class="eyebrow">{day} · 自動運営ノート</div>
   <h1>{title}</h1>
   <div class="byline"><span class="tag">AI</span> by Gemini 2.5 Pro · 監修なし</div>
+  {audio_block}
   {body_html}
   <p style="margin-top:48px;font-size:11px;opacity:0.5">— このノートは MU が毎朝 JST 9:00 に <a href="/api/transparency">/api/transparency</a> の生データを Gemini に渡して自動生成しています。事実は数字、文体は AI。</p>
 </article>
@@ -68549,6 +68577,9 @@ async fn main() {
     // 共通の固定文言だった。既存行は description=NULL のままでよい
     // (show_auto_blog側で固定文言にフォールバックする)。
     let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN description TEXT", []);
+    // 2026-09-01: KOEナレーション(記事の音声版・podcast風再生)のmp3 URL。
+    // 未設定(NULL)の記事は従来通りテキストのみ表示。
+    let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN audio_url TEXT", []);
     conn.execute_batch("
         -- blog_rate_limit: tracks /api/blog/stats_for_today fetches per IP per hour
         -- to prevent abuse + cost explosion (Gemini API key is published in
