@@ -51353,6 +51353,10 @@ struct BlogPublishBody {
     /// Used for dry-run / backfill scenarios.
     #[serde(default)]
     quiet: bool,
+    /// Optional per-article meta description (SEO). Falls back to the
+    /// generic fixed copy in show_auto_blog if unset. 1-160 chars recommended.
+    #[serde(default)]
+    description: Option<String>,
 }
 
 async fn admin_blog_publish(
@@ -51402,10 +51406,10 @@ async fn admin_blog_publish(
             let n = conn.execute(
                 "INSERT OR IGNORE INTO auto_blog_posts
                     (slug, title, body_html, body_md, model, stats_json,
-                     origin, retry_count, published, created_at)
-                 VALUES (?,?,?,?,?,?,?,?,1,?)",
+                     origin, retry_count, published, created_at, description)
+                 VALUES (?,?,?,?,?,?,?,?,1,?,?)",
                 params![slug, title, body_html, body_md, model, stats_json,
-                        origin, retry_count, chrono_now()],
+                        origin, retry_count, chrono_now(), body.description],
             ).unwrap_or(0);
             (n > 0, false)
         }
@@ -52096,17 +52100,20 @@ async fn show_auto_blog(
     Path(slug): Path<String>,
     State(db): State<Db>,
 ) -> impl IntoResponse {
-    let row: Option<(String, String, String)> = {
+    let row: Option<(String, String, String, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            "SELECT title, body_html, created_at FROM auto_blog_posts
+            "SELECT title, body_html, created_at, description FROM auto_blog_posts
              WHERE slug=? AND published=1",
-            params![slug], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            params![slug], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).ok()
     };
-    let Some((title, body_html, ts)) = row else {
+    let Some((title, body_html, ts, description)) = row else {
         return (StatusCode::NOT_FOUND, "auto-blog not found").into_response();
     };
+    const DEFAULT_BLOG_DESCRIPTION: &str = "MU の AI 自動執筆 Field log。毎朝 JST 9:00 に Gemini が生成。";
+    let desc = description.filter(|d| !d.trim().is_empty()).unwrap_or_else(|| DEFAULT_BLOG_DESCRIPTION.to_string());
+    let desc_attr = html_attr_escape(&desc);
     let date_iso = iso_date_from_created_at(&ts);
     let title_json = json_escape(&title);
     let title_attr = html_attr_escape(&title);
@@ -52114,15 +52121,15 @@ async fn show_auto_blog(
     let html = format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>{title} | MU 自動運営ノート</title>
-<meta name="description" content="MU の AI 自動執筆 Field log。毎朝 JST 9:00 に Gemini が生成。">
+<meta name="description" content="{desc_attr}">
 <meta property="og:type" content="article">
 <meta property="og:title" content="{title_attr}">
-<meta property="og:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が /api/transparency の生データから書きます。">
+<meta property="og:description" content="{desc_attr}">
 <meta property="og:image" content="https://mockups.wearmu.com/hero.png">
 <meta property="og:url" content="https://wearmu.com/blog/auto/{slug_attr}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{title_attr}">
-<meta name="twitter:description" content="MU の AI 自動執筆 Field log — 毎朝 JST 9:00 に Gemini が書きます。">
+<meta name="twitter:description" content="{desc_attr}">
 <meta name="twitter:image" content="https://mockups.wearmu.com/hero.png">
 <link rel="canonical" href="https://wearmu.com/blog/auto/{slug_attr}">
 <script type="application/ld+json">{{"@context":"https://schema.org","@type":"BlogPosting","headline":"{title_json}","datePublished":"{date_iso}","dateModified":"{date_iso}","author":{{"@type":"Organization","name":"MU"}},"publisher":{{"@type":"Organization","name":"MU","logo":{{"@type":"ImageObject","url":"https://wearmu.com/icon-512.png"}}}},"image":"https://mockups.wearmu.com/hero.png","mainEntityOfPage":"https://wearmu.com/blog/auto/{slug_attr}"}}</script>
@@ -68511,7 +68518,7 @@ async fn main() {
     // Auto-blog posts table — every day the AI composes a "field log"
     // entry from /api/transparency, recent commits + cron health, and
     // it lands here. Rendered at /blog/auto/<slug>.
-    conn.execute_batch("
+    let _ = conn.execute_batch("
         CREATE TABLE IF NOT EXISTS auto_blog_posts (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             slug        TEXT NOT NULL UNIQUE,
@@ -68524,6 +68531,12 @@ async fn main() {
             created_at  TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_auto_blog_published ON auto_blog_posts(published, created_at DESC);
+    ");
+    // 2026-09-01: 記事ごとのmeta descriptionを持たせる(SEO改善)。以前は全記事
+    // 共通の固定文言だった。既存行は description=NULL のままでよい
+    // (show_auto_blog側で固定文言にフォールバックする)。
+    let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN description TEXT", []);
+    conn.execute_batch("
         -- blog_rate_limit: tracks /api/blog/stats_for_today fetches per IP per hour
         -- to prevent abuse + cost explosion (Gemini API key is published in
         -- the prompt field, so attacker could bypass our wrapper).
