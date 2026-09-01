@@ -10640,7 +10640,8 @@ async fn admin_withdrawals(
         let action = if w.status == "pending" {
             format!(r#"<form method="post" action="/admin/withdrawals/{id}/mark-paid?token={t}" style="display:flex;gap:6px">
 <input name="payout_tx_or_id" placeholder="送金参照ID(任意)" style="flex:1;padding:4px 6px">
-<button type="submit">送金済みにする</button></form>"#, id = w.id, t = tok_attr)
+<button type="submit">送金済みにする</button></form>
+<form method="post" action="/admin/withdrawals/{id}/cancel?token={t}" style="margin-top:4px"><button type="submit">取り消し(残高に戻す)</button></form>"#, id = w.id, t = tok_attr)
         } else {
             format!("済 {}", html_escape(w.tx.as_deref().unwrap_or("")))
         };
@@ -10691,6 +10692,79 @@ async fn admin_withdrawals_mark_paid(
 /// POST /admin/bounty/:id/grant-mupay — convert a reward's cash into MU PAY and
 /// email the reporter their /pay link. Form: `amount_jpy` (defaults to the
 /// reward's cash_amount_jpy).
+/// POST /admin/credit/grant?token=… — grant (or debit, with a negative
+/// amount) MU PAY credit for an arbitrary email. Generic version of
+/// admin_bounty_grant_mupay for cases with no bounty row: QA/E2E testing,
+/// customer-service credits, ledger corrections. Idempotent per `ref_id`
+/// (auto-generated per call unless one is supplied) via [[mupay_grant]].
+#[derive(Deserialize)]
+struct AdminCreditGrantBody {
+    email: String,
+    amount_jpy: i64,
+    #[serde(default)] reason: String,
+    #[serde(default)] ref_id: String,
+}
+async fn admin_credit_grant(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    Json(body): Json<AdminCreditGrantBody>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/credit/grant").await { return r; }
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"invalid email"}))).into_response();
+    }
+    let reason = if body.reason.trim().is_empty() { "admin_grant".to_string() } else { body.reason.trim().chars().take(80).collect() };
+    let ref_id = if body.ref_id.trim().is_empty() { format!("admin-grant-{}-{}", email, chrono_now()) } else { body.ref_id.trim().chars().take(80).collect() };
+
+    let conn = db.lock().unwrap();
+    let (token, balance) = if body.amount_jpy > 0 {
+        let t = mupay_grant(&conn, &email, body.amount_jpy, &reason, &ref_id);
+        (t, mu_credit_balance(&conn, &email))
+    } else if body.amount_jpy < 0 {
+        let ok = mu_credit_apply(&conn, &email, body.amount_jpy, &reason, Some(&ref_id));
+        if !ok {
+            return (StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok":false,"error":"残高不足で減額できません"}))).into_response();
+        }
+        (Some(mupay_token_for_email(&email)), mu_credit_balance(&conn, &email))
+    } else {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":"amount_jpy must not be 0"}))).into_response();
+    };
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    Json(serde_json::json!({
+        "ok": true, "email": email, "balance": balance,
+        "pay_url": token.map(|t| format!("{}/pay/{}", base_url, t)),
+    })).into_response()
+}
+
+/// POST /admin/withdrawals/:id/cancel — refund a pending withdrawal request
+/// (mistaken/test submission) back onto the account's MU PAY balance
+/// instead of sending it.
+async fn admin_withdrawals_cancel(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/withdrawals/cancel").await { return r; }
+    let conn = db.lock().unwrap();
+    let row: Option<(String, i64)> = conn.query_row(
+        "SELECT email, amount_jpy FROM mu_withdrawal_requests WHERE id=? AND status='pending'",
+        params![id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).ok();
+    let Some((email, amount)) = row else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"not found or not pending"}))).into_response();
+    };
+    let _ = conn.execute("UPDATE mu_withdrawal_requests SET status='cancelled' WHERE id=?", params![id]);
+    mu_credit_apply(&conn, &email, amount, &format!("withdrawal-refund:{}", id), Some(&id.to_string()));
+    let tok_attr = html_attr_escape(&q.get("token").cloned().unwrap_or_default());
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/withdrawals?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
+}
+
 async fn admin_bounty_grant_mupay(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -71439,6 +71513,8 @@ async fn main() {
         .route("/api/pay/:token/withdraw/stripe-connect", post(mupay_withdraw_stripe_connect))
         .route("/admin/withdrawals", get(admin_withdrawals))
         .route("/admin/withdrawals/:id/mark-paid", post(admin_withdrawals_mark_paid))
+        .route("/admin/withdrawals/:id/cancel", post(admin_withdrawals_cancel))
+        .route("/admin/credit/grant", post(admin_credit_grant))
         .route("/bounty/claim/:token", get(show_bounty_claim_page))
         .route("/api/bounty/claim/:token", post(bounty_claim))
         .route("/api/bounty/claim/:token/stripe-connect", post(bounty_claim_stripe_connect))
