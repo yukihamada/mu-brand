@@ -51531,6 +51531,10 @@ struct BlogUpdateBody {
     /// Used when rewriting older posts under a stronger model.
     #[serde(default)]
     model: Option<String>,
+    /// New meta description (SEO). Optional — if omitted, existing value
+    /// (or the generic fallback) is preserved.
+    #[serde(default)]
+    description: Option<String>,
 }
 
 /// POST /api/admin/blog_update — overwrite body_md / body_html / title / model
@@ -51578,6 +51582,15 @@ async fn admin_blog_update(
             ).unwrap_or(0),
         }
     };
+    if n > 0 {
+        if let Some(d) = body.description.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let conn = db.lock().unwrap();
+            let _ = conn.execute(
+                "UPDATE auto_blog_posts SET description=? WHERE slug=?",
+                params![d, slug],
+            );
+        }
+    }
     if n == 0 {
         return (StatusCode::NOT_FOUND, "slug not found").into_response();
     }
