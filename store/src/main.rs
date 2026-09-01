@@ -9005,7 +9005,7 @@ form button.submit:disabled{{opacity:0.5;cursor:not-allowed}}
   </div>
 
   <div style="margin:0 0 24px;padding:16px 20px;border:1px solid rgba(230,196,73,0.3);background:rgba(230,196,73,0.06);border-radius:6px;font-size:13px;line-height:1.9;color:#d8d4c8">
-    <b style="color:var(--gold)">お詫び</b> — 受領確認メールの遅延と引き換えリンクの不具合で、ご不便をおかけしました。仕組みを改善し、引き換えは壊れにくいリンクに統一、報酬は <b>MU PAY</b>（T シャツに使えるクレジット）でもお渡しできるようにしました。現金化は準備中です（Coming soon）。
+    <b style="color:var(--gold)">お詫び</b> — 受領確認メールの遅延と引き換えリンクの不具合で、ご不便をおかけしました。仕組みを改善し、引き換えは壊れにくいリンクに統一、報酬は <b>MU PAY</b>（T シャツに使えるクレジット）でもお渡しできるようにしました。MU PAY 残高は <code>/pay</code> ページから Stripe Connect（国内銀行振込）/ PayPay / Solana で現金化もできます。
   </div>
 
   {cash_line}
@@ -9898,18 +9898,22 @@ async fn bounty_printful_fulfill(
 //
 // MU PAY is a thin, branded surface over the existing `mu_credits` balance
 // (email-keyed, audited by mu_credit_ledger). A customer reaches their balance
-// through a deterministic magic link /pay/<token> and redeems it for MUGEN
-// tees: balance is decremented, shipping is collected on the page, and Printful
-// auto-fulfils. Cash-out is intentionally "coming soon" — for now MU PAY only
-// buys shirts. Bounty rewards are the first credit source
-// (POST /admin/bounty/:id/grant-mupay). No new wallet/order tables: a
-// redemption is just a negative mu_credit_ledger row.
+// through a deterministic magic link /pay/<token> and either redeems it for
+// MUGEN tees (balance decremented, shipping collected, Printful auto-fulfils)
+// or cashes it out (2026-09-01: POST /api/pay/:token/withdraw — balance is
+// debited immediately into a `mu_withdrawal_requests` row; a human actually
+// wires the money via Stripe Connect JP bank transfer / PayPay / Solana and
+// closes the loop from /admin/withdrawals — see admin_withdrawals_mark_paid).
+// Bounty rewards are one credit source (POST /admin/bounty/:id/grant-mupay);
+// the /make creator royalty (apply_maker_commission) is another. No new
+// wallet/order tables beyond mu_withdrawal_requests: a tee redemption is
+// just a negative mu_credit_ledger row, same as a withdrawal.
 
 /// Apology block shown on /bounty-adjacent surfaces (no reporter name).
 const MUPAY_APOLOGY_HTML: &str = r#"<div style="max-width:780px;margin:24px auto;padding:18px 22px;border:1px solid rgba(230,196,73,0.3);background:rgba(230,196,73,0.06);border-radius:6px;color:#d8d4c8;font-size:13.5px;line-height:1.9">
 <b style="color:#e6c449">お詫びと改善のご報告</b><br>
 先日のバグ報酬対応で、受領確認メールの遅延と、引き換えリンクが正しく開けない不具合がありました。ご報告くださった方に大変ご不便をおかけしました。心よりお詫び申し上げます。<br>
-現在は (1) 受領・判定メールの送信監視を強化し、(2) 引き換えは壊れにくい <code>/pay</code> リンクに統一、(3) 報酬は <b>MU PAY</b>（T シャツに使えるストアクレジット）でお渡しできるようにしました。現金へのお引き換えは準備中です（Coming soon）。引き続きよろしくお願いいたします。
+現在は (1) 受領・判定メールの送信監視を強化し、(2) 引き換えは壊れにくい <code>/pay</code> リンクに統一、(3) 報酬は <b>MU PAY</b>（T シャツに使えるストアクレジット）でお渡しできるようにしました。<code>/pay</code> ページから Stripe Connect（国内銀行振込）/ PayPay / Solana での現金化も申請できます。引き続きよろしくお願いいたします。
 </div>"#;
 
 /// Deterministic per-email MU PAY access token (stable across re-grants).
@@ -10022,7 +10026,7 @@ async fn mupay_landing_page() -> impl IntoResponse {
     Html(format!(r#"<!doctype html><html lang="ja"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-itunes-app" content="app-id=6781269252">
 <title>MU PAY — T シャツに使えるストアクレジット | MU</title>
-<meta name="description" content="MU PAY は MUGEN の T シャツに引き換えられるストアクレジット。バグ報酬などで受け取った残高で、追加費用なしでシャツを受け取れます。現金化は準備中。">
+<meta name="description" content="MU PAY は MUGEN の T シャツに引き換えられるストアクレジット。バグ報酬や作り手報酬で受け取った残高でシャツを受け取るか、Stripe Connect（国内銀行振込）/ PayPay / Solana で現金化できます。">
 <meta name="robots" content="noindex">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
@@ -10047,9 +10051,9 @@ footer{{border-top:1px solid rgba(255,255,255,0.08);margin-top:48px;padding-top:
 <h3>使い方</h3>
 <p>受け取りメールに記載の <code>/pay/&lt;あなたのリンク&gt;</code> を開くと、残高と引き換えできる T シャツが表示されます。デザインとサイズを選び、配送先を入力すると発送されます。</p>
 </div>
-<div class="card soon">
-<h3>現金へのお引き換え — Coming soon</h3>
-<p>MU PAY を現金へお引き換えする機能は現在準備中です。準備が整い次第、こちらでご案内します。</p>
+<div class="card">
+<h3>現金へのお引き換え</h3>
+<p>Tシャツにする代わりに、Stripe Connect（国内銀行振込）/ PayPay / Solana で現金化することもできます。<code>/pay/&lt;あなたのリンク&gt;</code> の「現金で受け取る」から申請してください（最低¥1,000〜、実際の送金は数営業日以内に人の手で行われます）。</p>
 </div>
 {apology}
 <footer>株式会社イネブラ (Enabler Inc.) · <a href="/bounty">/bounty</a> · <a href="/">MU</a></footer>
@@ -10153,7 +10157,26 @@ table.led td{{padding:7px 4px;border-bottom:1px solid #1c1c1c;color:#bbb}}
 code{{background:rgba(230,196,73,0.1);color:#e6c449;padding:1px 5px;border-radius:3px}}
 </style></head><body><div class="wrap">
 <div class="bal"><div class="lab">MU PAY 残高</div><div class="amt">¥{bal}</div></div>
-<div class="soon">💴 現金へのお引き換えは準備中です（Coming soon）。現在は T シャツへの引き換えのみご利用いただけます。</div>
+
+<h2>現金で受け取る</h2>
+<form class="ship" id="withdraw">
+<div class="row"><label>出金額（最低 ¥{wmin}・残高まで）</label><input id="w_amount" name="amount_jpy" type="number" min="{wmin}" max="{bal_raw}" step="1" value="{bal_raw}"></div>
+<div class="row"><label>受け取り方法</label>
+<select id="w_method" name="payout_method" onchange="onWMethod()">
+<option value="stripe_connect">Stripe Connect（国内銀行振込）</option>
+<option value="paypay">PayPay ID</option>
+<option value="solana">Solanaウォレット</option>
+</select></div>
+<div class="row" id="w_target_row"><label>PayPay ID</label><input id="w_target" name="payout_target" placeholder="PayPay ID"></div>
+<div class="row" id="w_stripe_row" style="display:none">
+<button type="button" class="btn" id="w_stripe_btn" style="background:#635bff">Stripeで銀行口座を登録 →</button>
+<input type="hidden" id="w_stripe_acct" value="">
+<div id="w_stripe_state" style="font-size:12.5px;color:#888;margin-top:8px"></div>
+</div>
+<button class="btn" id="w_go" type="submit">出金を申請する</button>
+<div id="w_result"></div>
+</form>
+<p style="color:#666;font-size:12px;margin-top:8px">申請後、残高から即時に差し引かれます。実際の送金は数営業日以内に人の手で行われます（自動送金ではありません）。</p>
 
 <h2>T シャツを選ぶ</h2>
 <div id="sel">引き換える商品を選んでください</div>
@@ -10230,9 +10253,63 @@ document.getElementById('redeem').addEventListener('submit', async function(e){{
     out.textContent = '送信失敗: ' + err; go.disabled=false; go.textContent=old;
   }}
 }});
+
+function onWMethod(){{
+  var m = document.getElementById('w_method').value;
+  document.getElementById('w_target_row').style.display = (m === 'stripe_connect') ? 'none' : '';
+  document.getElementById('w_stripe_row').style.display = (m === 'stripe_connect') ? '' : 'none';
+  var lab = document.querySelector('#w_target_row label');
+  if(lab) lab.textContent = (m === 'solana') ? 'Solanaウォレットアドレス' : 'PayPay ID';
+  var tgt = document.getElementById('w_target');
+  if(tgt) tgt.placeholder = (m === 'solana') ? 'Solanaウォレットアドレス' : 'PayPay ID';
+}}
+onWMethod();
+document.getElementById('w_stripe_btn').addEventListener('click', async function(){{
+  var st = document.getElementById('w_stripe_state');
+  st.textContent = '接続中...';
+  try {{
+    var r = await fetch('/api/pay/{token}/withdraw/stripe-connect', {{method:'POST'}});
+    var j = await r.json().catch(function(){{return {{ok:false,error:'server error'}}}});
+    if(r.ok && j.ok){{
+      document.getElementById('w_stripe_acct').value = j.account_id;
+      st.innerHTML = '口座を登録済み。<a href="'+j.url+'" target="_blank" style="color:#e6c449">Stripeで口座情報を入力/確認 →</a>';
+    }} else {{
+      st.textContent = 'エラー: ' + (j.error || ('HTTP '+r.status));
+    }}
+  }} catch(err) {{ st.textContent = '送信失敗: ' + err; }}
+}});
+document.getElementById('withdraw').addEventListener('submit', async function(e){{
+  e.preventDefault();
+  var out = document.getElementById('w_result');
+  var go = document.getElementById('w_go');
+  var method = document.getElementById('w_method').value;
+  var target = (method === 'stripe_connect') ? document.getElementById('w_stripe_acct').value : document.getElementById('w_target').value.trim();
+  if(method === 'stripe_connect' && !target){{
+    out.style.display='block'; out.style.background='rgba(200,54,44,0.12)'; out.style.color='#f0a4a0';
+    out.textContent = '先に「Stripeで銀行口座を登録」を完了してください'; return;
+  }}
+  go.disabled = true; var old = go.textContent; go.textContent = '処理中...';
+  try {{
+    var r = await fetch('/api/pay/{token}/withdraw', {{method:'POST',headers:{{'Content-Type':'application/json'}},
+      body:JSON.stringify({{amount_jpy: parseInt(document.getElementById('w_amount').value,10), payout_method: method, payout_target: target}})}});
+    var j = await r.json().catch(function(){{return {{ok:false,error:'server error'}}}});
+    if(r.ok && j.ok){{
+      out.style.display='block'; out.style.background='rgba(79,168,104,0.12)'; out.style.color='#9ae3a8';
+      out.textContent = '出金を申請しました（申請 #' + j.request_id + '）。数営業日以内に送金されます。残高 ¥' + (j.balance||0).toLocaleString() + '。';
+      setTimeout(function(){{location.reload()}}, 2500);
+    }} else {{
+      out.style.display='block'; out.style.background='rgba(200,54,44,0.12)'; out.style.color='#f0a4a0';
+      out.textContent = 'エラー: ' + (j.error || ('HTTP '+r.status));
+      go.disabled=false; go.textContent=old;
+    }}
+  }} catch(err){{
+    out.style.display='block'; out.style.background='rgba(200,54,44,0.12)'; out.style.color='#f0a4a0';
+    out.textContent = '送信失敗: ' + err; go.disabled=false; go.textContent=old;
+  }}
+}});
 </script>
 </body></html>"#,
-        bal = fmt_jpy(balance), bal_raw = balance, cards = cards, led = led_html,
+        bal = fmt_jpy(balance), bal_raw = balance, wmin = MU_WITHDRAWAL_MIN_JPY, cards = cards, led = led_html,
         email = html_attr_escape(&email), token = html_attr_escape(&token),
         apology = MUPAY_APOLOGY_HTML)).into_response()
 }
@@ -10348,6 +10425,269 @@ async fn mupay_redeem(
     }
 }
 
+/// 現金化できる最小額。振込手数料に対して意味のある額になるまで貯めてもらう。
+const MU_WITHDRAWAL_MIN_JPY: i64 = 1000;
+
+/// POST /api/pay/:token/withdraw — request a cash payout of MU PAY balance.
+/// Debits the balance immediately (so a double-submit can't double-spend)
+/// and creates a `mu_withdrawal_requests` row for a human to actually wire
+/// the money via Stripe Connect / PayPay / Solana — mirrors the
+/// `bounty_rewards.payout_status` pattern (see admin_bounty_mark_paid): the
+/// app never moves money on its own, a human closes the loop from
+/// /admin/withdrawals after the transfer has actually happened.
+#[derive(Deserialize)]
+struct MuPayWithdrawBody {
+    amount_jpy: i64,
+    #[serde(default)] payout_method: String,
+    #[serde(default)] payout_target: String,
+}
+
+async fn mupay_withdraw(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+    Json(body): Json<MuPayWithdrawBody>,
+) -> Response {
+    let bad = |m: &str| (StatusCode::BAD_REQUEST, Json(serde_json::json!({"ok":false,"error":m}))).into_response();
+    let method = body.payout_method.trim().to_lowercase();
+    if !["solana", "stripe_connect", "paypay"].contains(&method.as_str()) {
+        return bad("payout_method must be 'solana', 'stripe_connect', or 'paypay'");
+    }
+    let target = body.payout_target.trim().chars().take(64).collect::<String>();
+    match method.as_str() {
+        "solana" => if !is_plausible_solana_wallet(&target) { return bad("invalid Solana wallet address"); },
+        "stripe_connect" => if !target.starts_with("acct_") || target.len() < 12 {
+            return bad("please complete Stripe Connect onboarding first");
+        },
+        "paypay" => if target.is_empty() || target.len() > 60 { return bad("PayPay ID required"); },
+        _ => unreachable!(),
+    }
+    if body.amount_jpy < MU_WITHDRAWAL_MIN_JPY {
+        return bad(&format!("最低出金額は ¥{} です", fmt_jpy(MU_WITHDRAWAL_MIN_JPY)));
+    }
+
+    struct Reserved { email: String, request_id: i64, balance_after: i64 }
+    let reserved: Result<Reserved, Response> = (|| {
+        let conn = db.lock().unwrap();
+        let email = match mupay_email_for_token(&conn, &token) {
+            Some(e) => e,
+            None => return Err((StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"リンクが無効です"}))).into_response()),
+        };
+        let bal = mu_credit_balance(&conn, &email);
+        if bal < body.amount_jpy {
+            return Err((StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok":false,"error":format!("残高不足です（残高 ¥{} / 申請額 ¥{}）", fmt_jpy(bal), fmt_jpy(body.amount_jpy))}))).into_response());
+        }
+        let now = chrono_now();
+        let _ = conn.execute(
+            "INSERT INTO mu_withdrawal_requests (email, amount_jpy, payout_method, payout_target, status, requested_at)
+             VALUES (?, ?, ?, ?, 'pending', ?)",
+            params![email, body.amount_jpy, method, target, now],
+        );
+        let request_id = conn.last_insert_rowid();
+        let ref_id = format!("withdrawal:{}", request_id);
+        if !mu_credit_apply(&conn, &email, -body.amount_jpy, &ref_id, Some(&request_id.to_string())) {
+            let _ = conn.execute("DELETE FROM mu_withdrawal_requests WHERE id=?", params![request_id]);
+            return Err((StatusCode::PAYMENT_REQUIRED, Json(serde_json::json!({"ok":false,"error":"残高不足です"}))).into_response());
+        }
+        let balance_after = mu_credit_balance(&conn, &email);
+        Ok(Reserved { email, request_id, balance_after })
+    })();
+    let r = match reserved { Ok(x) => x, Err(resp) => return resp };
+
+    send_telegram_message(&format!(
+        "💴 *MU PAY withdrawal requested* #{}\nemail: {}\namount: ¥{}\nmethod: {} → {}\n→ 実際に送金したら /admin/withdrawals から mark-paid してください",
+        r.request_id, r.email, fmt_jpy(body.amount_jpy), method, target,
+    )).await;
+
+    Json(serde_json::json!({
+        "ok": true, "request_id": r.request_id, "balance": r.balance_after,
+    })).into_response()
+}
+
+/// POST /api/pay/:token/withdraw/stripe-connect — create/reuse a Stripe
+/// Connect Express account for this MU PAY account's email and return a
+/// fresh onboarding link. Same account is re-used across withdrawal
+/// requests (stored on `mu_credits.stripe_connect_account_id`), unlike the
+/// bounty flow which keys the account to a single-use claim token.
+async fn mupay_withdraw_stripe_connect(
+    State(db): State<Db>,
+    axum::extract::Path(token): axum::extract::Path<String>,
+) -> Response {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() {
+        return (StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"ok":false,"error":"stripe key not configured"}))).into_response();
+    }
+    let resolved: Option<(String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        mupay_email_for_token(&conn, &token).map(|email| {
+            let acct: Option<String> = conn.query_row(
+                "SELECT stripe_connect_account_id FROM mu_credits WHERE email=?",
+                params![email], |r| r.get(0),
+            ).ok().flatten();
+            (email, acct)
+        })
+    };
+    let Some((email, existing_account)) = resolved else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({"ok":false,"error":"リンクが無効です"}))).into_response();
+    };
+
+    let client = reqwest::Client::new();
+    let account_id: String = if let Some(a) = existing_account.as_ref()
+        .filter(|s| s.starts_with("acct_") && s.len() > 10) {
+        a.clone()
+    } else {
+        let resp = client.post("https://api.stripe.com/v1/accounts")
+            .basic_auth(&stripe_key, None::<&str>)
+            .form(&[
+                ("type", "express"),
+                ("country", "JP"),
+                ("capabilities[transfers][requested]", "true"),
+                ("metadata[mupay_email]", email.as_str()),
+            ])
+            .send().await;
+        match resp {
+            Ok(r2) if r2.status().is_success() => {
+                let j: serde_json::Value = r2.json().await.unwrap_or_default();
+                let id = j["id"].as_str().unwrap_or("").to_string();
+                if id.is_empty() {
+                    return (StatusCode::BAD_GATEWAY,
+                        Json(serde_json::json!({"ok":false,"error":"stripe returned no account id"}))).into_response();
+                }
+                {
+                    let conn = db.lock().unwrap();
+                    let _ = conn.execute(
+                        "UPDATE mu_credits SET stripe_connect_account_id=? WHERE email=?",
+                        params![id, email],
+                    );
+                }
+                id
+            }
+            Ok(r2) => {
+                let st = r2.status();
+                let t  = r2.text().await.unwrap_or_default();
+                tracing::error!("[mupay/stripe-connect] account create {}: {}", st, t.chars().take(400).collect::<String>());
+                let user_msg = if t.contains("signed up for Connect") || t.contains("Connect platform") {
+                    "Stripe Connect is not enabled on this account. Choose Solana or PayPay instead."
+                } else {
+                    "Stripe account creation failed. Try again or pick another method."
+                };
+                return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"ok":false,"error":user_msg}))).into_response();
+            }
+            Err(e) => {
+                tracing::error!("[mupay/stripe-connect] account network: {}", e);
+                return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"ok":false,"error":"stripe network error"}))).into_response();
+            }
+        }
+    };
+
+    let base_url = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let return_url = format!("{}/pay/{}#stripe-return", base_url, token);
+    let refresh_url = format!("{}/pay/{}#stripe-refresh", base_url, token);
+    let link_resp = client.post("https://api.stripe.com/v1/account_links")
+        .basic_auth(&stripe_key, None::<&str>)
+        .form(&[
+            ("account", account_id.as_str()),
+            ("type", "account_onboarding"),
+            ("refresh_url", refresh_url.as_str()),
+            ("return_url", return_url.as_str()),
+        ])
+        .send().await;
+    match link_resp {
+        Ok(r2) if r2.status().is_success() => {
+            let j: serde_json::Value = r2.json().await.unwrap_or_default();
+            let url = j["url"].as_str().unwrap_or("").to_string();
+            let expires_at = j["expires_at"].as_i64().unwrap_or(0);
+            if url.is_empty() {
+                return (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"ok":false,"error":"stripe returned no link"}))).into_response();
+            }
+            Json(serde_json::json!({"ok": true, "url": url, "account_id": account_id, "expires_at": expires_at})).into_response()
+        }
+        Ok(r2) => {
+            let st = r2.status();
+            let t  = r2.text().await.unwrap_or_default();
+            tracing::error!("[mupay/stripe-connect] account_links {}: {}", st, t.chars().take(400).collect::<String>());
+            (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"ok":false,"error":"stripe link creation failed"}))).into_response()
+        }
+        Err(e) => {
+            tracing::error!("[mupay/stripe-connect] account_links network: {}", e);
+            (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"ok":false,"error":"stripe network error"}))).into_response()
+        }
+    }
+}
+
+/// GET /admin/withdrawals?token=… — list MU PAY cash-out requests, pending first.
+async fn admin_withdrawals(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/withdrawals").await { return r; }
+    struct W { id: i64, email: String, amount: i64, method: String, target: String, status: String, tx: Option<String>, requested_at: String }
+    let rows: Vec<W> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, email, amount_jpy, payout_method, COALESCE(payout_target,''), status, payout_tx_or_id, requested_at
+             FROM mu_withdrawal_requests ORDER BY (status='pending') DESC, requested_at DESC LIMIT 200"
+        ).unwrap();
+        stmt.query_map([], |r| Ok(W{
+            id: r.get(0)?, email: r.get(1)?, amount: r.get(2)?, method: r.get(3)?,
+            target: r.get(4)?, status: r.get(5)?, tx: r.get(6)?, requested_at: r.get(7)?,
+        })).unwrap().flatten().collect()
+    };
+    let tok_attr = html_attr_escape(&q.get("token").cloned().unwrap_or_default());
+    let mut rows_html = String::new();
+    for w in &rows {
+        let action = if w.status == "pending" {
+            format!(r#"<form method="post" action="/admin/withdrawals/{id}/mark-paid?token={t}" style="display:flex;gap:6px">
+<input name="payout_tx_or_id" placeholder="送金参照ID(任意)" style="flex:1;padding:4px 6px">
+<button type="submit">送金済みにする</button></form>"#, id = w.id, t = tok_attr)
+        } else {
+            format!("済 {}", html_escape(w.tx.as_deref().unwrap_or("")))
+        };
+        rows_html.push_str(&format!(
+            "<tr><td>{id}</td><td>{email}</td><td>¥{amt}</td><td>{method}</td><td>{target}</td><td>{status}</td><td>{when}</td><td>{action}</td></tr>",
+            id = w.id, email = html_escape(&w.email), amt = fmt_jpy(w.amount),
+            method = html_escape(&w.method), target = html_escape(&w.target),
+            status = html_escape(&w.status), when = html_escape(&w.requested_at), action = action,
+        ));
+    }
+    if rows_html.is_empty() { rows_html = "<tr><td colspan=8 style='color:#666'>まだ出金申請がありません</td></tr>".into(); }
+    Html(format!(r#"<!doctype html><html><head><meta charset="utf-8"><title>MU PAY withdrawals · admin</title>
+<style>body{{background:#000;color:#f5f5f0;font-family:-apple-system,sans-serif;padding:24px}}
+table{{border-collapse:collapse;width:100%;font-size:13px}}td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left}}
+a{{color:#e6c449}}input,button{{background:#141414;color:#fff;border:1px solid #333;border-radius:3px}}</style></head>
+<body><h1>MU PAY 出金申請</h1><p style="color:#888;font-size:12.5px">実際に Stripe Connect / PayPay / Solana で送金した<b>あと</b>で「送金済みにする」を押してください。金額はすでに残高から引かれています。</p>
+<table><tr><th>id</th><th>email</th><th>金額</th><th>方法</th><th>宛先</th><th>状態</th><th>申請日時</th><th></th></tr>{rows}</table>
+</body></html>"#, rows = rows_html)).into_response()
+}
+
+/// POST /admin/withdrawals/:id/mark-paid — close out a withdrawal after the
+/// human has actually sent the money. Mirrors admin_bounty_mark_paid.
+async fn admin_withdrawals_mark_paid(
+    State(db): State<Db>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::Form(form): axum::extract::Form<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = admin_auth(&headers, &q, db.clone(), "/admin/withdrawals/mark-paid").await { return r; }
+    let tx = form.get("payout_tx_or_id").cloned().unwrap_or_default();
+    let now = chrono_now();
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute(
+            "UPDATE mu_withdrawal_requests SET status='paid', payout_tx_or_id=?, paid_at=?
+             WHERE id=? AND status='pending'",
+            params![tx, now, id],
+        );
+    }
+    let tok_attr = html_attr_escape(&q.get("token").cloned().unwrap_or_default());
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header("Location", format!("/admin/withdrawals?token={}", tok_attr))
+        .body(axum::body::Body::empty()).unwrap()
+}
+
 /// POST /admin/bounty/:id/grant-mupay — convert a reward's cash into MU PAY and
 /// email the reporter their /pay link. Form: `amount_jpy` (defaults to the
 /// reward's cash_amount_jpy).
@@ -10381,7 +10721,7 @@ async fn admin_bounty_grant_mupay(
     if let Ok(rk) = env::var("RESEND_API_KEY") {
         if !rk.is_empty() {
             let html = format!(
-                "<p>MU バグバウンティの報酬として <b>MU PAY ¥{}</b> をお送りしました。</p><p>下記リンクから MUGEN の T シャツに引き換えられます（送料・税込、追加費用なし）。現金へのお引き換えは準備中です（Coming soon）。</p><p><a href=\"{}\">{}</a></p><hr><p>このたびは受領確認の遅延と引き換えリンクの不具合で大変ご不便をおかけしました。仕組みを改善しました。改めてお詫びと御礼を申し上げます。<br>— MU / 株式会社イネブラ</p>",
+                "<p>MU バグバウンティの報酬として <b>MU PAY ¥{}</b> をお送りしました。</p><p>下記リンクから MUGEN の T シャツに引き換えるか、Stripe Connect（国内銀行振込）/ PayPay / Solana で現金化できます（送料・税込、追加費用なし）。</p><p><a href=\"{}\">{}</a></p><hr><p>このたびは受領確認の遅延と引き換えリンクの不具合で大変ご不便をおかけしました。仕組みを改善しました。改めてお詫びと御礼を申し上げます。<br>— MU / 株式会社イネブラ</p>",
                 fmt_jpy(amount), pay_url, pay_url);
             mupay_send_email(&rk, &email, &format!("MU PAY ¥{} をお送りしました — MU バグバウンティ", fmt_jpy(amount)), &html).await;
         }
@@ -68580,6 +68920,9 @@ async fn main() {
     // 2026-09-01: KOEナレーション(記事の音声版・podcast風再生)のmp3 URL。
     // 未設定(NULL)の記事は従来通りテキストのみ表示。
     let _ = conn.execute("ALTER TABLE auto_blog_posts ADD COLUMN audio_url TEXT", []);
+    // 2026-09-01: MU PAY 出金(現金化)用。作り手/バウンティ受給者が
+    // Stripe Connect Express アカウントを一度作れば email 単位で使い回す。
+    let _ = conn.execute("ALTER TABLE mu_credits ADD COLUMN stripe_connect_account_id TEXT", []);
     conn.execute_batch("
         -- blog_rate_limit: tracks /api/blog/stats_for_today fetches per IP per hour
         -- to prevent abuse + cost explosion (Gemini API key is published in
@@ -68635,6 +68978,23 @@ async fn main() {
             created_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_mu_ledger_email ON mu_credit_ledger(email, created_at DESC);
+        -- 2026-09-01: MU PAY 残高の現金化(出金申請)。実際の送金は人間が
+        -- Stripe Connect(国内銀行振込)/PayPay/Solana で行い、完了後に
+        -- admin/withdrawals から mark-paid する(bounty_rewards の
+        -- payout_status パターンを踏襲。生の銀行口座番号はDBに保持しない)。
+        CREATE TABLE IF NOT EXISTS mu_withdrawal_requests (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            email           TEXT NOT NULL,
+            amount_jpy      INTEGER NOT NULL,
+            payout_method   TEXT NOT NULL,
+            payout_target   TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            payout_tx_or_id TEXT,
+            requested_at    TEXT NOT NULL,
+            paid_at         TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_mu_withdrawal_email ON mu_withdrawal_requests(email, requested_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_mu_withdrawal_status ON mu_withdrawal_requests(status, requested_at);
         -- Collab service email-verified users. 1 collab free; further
         -- creations require a MUGEN purchase or an active ¥980/月 sub.
         CREATE TABLE IF NOT EXISTS collab_users (
@@ -71075,6 +71435,10 @@ async fn main() {
         .route("/pay", get(mupay_landing_page))
         .route("/pay/:token", get(mupay_account_page))
         .route("/api/pay/:token/redeem", post(mupay_redeem))
+        .route("/api/pay/:token/withdraw", post(mupay_withdraw))
+        .route("/api/pay/:token/withdraw/stripe-connect", post(mupay_withdraw_stripe_connect))
+        .route("/admin/withdrawals", get(admin_withdrawals))
+        .route("/admin/withdrawals/:id/mark-paid", post(admin_withdrawals_mark_paid))
         .route("/bounty/claim/:token", get(show_bounty_claim_page))
         .route("/api/bounty/claim/:token", post(bounty_claim))
         .route("/api/bounty/claim/:token/stripe-connect", post(bounty_claim_stripe_connect))
