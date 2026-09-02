@@ -34,7 +34,7 @@ jobs:
   regen:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0   # full history needed for accurate git blame
           token: ${{ secrets.GITHUB_TOKEN }}
