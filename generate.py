@@ -258,7 +258,13 @@ def _try_image(client, prompt: str) -> bytes:
     b64 = resp.data[0].b64_json
     if not b64:
         raise RuntimeError("image API returned no image")
-    return base64.b64decode(b64)
+    data = base64.b64decode(b64)
+    # Guard: some backends occasionally return non-image payloads (error JSON,
+    # truncated streams). Validate the magic bytes so the failure surfaces here
+    # (with a clear message) instead of deep inside PIL as UnidentifiedImageError.
+    if not (data.startswith(b"\x89PNG") or data.startswith(b"\xff\xd8") or data.startswith(b"RIFF")):
+        raise RuntimeError(f"image API returned non-image payload ({len(data)}B, head={data[:24]!r})")
+    return data
 
 
 def generate_design(prompt: str) -> bytes:
