@@ -3135,13 +3135,17 @@ POST /api/agent/products
                  tote / tank / cap (刺繍キャップ) /
                  pet_bowl / pet_feeding_mat / pet_bandana / pet_collar /
                  pet_sweater / dog_tee / pet_leash / pet_collar_leash /
-                 christmas_stocking / gym_bag /
+                 christmas_stocking / gym_bag / pet_collar_only /
                  (犬と暮らす雑貨 — 犬の名前入りに) /
                  duvet_cover / hand_towel / bath_mat / shower_curtain /
                  desk_mat / pillow_case / standard_postcard /
                  hardcover_photo_book / softcover_photo_book /
                  latte_mug / enamel_mug / can_cooler / pennant /
                  wine_tumbler / sweatpants /
+                 soy_candle / glass_cutting_board / tablecloth / wall_clock /
+                 throw_blanket / luggage_tag / notepad / postit_notes /
+                 framed_poster / wall_tapestry / garden_flag /
+                 playing_cards / pin_buttons / gift_wrap / die_cut_stickers /
                  weekly_planner / greeting_card / ornament /
                  nfc_coin / device.
        Digital:  event_ticket (add "capacity": 50 — QR ticket by email),

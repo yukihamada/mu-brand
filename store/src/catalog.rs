@@ -1092,7 +1092,10 @@ pub(crate) fn route_for_kind(kind: &str) -> &'static str {
         | "pet_bandana" | "pet_feeding_mat" | "pet_sweater" | "pet_collar"
         | "duvet_cover" | "hand_towel" | "dog_tee"
         | "pet_leash" | "pet_collar_leash" | "christmas_stocking"
-        | "gym_bag" | "can_cooler" | "pennant" | "pillow_case" => "printful_aop",
+        | "gym_bag" | "can_cooler" | "pennant" | "pillow_case"
+        | "pet_collar_only" | "soy_candle" | "glass_cutting_board"
+        | "tablecloth" | "wall_clock" | "postit_notes" | "garden_flag"
+        | "playing_cards" | "pin_buttons" | "gift_wrap" | "die_cut_stickers" => "printful_aop",
         // 刺繍系(stitched, not printed)。placement(embroidery_*)がファイルを駆動。
         "cap" | "beanie" | "blanket" | "towel" => "printful_embroidery",
         // 人手発送(NFC音コイン / ハード / 受注設計の家)。
@@ -2161,6 +2164,135 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         placement: "cover",
         retail_jpy: 5800,
         spec_html: "ソフトカバー写真集 · 犬のアルバム/思い出に · Printful 製造",
+    },
+    // ── 一人暮らし+犬 第3弾 (2026-09-11) ────────────────────────────────
+    ProductSpec {
+        kind: "pet_collar_only",
+        printful_product_id: 749, // Pet Collar (verified 2026-09-11)
+        printful_variant_id: 19187, // M White
+        placement: "front",
+        retail_jpy: 2800,
+        spec_html: "犬の首輪(単体) · 名前入りに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "soy_candle",
+        printful_product_id: 645, // Glass Jar Soy Wax Candle (verified 2026-09-11)
+        printful_variant_id: 16270, // Unscented White
+        placement: "front",
+        retail_jpy: 3800,
+        spec_html: "ソイキャンドル · 部屋に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "glass_cutting_board",
+        printful_product_id: 908, // Glass Cutting Board (verified 2026-09-11)
+        printful_variant_id: 23468, // 11″×15″ Rectangle
+        placement: "front",
+        retail_jpy: 4200,
+        spec_html: "ガラスカッティングボード · キッチンに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "tablecloth",
+        printful_product_id: 1467, // Cotton Tablecloths (verified 2026-09-11)
+        printful_variant_id: 46022, // 58″×58″
+        placement: "front",
+        retail_jpy: 6800,
+        spec_html: "コットンテーブルクロス · 食卓に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "wall_clock",
+        printful_product_id: 1470, // Wall Clock (verified 2026-09-11)
+        printful_variant_id: 46082, // 10″ Black
+        placement: "front",
+        retail_jpy: 5200,
+        spec_html: "ウォールクロック · 部屋に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "throw_blanket",
+        printful_product_id: 395, // Throw Blanket (verified 2026-09-11)
+        printful_variant_id: 10986, // 50″×60″
+        placement: "default",
+        retail_jpy: 7800,
+        spec_html: "スローブランケット · ソファ/膝掛けに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "luggage_tag",
+        printful_product_id: 938, // Luggage Tag (verified 2026-09-11)
+        printful_variant_id: 23889, // 2.4″×4″
+        placement: "default",
+        retail_jpy: 1800,
+        spec_html: "ラゲッジタグ · キャリー/散歩バッグに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "notepad",
+        printful_product_id: 786, // Notepad (verified 2026-09-11)
+        printful_variant_id: 19902, // 11″×8.5″ White
+        placement: "default",
+        retail_jpy: 1800,
+        spec_html: "ノートパッド · 犬の記録/予定に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "postit_notes",
+        printful_product_id: 926, // Post-it® Note Pads (verified 2026-09-11)
+        printful_variant_id: 23721, // 10″×3″ White
+        placement: "front",
+        retail_jpy: 1500,
+        spec_html: "ポストイット · 犬の予定に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "framed_poster",
+        printful_product_id: 2, // Enhanced Matte Paper Framed Poster (verified 2026-09-11)
+        printful_variant_id: 14292, // 11″×14″ Black
+        placement: "default",
+        retail_jpy: 8800,
+        spec_html: "額装ポスター · 壁掛け · Printful 製造",
+    },
+    ProductSpec {
+        kind: "wall_tapestry",
+        printful_product_id: 973, // Indoor Wall Tapestry (verified 2026-09-11)
+        printful_variant_id: 24969, // 50″×60″
+        placement: "default",
+        retail_jpy: 6800,
+        spec_html: "ウォールタペストリー · 部屋の壁に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "garden_flag",
+        printful_product_id: 746, // Garden Flag (verified 2026-09-11)
+        printful_variant_id: 19211, // 12″×17″ White
+        placement: "front",
+        retail_jpy: 3200,
+        spec_html: "ガーデンフラッグ · 玄関/庭に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "playing_cards",
+        printful_product_id: 1425, // Poker Playing Cards (verified 2026-09-11)
+        printful_variant_id: 44154, // 2.5″×3.5″ White
+        placement: "front",
+        retail_jpy: 2800,
+        spec_html: "犬柄トランプ · 来客に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "pin_buttons",
+        printful_product_id: 660, // Set of Pin Buttons (verified 2026-09-11)
+        printful_variant_id: 16411, // 1.25″ White
+        placement: "front",
+        retail_jpy: 1200,
+        spec_html: "ピンバッジ(セット) · バッグ/服に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "gift_wrap",
+        printful_product_id: 873, // Gift Wrap Papers (verified 2026-09-11)
+        printful_variant_id: 44150, // 29″×144″ Matte
+        placement: "front",
+        retail_jpy: 2200,
+        spec_html: "ギフトラッピング紙 · 犬誕生日/記念に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "die_cut_stickers",
+        printful_product_id: 957, // Die-Cut Stickers (verified 2026-09-11)
+        printful_variant_id: 24964, // 2″×2″ Satin
+        placement: "front",
+        retail_jpy: 900,
+        spec_html: "ダイカットステッカー · 犬の紹介に · Printful 製造",
     },
 ];
 
@@ -6798,6 +6930,21 @@ pub async fn makeable_all_page() -> Html<String> {
         ("家・暮らし", "standard_postcard","💌","ポストカード", "挨拶/犬写真に"),
         ("家・暮らし", "duvet_cover","🛏", "掛け布団カバー",  "全面プリント・寝室に"),
         ("家・暮らし", "sweatpants","👖", "スウェットパンツ","部屋着/散歩に・厚手"),
+        ("家・暮らし", "soy_candle","🕯","ソイキャンドル",     "部屋に"),
+        ("家・暮らし", "glass_cutting_board","🔪","ガラスカッティングボード","キッチンに"),
+        ("家・暮らし", "tablecloth","🍽","コットンテーブルクロス","食卓に"),
+        ("家・暮らし", "wall_clock","🕐","ウォールクロック",   "部屋に"),
+        ("家・暮らし", "throw_blanket","🛋","スローブランケット","ソファ/膝掛けに"),
+        ("家・暮らし", "luggage_tag","🏷","ラゲッジタグ",       "キャリー/散歩バッグに"),
+        ("家・暮らし", "notepad",   "📝","ノートパッド",       "犬の記録/予定に"),
+        ("家・暮らし", "postit_notes","📌","ポストイット",      "犬の予定に"),
+        ("家・暮らし", "framed_poster","🖼","額装ポスター",     "壁掛け"),
+        ("家・暮らし", "wall_tapestry","🏞","ウォールタペストリー","部屋の壁に"),
+        ("家・暮らし", "garden_flag","🚩","ガーデンフラッグ",   "玄関/庭に"),
+        ("家・暮らし", "playing_cards","🃏","トランプ",         "来客に"),
+        ("家・暮らし", "pin_buttons","🎖","ピンバッジ",         "バッグ/服に"),
+        ("家・暮らし", "gift_wrap","🎁","ギフトラッピング紙",  "犬誕生日/記念に"),
+        ("家・暮らし", "die_cut_stickers","✨","ダイカットステッカー","犬の紹介に"),
         ("家・暮らし", "weekly_planner","🗓","ウィークリープランナー","予定/犬の記録に"),
         ("家・暮らし", "greeting_card","✉️","グリーティングカード","挨拶/ギフトに"),
         ("家・暮らし", "ornament",  "🎄", "オーナメント",    "部屋/ツリーに"),
@@ -6811,6 +6958,12 @@ pub async fn makeable_all_page() -> Html<String> {
         ("犬と暮らす", "pet_collar_leash","🔗","犬の首輪+リードセット","一体型"),
         ("犬と暮らす", "christmas_stocking","🎄","犬用クリスマス靴下","名前入り"),
         ("犬と暮らす", "gym_bag",        "🎒", "犬グッズ収納バッグ",  "散歩/旅行に"),
+        ("犬と暮らす", "pet_collar_only","⭕", "犬の首輪(単体)",      "名前入り"),
+        ("犬と暮らす", "luggage_tag",    "🏷", "ラゲッジタグ",        "キャリー/散歩バッグに"),
+        ("犬と暮らす", "playing_cards",  "🃏", "犬柄トランプ",        "来客に"),
+        ("犬と暮らす", "pin_buttons",    "🐾", "ピンバッジ",          "バッグ/服に"),
+        ("犬と暮らす", "gift_wrap",      "🎁", "ギフトラッピング紙",  "犬誕生日/記念に"),
+        ("犬と暮らす", "die_cut_stickers","✨","ダイカットステッカー","犬の紹介に"),
         ("届く（デジタル）", "song",          "🎵", "楽曲",        "視聴/DLリンクをメール"),
         ("届く（デジタル）", "zine",          "📖", "ZINE (PDF)",  "DLリンクをメール"),
         ("届く（デジタル）", "video",         "🎬", "映像作品",    "視聴/DLリンクをメール"),
@@ -7116,6 +7269,23 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("christmas_stocking", "クリスマス靴下（犬用）"),
     ("pennant", "ペナント"),
     ("wine_tumbler", "ワインタンブラー"),
+    // 第3弾 (2026-09-11)
+    ("pet_collar_only", "犬の首輪(単体)"),
+    ("soy_candle", "ソイキャンドル"),
+    ("glass_cutting_board", "ガラスカッティングボード"),
+    ("tablecloth", "コットンテーブルクロス"),
+    ("wall_clock", "ウォールクロック"),
+    ("throw_blanket", "スローブランケット"),
+    ("luggage_tag", "ラゲッジタグ"),
+    ("notepad", "ノートパッド"),
+    ("postit_notes", "ポストイット"),
+    ("framed_poster", "額装ポスター"),
+    ("wall_tapestry", "ウォールタペストリー"),
+    ("garden_flag", "ガーデンフラッグ"),
+    ("playing_cards", "トランプ"),
+    ("pin_buttons", "ピンバッジ"),
+    ("gift_wrap", "ギフトラッピング紙"),
+    ("die_cut_stickers", "ダイカットステッカー"),
 ];
 
 pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakePageQuery>) -> Response {
@@ -9520,7 +9690,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     }
     let parse_prompt = format!(
         "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
-         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|shorts|joggers|sweatpants|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster|placemat|beanie|blanket|towel|hand_towel|duvet_cover|coffee_tumbler|weekly_planner|greeting_card|ornament|pet_bowl|pet_feeding_mat|pet_bandana|pet_collar|pet_sweater|dog_tee|pet_leash|pet_collar_leash|bath_mat|shower_curtain|desk_mat|gym_bag|pillow_case|standard_postcard|hardcover_photo_book|softcover_photo_book|latte_mug|enamel_mug|can_cooler|christmas_stocking|pennant|wine_tumbler\", \
+         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|shorts|joggers|sweatpants|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster|placemat|beanie|blanket|towel|hand_towel|duvet_cover|coffee_tumbler|weekly_planner|greeting_card|ornament|pet_bowl|pet_feeding_mat|pet_bandana|pet_collar|pet_sweater|dog_tee|pet_leash|pet_collar_leash|bath_mat|shower_curtain|desk_mat|gym_bag|pillow_case|standard_postcard|hardcover_photo_book|softcover_photo_book|latte_mug|enamel_mug|can_cooler|christmas_stocking|pennant|wine_tumbler|pet_collar_only|soy_candle|glass_cutting_board|tablecloth|wall_clock|throw_blanket|luggage_tag|notepad|postit_notes|framed_poster|wall_tapestry|garden_flag|playing_cards|pin_buttons|gift_wrap|die_cut_stickers\", \
                    \"theme_brief\":\"<one short English design brief for the graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
@@ -9550,6 +9720,14 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
          'クリスマス靴下'/christmas stocking → christmas_stocking; 'ペナント'/フラグ/pennant → pennant; \
          'ワインタンブラー'/wine tumbler → wine_tumbler; \
          '犬のリード'/'犬用リード'/leash → pet_leash; '犬の首輪+リード'/collar+leash → pet_collar_leash; \
+         'キャンドル'/キャンドル/candle → soy_candle; 'カッティングボード'/まな板/cutting board → glass_cutting_board; \
+         'テーブルクロス'/tablecloth → tablecloth; '時計'/ウォールクロック/wall clock → wall_clock; \
+         'スローブランケット'/毛布/sherpa throw → throw_blanket; 'ラゲッジタグ'/行李箱/luggage tag → luggage_tag; \
+         'ノートパッド'/notepad → notepad; 'ポストイット'/postit → postit_notes; \
+         '額装ポスター'/framed poster → framed_poster; 'タペストリー'/tapestry → wall_tapestry; \
+         'ガーデンフラッグ'/garden flag → garden_flag; 'トランプ'/playing cards → playing_cards; \
+         'ピンバッジ'/バッジ/pin button → pin_buttons; 'ラッピング'/ギフトラップ/gift wrap → gift_wrap; \
+         'ステッカー'/ダイカット/die cut sticker → die_cut_stickers; \
          hoodie/'パーカー' → hoodie; sweat/'スウェット' → crewneck; '白T'/white tee → tee_white.\n\
          If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck / 9800 rashguard / 800 sticker / 2200 mug / 4900 poster; その他は各商品の最低価格に自動調整.\n\
          Input: {}", prompt_in);
