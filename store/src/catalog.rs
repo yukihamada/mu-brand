@@ -1054,7 +1054,12 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // 186 socks / 262 drawstring bag / 259 beach towel も単一printfile "default"
         // (mockup-generator/printfiles で検証 2026-06-10)。
         1 | 19 | 358 | 601 | 300 | 518 | 3 | 588 | 394 | 611 | 189 | 691 | 848
-        | 186 | 262 | 259 => &["default"],
+        | 186 | 262 | 259
+        // 一人暮らし+犬セット: pet bowl / coffee tumbler のみ単一 printfile "default"。
+        // 他 (bandana/feeding mat/sweater/collar/duvet/hand towel/ornament/
+        // greeting card/planner) は "front" (printfiles で検証 2026-09-11)。
+        | 539 | 515 | 385 | 634
+        | 678 | 585 => &["default"],
         // 654 = AOP reversible bucket hat。"front"/"default" は無効で外面のみ有効。
         654 => &["outside_front"],
         // 99 = embroidered cap — its only valid placement is the embroidery
@@ -1082,7 +1087,9 @@ pub(crate) fn route_for_kind(kind: &str) -> &'static str {
         // 全面プリント(sublimation/AOP)。placements_for_product がパネル/単面を駆動。
         "rashguard_ls" | "rashguard_black"
         | "socks" | "drawstring_bag" | "beach_towel" | "fanny_pack"
-        | "bucket_hat" | "kids_tee" | "backpack" | "flag" => "printful_aop",
+        | "bucket_hat" | "kids_tee" | "backpack" | "flag"
+        | "pet_bandana" | "pet_feeding_mat" | "pet_sweater" | "pet_collar"
+        | "duvet_cover" | "hand_towel" | "dog_tee" => "printful_aop",
         // 刺繍系(stitched, not printed)。placement(embroidery_*)がファイルを駆動。
         "cap" | "beanie" | "blanket" | "towel" => "printful_embroidery",
         // 人手発送(NFC音コイン / ハード / 受注設計の家)。
@@ -1904,6 +1911,124 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         retail_jpy: 4900,
         spec_html: "全面プリント フラッグ(タペストリー) · 昇華プリント · \
                     壁掛け・道場/部屋の装飾に · Printful 製造",
+    },
+    // ── 一人暮らし+犬 セット (2026-09) ────────────────────────────────
+    // 犬との暮らしに必要な雑貨を MU で作れるようにした一群。
+    // ペット直接グッズ (pet_bandana/pet_bowl/pet_feeding_mat/pet_collar/
+    // pet_sweater/dog_tee) と
+    // 暮らしの雑貨 (duvet_cover/hand_towel/ornament/greeting_card/
+    // coffee_tumbler/weekly_planner/sweatpants)。
+    // 犬の名前入りグッズは ai_prompt に「<犬の名前>」を入れて作れる。
+    ProductSpec {
+        kind: "pet_bandana",
+        printful_product_id: 630, // All-Over Print Bandana (verified 2026-09-11)
+        printful_variant_id: 16032, // M
+        placement: "front",
+        retail_jpy: 2800,
+        spec_html: "ペットバンダナ · 全面プリント · ポリ100%・洗濯可 · \
+                    犬の名前/柄入りに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "pet_bowl",
+        printful_product_id: 678, // Pet Bowl (verified 2026-09-11)
+        printful_variant_id: 16785, // 18 oz White
+        placement: "default",
+        retail_jpy: 3800,
+        spec_html: "ペット用フード/水ボウル · ステンレス・外側全面プリント · \
+                    滑り止め底 · 犬の名前入りに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "pet_feeding_mat",
+        printful_product_id: 1429, // Pet Feeding Mat (verified 2026-09-11)
+        printful_variant_id: 44161, // Bone 19″×14″ White
+        placement: "front",
+        retail_jpy: 4800,
+        spec_html: "ペットフードマット · 骨型・全面プリント · \
+                    ボウルの下に・床の汚れ防止 · Printful 製造",
+    },
+    ProductSpec {
+        kind: "pet_sweater",
+        printful_product_id: 964, // Knitted Pet Sweater (verified 2026-09-11)
+        printful_variant_id: 24569, // L
+        placement: "front",
+        retail_jpy: 6800,
+        spec_html: "犬用ニットセーター · 起毛ニット · \
+                    寒い日の散歩/部屋着に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "pet_collar",
+        printful_product_id: 902, // Pet Bandana Collar (verified 2026-09-11)
+        printful_variant_id: 23141, // M Black
+        placement: "front",
+        retail_jpy: 3800,
+        spec_html: "ペットバンダナカラー · 首輪一体型 · \
+                    名前/柄入りに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "duvet_cover",
+        printful_product_id: 886, // Microfiber Duvet Cover (verified 2026-09-11)
+        printful_variant_id: 22793, // Twin
+        placement: "front",
+        retail_jpy: 14800,
+        spec_html: "掛け布団カバー · 全面プリント · 寝室を好きな絵に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "hand_towel",
+        printful_product_id: 883, // Hand Towel (verified 2026-09-11)
+        printful_variant_id: 22792, // 28″×16″ White
+        placement: "front",
+        retail_jpy: 3200,
+        spec_html: "ハンドタオル · 全面プリント · 洗面/キッチン/散歩に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "ornament",
+        printful_product_id: 881, // Ceramic Ornament (verified 2026-09-11)
+        printful_variant_id: 22782, // Circle
+        placement: "front",
+        retail_jpy: 2200,
+        spec_html: "オーナメント · 部屋/ツリーに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "greeting_card",
+        printful_product_id: 568, // Greeting Card (verified 2026-09-11)
+        printful_variant_id: 14457, // 4″×6″
+        placement: "front",
+        retail_jpy: 1200,
+        spec_html: "グリーティングカード · 挨拶/ギフトに · Printful 製造",
+    },
+    ProductSpec {
+        kind: "coffee_tumbler",
+        printful_product_id: 585, // Stainless Steel Tumbler (verified 2026-09-11)
+        printful_variant_id: 15004, // 20 oz Black
+        placement: "default",
+        retail_jpy: 4800,
+        spec_html: "コーヒータンブラー · 保温保冷・散歩/通勤に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "weekly_planner",
+        printful_product_id: 946, // Ruled Line Spiral Notebook (verified 2026-09-11)
+        printful_variant_id: 24305, // One size
+        placement: "front",
+        retail_jpy: 2800,
+        spec_html: "ウィークリープランナー(リングノート) · 罫線 · \
+                    予定/犬の記録に · Printful 製造",
+    },
+    // ── 一人暮らし+犬 追加 (AOP/embroidery/DTG 既存ルートに乗る) ──────
+    ProductSpec {
+        kind: "sweatpants",
+        printful_product_id: 895, // same as joggers (Bella+Canvas 4737)
+        printful_variant_id: 23114,
+        placement: "leg_front_right",
+        retail_jpy: 9800,
+        spec_html: "スウェットパンツ · 裏起毛・厚手 · 部屋着/散歩に · Printful 製造",
+    },
+    ProductSpec {
+        kind: "dog_tee",
+        printful_product_id: 384, // AOP Kids Crew Neck (size 6) — 小型犬ウェア代用
+        printful_variant_id: 10821,
+        placement: "front",
+        retail_jpy: 4900,
+        spec_html: "犬用Tシャツ(小型犬) · 全面プリント · 愛犬の名前/柄入りに · Printful 製造",
     },
 ];
 
@@ -6525,6 +6650,19 @@ pub async fn makeable_all_page() -> Html<String> {
         ("家・暮らし", "wine_glass","🍷", "ワイングラス",    "ステムレス 15oz"),
         ("家・暮らし", "journal",   "📓", "ジャーナル",      "ハードカバー・マット"),
         ("家・暮らし", "apron",     "🍳", "エプロン",        "全面プリント・料理/制作"),
+        ("家・暮らし", "hand_towel","🧻", "ハンドタオル",    "全面プリント・洗面/散歩に"),
+        ("家・暮らし", "coffee_tumbler","🥤","コーヒータンブラー","保温保冷・散歩/通勤に"),
+        ("家・暮らし", "duvet_cover","🛏", "掛け布団カバー",  "全面プリント・寝室に"),
+        ("家・暮らし", "weekly_planner","🗓","ウィークリープランナー","予定/犬の記録に"),
+        ("家・暮らし", "greeting_card","✉️","グリーティングカード","挨拶/ギフトに"),
+        ("家・暮らし", "ornament",  "🎄", "オーナメント",    "部屋/ツリーに"),
+        ("犬と暮らす", "pet_bowl",       "🥣", "ペットボウル",        "ステンレス・名前入りに"),
+        ("犬と暮らす", "pet_feeding_mat","🦴", "ペットフードマット",  "骨型・床の汚れ防止"),
+        ("犬と暮らす", "pet_bandana",    "🐶", "ペットバンダナ",      "全面プリント・洗濯可"),
+        ("犬と暮らす", "pet_collar",     "🎗", "ペットバンダナカラー","首輪一体型・名前入り"),
+        ("犬と暮らす", "pet_sweater",    "🧶", "犬用ニットセーター",  "寒い日の散歩/部屋着に"),
+        ("犬と暮らす", "dog_tee",        "🐕", "犬用Tシャツ(小型犬)", "愛犬の名前/柄入り"),
+        ("犬と暮らす", "sweatpants",     "👖", "スウェットパンツ",    "部屋着/散歩に・厚手"),
         ("届く（デジタル）", "song",          "🎵", "楽曲",        "視聴/DLリンクをメール"),
         ("届く（デジタル）", "zine",          "📖", "ZINE (PDF)",  "DLリンクをメール"),
         ("届く（デジタル）", "video",         "🎬", "映像作品",    "視聴/DLリンクをメール"),
@@ -6544,7 +6682,7 @@ pub async fn makeable_all_page() -> Html<String> {
     ];
 
     // グループ順（rows の登場順を尊重）。
-    let group_order = ["着る", "持つ・置く", "家・暮らし", "届く（デジタル）", "じっくり（受注）"];
+    let group_order = ["着る", "持つ・置く", "家・暮らし", "犬と暮らす", "届く（デジタル）", "じっくり（受注）"];
     let mut sections = String::new();
     for g in group_order {
         let mut cards = String::new();
@@ -6799,6 +6937,20 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("towel", "今治タオル（刺繍）"),
     ("beach_towel", "ビーチタオル（全面）"),
     ("flag", "フラッグ（全面）"),
+    // 一人暮らし+犬セット
+    ("pet_bowl", "ペットボウル"),
+    ("pet_feeding_mat", "ペットフードマット"),
+    ("pet_bandana", "ペットバンダナ（全面）"),
+    ("pet_collar", "ペットバンダナカラー"),
+    ("pet_sweater", "犬用ニットセーター"),
+    ("dog_tee", "犬用Tシャツ（小型犬・全面）"),
+    ("duvet_cover", "掛け布団カバー（全面）"),
+    ("hand_towel", "ハンドタオル（全面）"),
+    ("coffee_tumbler", "コーヒータンブラー"),
+    ("weekly_planner", "ウィークリープランナー"),
+    ("greeting_card", "グリーティングカード"),
+    ("ornament", "オーナメント"),
+    ("sweatpants", "スウェットパンツ"),
 ];
 
 pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakePageQuery>) -> Response {
@@ -9203,7 +9355,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     }
     let parse_prompt = format!(
         "Parse this JP/EN product idea into compact JSON. ONLY emit JSON, no prose, no markdown fences.\n\
-         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|shorts|joggers|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster|placemat|beanie|blanket|towel\", \
+         Schema: {{\"kind\":\"tee|tee_white|hoodie|crewneck|long_sleeve_tee|tank|rashguard_ls|rashguard_black|leggings|apron|shorts|joggers|sweatpants|tote|sticker|mug|mug_black|phone_case|laptop_sleeve|mouse_pad|bottle|wine_glass|journal|poster|canvas|metal_print|pillow|coaster|placemat|beanie|blanket|towel|hand_towel|duvet_cover|coffee_tumbler|weekly_planner|greeting_card|ornament|pet_bowl|pet_feeding_mat|pet_bandana|pet_collar|pet_sweater|dog_tee\", \
                    \"theme_brief\":\"<one short English design brief for the graphic>\", \
                    \"display\":\"<short JP brand-mark name, <=10 chars>\", \
                    \"hook\":\"<one JP marketing sentence for the PDP>\", \
@@ -9221,6 +9373,14 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
          'コースター'/coaster → coaster; 'ショーツ'/短パン/shorts → shorts; 'スウェットパンツ'/joggers/ジョガー → joggers; \
          'プレースマット'/placemat/ランチョン → placemat; 'ビーニー'/ニット帽/beanie → beanie; \
          'ブランケット'/毛布/blanket → blanket; 'タオル'/towel → towel; \
+         'ハンドタオル'/hand towel → hand_towel; '掛け布団カバー'/布団カバー/duvet → duvet_cover; \
+         'タンブラー'/水筒/保温 → coffee_tumbler; \
+         'プランナー'/手帳/予定/planner → weekly_planner; 'カード'/greeting card → greeting_card; \
+         'オーナメント'/飾り/ornament → ornament; 'スウェットパンツ'/部屋着/sweatpants → sweatpants; \
+         '犬のボウル'/'ペットボウル'/餌入れ/pet bowl → pet_bowl; 'フードマット'/'餌マット'/feeding mat → pet_feeding_mat; \
+         '犬のバンダナ'/ペットバンダナ/bandana → pet_bandana; '犬の首輪'/'カラー'/collar → pet_collar; \
+         '犬のセーター'/'ペットセーター'/pet sweater → pet_sweater; \
+         '犬の服'/'犬用Tシャツ'/ペットウェア/dog shirt → dog_tee; \
          hoodie/'パーカー' → hoodie; sweat/'スウェット' → crewneck; '白T'/white tee → tee_white.\n\
          If kind is missing, default to 'tee'. retail default 4900 tee / 8800 hoodie / 7800 crewneck / 9800 rashguard / 800 sticker / 2200 mug / 4900 poster; その他は各商品の最低価格に自動調整.\n\
          Input: {}", prompt_in);

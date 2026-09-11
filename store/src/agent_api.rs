@@ -3133,6 +3133,11 @@ POST /api/agent/products
        Physical: tee / crewneck / hoodie / rashguard_ls / rashguard_black /
                  phone_case (iPhone 耐衝撃ケース・購入時に機種選択) /
                  tote / tank / cap (刺繍キャップ) /
+                 pet_bowl / pet_feeding_mat / pet_bandana / pet_collar /
+                 pet_sweater / dog_tee
+                 (犬と暮らす雑貨 — 犬の名前入りに) /
+                 duvet_cover / hand_towel / coffee_tumbler /
+                 weekly_planner / greeting_card / ornament / sweatpants /
                  nfc_coin / device.
        Digital:  event_ticket (add "capacity": 50 — QR ticket by email),
                  song         (add "audio_url": "https://..." — listen link).
