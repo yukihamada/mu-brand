@@ -3134,10 +3134,15 @@ POST /api/agent/products
                  phone_case (iPhone 耐衝撃ケース・購入時に機種選択) /
                  tote / tank / cap (刺繍キャップ) /
                  pet_bowl / pet_feeding_mat / pet_bandana / pet_collar /
-                 pet_sweater / dog_tee
+                 pet_sweater / dog_tee / pet_leash / pet_collar_leash /
+                 christmas_stocking / gym_bag /
                  (犬と暮らす雑貨 — 犬の名前入りに) /
-                 duvet_cover / hand_towel / coffee_tumbler /
-                 weekly_planner / greeting_card / ornament / sweatpants /
+                 duvet_cover / hand_towel / bath_mat / shower_curtain /
+                 desk_mat / pillow_case / standard_postcard /
+                 hardcover_photo_book / softcover_photo_book /
+                 latte_mug / enamel_mug / can_cooler / pennant /
+                 wine_tumbler / sweatpants /
+                 weekly_planner / greeting_card / ornament /
                  nfc_coin / device.
        Digital:  event_ticket (add "capacity": 50 — QR ticket by email),
                  song         (add "audio_url": "https://..." — listen link).
