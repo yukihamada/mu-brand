@@ -661,7 +661,7 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
 <div id="promo-strip" style="margin-top:100px;position:relative;z-index:5">
   <!-- 今日 の Tシャツ hero card — above-the-fold MUGEN + 1-click buy. -->
   <a id="hero-tshirt" href="/buy?from=home_hero" style="display:flex;align-items:center;gap:18px;max-width:780px;margin:18px auto;padding:16px 20px;background:#0E0E0E;border:1px solid rgba(230,196,73,0.35);border-radius:8px;text-decoration:none;color:#F5F5F0">
-    <img src="https://mockups.wearmu.com/hero.png" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" data-onerror="hide">
+    <img src="https://mockups.wearmu.com/hero.w480.jpg" data-fallback="https://mockups.wearmu.com/hero.png" width="96" height="96" alt="今日 の MUGEN" loading="eager" fetchpriority="high" style="width:96px;height:96px;object-fit:cover;border-radius:4px;background:#fff;flex-shrink:0" data-onerror="hide">
     <div style="flex:1;min-width:0">
       <div style="font-size:10.5px;letter-spacing:0.28em;text-transform:uppercase;color:#e6c449;font-weight:700;margin-bottom:5px">今日 の Tシャツ · MUGEN {HERO_DROP_LABEL} · ベーシック生地</div>
       <div style="font-size:18px;font-weight:600;color:#fff;margin-bottom:3px">¥4,900 <span style="font-size:12px;opacity:0.55;font-weight:400">≈ $33</span> · 国内 5-8 日 <span style="font-size:11px;opacity:0.5;font-weight:400">(下のオーガニック版は ¥7,800)</span></div>
@@ -756,7 +756,10 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
   <a id="hero-today-shirt" href="/mugen" data-funnel="cta_click" data-funnel-cta="hero_today_one"
      style="display:block;width:100%;max-width:520px;margin:36px auto 0;text-decoration:none;color:inherit;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border:1px solid rgba(255,255,255,0.06);border-radius:4px;padding:18px;transition:border-color 0.2s, transform 0.2s">
     <div id="hero-today-img-wrap" style="width:100%;aspect-ratio:1/1;background:#0d0d0d;border-radius:2px;overflow:hidden;display:flex;align-items:center;justify-content:center">
-      <img id="hero-today-img" src="https://mockups.wearmu.com/hero.png"
+      <img id="hero-today-img" src="https://mockups.wearmu.com/hero.w960.jpg"
+           srcset="https://mockups.wearmu.com/hero.w480.jpg 480w, https://mockups.wearmu.com/hero.w960.jpg 960w"
+           sizes="(max-width: 640px) 100vw, 880px"
+           data-fallback="https://mockups.wearmu.com/hero.png"
            alt="MU — 今日の一着"
            width="880" height="880"
            loading="eager"
@@ -789,8 +792,14 @@ footer{padding:60px 48px;display:flex;justify-content:space-between;align-items:
       const card = document.getElementById('hero-today-shirt');
       if (!card) return;
       const img = document.getElementById('hero-today-img');
-      img.src = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
-      img.onerror = () => { img.src = 'https://mockups.wearmu.com/hero.png'; };
+      const full = pick.mockup_url || ('https://mockups.wearmu.com/' + pick.id + '.jpg');
+      // Prefer the w960 variant; fall back to the original, then to hero.png.
+      img.removeAttribute('srcset');
+      img.onerror = () => {
+        if (img.src !== full) { img.src = full; return; }
+        img.onerror = null; img.src = 'https://mockups.wearmu.com/hero.png';
+      };
+      img.src = mockupThumbUrl(full, 960);
       document.getElementById('hero-today-name').textContent = pick.name || ('MUGEN #' + pick.drop_num);
       document.getElementById('hero-today-price').textContent = '¥' + (pick.price_jpy||0).toLocaleString();
       const rem = (pick.inventory||0) - (pick.sold||0);
@@ -1862,12 +1871,34 @@ const lazyImageObserver = ('IntersectionObserver' in window) ? new IntersectionO
     const img = entry.target;
     const real = img.dataset.src;
     if (real && img.src !== real) {
-      img.src = real;
+      // Prefer the w480 JPEG variant the server writes next to every mockup
+      // (catalog PNGs are 200–430KB; the variant is ~20KB). Older objects
+      // have no variant → onerror swaps back to the original.
+      const small = mockupThumbUrl(real, 480);
+      if (small !== real) {
+        img.dataset.fallback = real;
+        img.addEventListener('error', function onErr(){
+          img.removeEventListener('error', onErr);
+          if (img.dataset.fallback && img.src !== img.dataset.fallback) img.src = img.dataset.fallback;
+        });
+      }
+      img.src = small;
       img.classList.add('lazy-loaded');
     }
     obs.unobserve(img);
   });
 }, { rootMargin: '200px 0px', threshold: 0.01 }) : null;
+
+// "https://mockups.wearmu.com/catalog/mockups/X.png" → ".../X.w480.jpg".
+// Only rewrites mockups.wearmu.com URLs (R2). Anything else is returned as-is.
+function mockupThumbUrl(url, w){
+  if (!url || typeof url !== 'string') return url;
+  if (!/^https:\/\/mockups\.wearmu\.com\//.test(url)) return url;
+  if (/\.w\d+\.jpg$/.test(url)) return url;
+  const i = url.lastIndexOf('.');
+  if (i < 0 || url.indexOf('/', i) >= 0) return url;
+  return url.slice(0, i) + '.w' + w + '.jpg';
+}
 
 function attachLazyObservers(root){
   if (!lazyImageObserver) {

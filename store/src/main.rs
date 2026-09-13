@@ -800,15 +800,114 @@ pub(crate) fn r2_config() -> Option<R2Config> {
     Some(R2Config { bucket, public_base })
 }
 
+/// Width buckets for the resized variants written next to every mockup.
+/// The home grid renders cards at ~300px (2x = 600) and the product modal
+/// at ≤ 880, so 480 and 960 cover both without a runtime resizer.
+pub(crate) const MOCKUP_THUMB_WIDTHS: [u32; 2] = [480, 960];
+
+/// Key of the resized variant for `key` at width `w`:
+/// "catalog/mockups/X.png" → "catalog/mockups/X.w480.jpg".
+pub(crate) fn mockup_thumb_key(key: &str, w: u32) -> String {
+    match key.rfind('.') {
+        Some(i) if !key[i..].contains('/') => format!("{}.w{}.jpg", &key[..i], w),
+        _ => format!("{}.w{}.jpg", key, w),
+    }
+}
+
+/// Resize a PNG/JPEG to width `w`, re-encode as JPEG q78. None when the
+/// source is already ≤ w or fails to decode (caller skips the variant).
+/// Mockups are photographic composites on a flat background, so JPEG is
+/// 5–10x smaller than the PNG source at no visible loss on a card.
+fn shrink_mockup_jpeg(bytes: &[u8], w: u32) -> Option<Vec<u8>> {
+    let img = image::load_from_memory(bytes).ok()?;
+    if img.width() <= w {
+        return None;
+    }
+    let h = (img.height() as u64 * w as u64 / img.width() as u64).max(1) as u32;
+    let small = img.resize_exact(w, h, image::imageops::FilterType::Triangle);
+    let mut out = std::io::Cursor::new(Vec::new());
+    let enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 78);
+    // PNG mockups may carry alpha; flatten onto white (the store background).
+    let rgb = if small.color().has_alpha() {
+        let rgba = small.to_rgba8();
+        let mut flat = image::RgbImage::new(rgba.width(), rgba.height());
+        for (x, y, p) in rgba.enumerate_pixels() {
+            let a = p[3] as u32;
+            let blend = |c: u8| ((c as u32 * a + 255 * (255 - a)) / 255) as u8;
+            flat.put_pixel(x, y, image::Rgb([blend(p[0]), blend(p[1]), blend(p[2])]));
+        }
+        flat
+    } else {
+        small.to_rgb8()
+    };
+    rgb.write_with_encoder(enc).ok()?;
+    Some(out.into_inner())
+}
+
+/// Write the w480/w960 JPEG variants of an already-uploaded mockup. Best
+/// effort: failures are logged and never block the original upload. The
+/// variants are what the storefront <img> tags load; the original stays
+/// for OGP and downloads.
+pub(crate) async fn store_r2_thumbs(key: &str, bytes: &[u8]) {
+    let Some(cfg) = r2_config() else { return };
+    let src = bytes.to_vec();
+    let variants = tokio::task::spawn_blocking(move || {
+        MOCKUP_THUMB_WIDTHS
+            .iter()
+            .filter_map(|&w| shrink_mockup_jpeg(&src, w).map(|b| (w, b)))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+    for (w, small) in variants {
+        let tkey = mockup_thumb_key(key, w);
+        match cfg.bucket.put_object_with_content_type(&tkey, &small, "image/jpeg").await {
+            Ok(r) if r.status_code() == 200 => {}
+            Ok(r) => eprintln!("[r2] thumb {} status {}", tkey, r.status_code()),
+            Err(e) => eprintln!("[r2] thumb {} error: {}", tkey, e),
+        }
+    }
+}
+
+/// Boot-time backfill for the one static hero image the landing depends on.
+/// Downloads hero.png from the public bucket URL, writes hero.w480.jpg and
+/// hero.w960.jpg if they are not already there. Anything failing just logs.
+async fn ensure_hero_thumbs() {
+    let Some(cfg) = r2_config() else { return };
+    let base = cfg.public_base.trim_end_matches('/').to_string();
+    let client = reqwest::Client::new();
+    // Already backfilled? (HEAD on the largest variant.)
+    let probe = format!("{}/{}", base, mockup_thumb_key("hero.png", 960));
+    if let Ok(r) = client.head(&probe).send().await {
+        if r.status().is_success() {
+            return;
+        }
+    }
+    let url = format!("{}/hero.png", base);
+    let bytes = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => match r.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => { eprintln!("[r2] hero backfill read error: {}", e); return; }
+        },
+        Ok(r) => { eprintln!("[r2] hero backfill GET {} status {}", url, r.status()); return; }
+        Err(e) => { eprintln!("[r2] hero backfill GET error: {}", e); return; }
+    };
+    store_r2_thumbs("hero.png", &bytes).await;
+    tracing::info!("[r2] hero.png thumbs backfilled ({} bytes source)", bytes.len());
+}
+
 /// Upload bytes to R2 under an arbitrary key (e.g. "catalog/SKU.png").
 /// Returns the absolute public URL on success. Caller decides the
 /// content-type. Falls back to None if R2 isn't configured (the local-
 /// disk fallback in store_mockup_bytes is product-id-specific so we
-/// don't use it here).
+/// don't use it here). Image uploads also get w480/w960 JPEG variants.
 pub(crate) async fn store_r2_bytes(key: &str, bytes: &[u8], content_type: &str) -> Option<String> {
     let cfg = r2_config()?;
     match cfg.bucket.put_object_with_content_type(key, bytes, content_type).await {
         Ok(r) if r.status_code() == 200 => {
+            if content_type.starts_with("image/") && !key.contains(".w480.") && !key.contains(".w960.") {
+                store_r2_thumbs(key, bytes).await;
+            }
             Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key))
         }
         Ok(r) => {
@@ -830,6 +929,7 @@ async fn store_mockup_bytes(product_id: i64, bytes: &[u8]) -> Option<String> {
     if let Some(cfg) = r2_config() {
         match cfg.bucket.put_object_with_content_type(&key, bytes, "image/jpeg").await {
             Ok(r) if r.status_code() == 200 => {
+                store_r2_thumbs(&key, bytes).await;
                 return Some(format!("{}/{}", cfg.public_base.trim_end_matches('/'), key));
             }
             Ok(r) => {
@@ -3658,6 +3758,49 @@ fn maybe_disable_konbini(stripe_error_body: &str) -> bool {
         true
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod mockup_thumb_tests {
+    use super::*;
+
+    #[test]
+    fn thumb_key_replaces_extension_only() {
+        assert_eq!(mockup_thumb_key("hero.png", 480), "hero.w480.jpg");
+        assert_eq!(mockup_thumb_key("catalog/mockups/KK-TEE-01.png", 960), "catalog/mockups/KK-TEE-01.w960.jpg");
+        assert_eq!(mockup_thumb_key("123.jpg", 480), "123.w480.jpg");
+        // A dot in a directory name must not be mistaken for the extension.
+        assert_eq!(mockup_thumb_key("v1.2/noext", 480), "v1.2/noext.w480.jpg");
+    }
+
+    #[test]
+    fn shrink_downsizes_flattens_alpha_and_skips_small() {
+        // 1400x1400 RGBA PNG like a catalog mockup (transparent corners).
+        // Pseudo-random texture so PNG can't compress it away — a smooth
+        // gradient would make the PNG smaller than the JPEG and invalidate
+        // the size assertion.
+        let big = image::RgbaImage::from_fn(1400, 1400, |x, y| {
+            let a = if x < 50 && y < 50 { 0 } else { 255 };
+            let h = x.wrapping_mul(2654435761).wrapping_add(y.wrapping_mul(40503)) ^ (x * y);
+            image::Rgba([(h & 0xff) as u8, ((h >> 8) & 0xff) as u8, ((h >> 16) & 0xff) as u8, a])
+        });
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(big).write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        let png = buf.into_inner();
+
+        let small = shrink_mockup_jpeg(&png, 480).expect("should shrink");
+        let dec = image::load_from_memory(&small).unwrap();
+        assert_eq!(dec.width(), 480);
+        assert_eq!(dec.height(), 480);
+        assert!(small.len() < png.len() / 5, "480px jpeg must be far smaller: {} vs {}", small.len(), png.len());
+        // Transparent corner flattened onto white, not black.
+        let px = dec.to_rgb8().get_pixel(2, 2).0;
+        assert!(px[0] > 200 && px[1] > 200 && px[2] > 200, "expected ~white, got {:?}", px);
+
+        // Already ≤ requested width → None.
+        assert!(shrink_mockup_jpeg(&small, 480).is_none());
+        assert!(shrink_mockup_jpeg(&small, 960).is_none());
     }
 }
 
@@ -70755,6 +70898,15 @@ async fn main() {
     } else {
         tracing::info!("[catalog/cron] MU_AUTOPILOT=0 — optimizer cron skipped");
     }
+
+    // ── One-shot on boot: make sure hero.png has its w480/w960 variants ──
+    // The home page's above-the-fold <img> is hero.png (429KB PNG). New
+    // uploads get variants automatically via store_r2_bytes; this covers
+    // the one pre-existing object the landing depends on. Idempotent:
+    // skips if the variant already exists on R2.
+    tokio::spawn(async {
+        ensure_hero_thumbs().await;
+    });
 
     // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
     // Started before the router consumes `db` via with_state.

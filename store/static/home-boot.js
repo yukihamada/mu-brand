@@ -111,6 +111,16 @@
     function (e) {
       var t = e.target;
       if (!t || t.tagName !== "IMG" || t.dataset.errHandled) return;
+      // data-fallback: try the original once before any data-onerror policy.
+      // Used by resized mockup variants (hero.w480.jpg → hero.png) so an
+      // object without a variant on R2 still renders.
+      var fb = t.getAttribute("data-fallback");
+      if (fb && t.src !== fb && !t.dataset.fbTried) {
+        t.dataset.fbTried = "1";
+        t.removeAttribute("srcset");
+        t.src = fb;
+        return;
+      }
       var k = t.getAttribute("data-onerror");
       if (!k) return;
       t.dataset.errHandled = "1";
