@@ -122,7 +122,11 @@ jobs:
     # hard gate: if it fails, `needs` short-circuits and deploy is skipped.
     if: ${{ always() && needs.test.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The Fly remote builder needs ~17–22 min for a cold `cargo build --release`
+    # of store/ (measured 2026-09-13: two consecutive deploys were cancelled at
+    # exactly 20:00 with the build still compiling). 35 leaves headroom without
+    # masking a genuinely hung build.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
       - uses: superfly/flyctl-actions/setup-flyctl@master
