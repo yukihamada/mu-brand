@@ -62,3 +62,13 @@ git diff --check
 - 本番DB migration、配備、iOS配布、実課金/製造テストは未実施。公開後検証は別途必要。
 
 詳細iOS契約・実機引継ぎ: `ios/MAKE_FIXES.md`。
+
+## 本番反映・実機結合確認 2026-09-14
+
+- 本人承認で `db69e223` をmainへpush。GitHub Actions run `34768887507` 成功。
+  https://github.com/yukihamada/mu-brand/actions/runs/34768887507
+- 本番 `/api/make/kinds` HTTP200、85種類・JP作成可76種類、`/healthz` ok:true。
+- 実機iPhone16Pro/iOS26.5.2の `testProductionExpandedCatalogLoadsWithoutFallback` 成功。
+  fallback警告なし、検索で `wall_clock` を取得し、選択値が一致することを確認。
+  証拠: 承認済みtempの `mu-device-expanded-catalog-reconnected.xcresult`。
+- アプリ起動済み。新一覧の本番結合は確認済みへ更新。実生成・決済・製造は行っていない。

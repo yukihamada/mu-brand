@@ -45,8 +45,7 @@ final class ProductionSmokeTests: XCTestCase {
         picker.tap()
         XCTAssertTrue(app.navigationBars["作れるもの"].waitForExistence(timeout: 10))
 
-        // /api/make/kinds currently returns 404. Check the fallback when shown;
-        // do not mistake it for the full backend catalog.
+        // A fallback remains usable during outages, but is not proof of full catalog delivery.
         if usesFallback {
             XCTAssertTrue(app.buttons["make.kind.option.auto"].exists)
         }
@@ -68,6 +67,29 @@ final class ProductionSmokeTests: XCTestCase {
         XCTAssertEqual(picker.value as? String, "mug")
         XCTAssertTrue(picker.label.contains("マグ"))
         capture("make-mug-selected-no-generation")
+    }
+
+    func testProductionExpandedCatalogLoadsWithoutFallback() throws {
+        app.tabBars.buttons["作る"].tap()
+        let picker = app.buttons["make.kindPicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 30))
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: picker)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 75), .completed)
+        XCTAssertFalse(app.staticTexts["make.kindsUnavailable"].exists, "Production kinds API must load successfully")
+        reveal(picker)
+        picker.tap()
+        XCTAssertTrue(app.navigationBars["作れるもの"].waitForExistence(timeout: 10))
+        let search = app.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap()
+        search.typeText("wall_clock")
+        let clock = app.buttons["make.kind.option.wall_clock"]
+        XCTAssertTrue(clock.waitForExistence(timeout: 10), "Extended kind missing from production catalog")
+        XCTAssertTrue(clock.isEnabled)
+        capture("production-expanded-catalog-wall-clock")
+        clock.tap()
+        XCTAssertEqual(picker.value as? String, "wall_clock")
+        capture("production-wall-clock-selected-no-generation")
     }
 
     func testShopProductDetailHasPurchaseURLWithoutCheckout() throws {
