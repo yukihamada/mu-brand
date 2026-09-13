@@ -67,10 +67,29 @@ struct MUAPI {
     // apiKey があればログインユーザーに帰属 (売れるたび売上10%が作者へ・apply_maker_commission)。
     // 画像生成に時間がかかるため timeout を延ばす。
     static func make(prompt: String, kind: MakeKind, royalty: Int, apiKey: String?) async throws -> MakeResult {
+        try await make(prompt: prompt, kind: kind.rawValue, royalty: royalty, apiKey: apiKey)
+    }
+
+    static func makeKinds(session: URLSession = .shared) async throws -> [MakeKindOption] {
+        var request = URLRequest(url: base.appendingPathComponent("api/make/kinds"))
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, httpResponse) = try await session.data(for: request)
+        guard let http = httpResponse as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.badStatus((httpResponse as? HTTPURLResponse)?.statusCode ?? -1)
+        }
+        let response = try JSONDecoder().decode(MakeKindsResponse.self, from: data)
+        guard response.ok, response.items.contains(where: { !$0.kind.isEmpty }) else {
+            throw APIError.message(String(localized: "make.kinds.unavailable"))
+        }
+        var seen = Set<String>()
+        return [.auto] + response.items.filter { !$0.kind.isEmpty && seen.insert($0.kind).inserted }
+    }
+
+    static func make(prompt: String, kind: String, royalty: Int, apiKey: String?) async throws -> MakeResult {
         var comps = URLComponents(url: base.appendingPathComponent("api/make"), resolvingAgainstBaseURL: false)!
         var items = [URLQueryItem(name: "prompt", value: prompt),
                      URLQueryItem(name: "royalty", value: String(royalty))]
-        if !kind.rawValue.isEmpty { items.append(URLQueryItem(name: "kind", value: kind.rawValue)) }
+        if !kind.isEmpty { items.append(URLQueryItem(name: "kind", value: kind)) }
         comps.queryItems = items
 
         var req = URLRequest(url: comps.url!)
@@ -89,7 +108,9 @@ struct MUAPI {
             }
             throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
         }
-        return try JSONDecoder().decode(MakeResult.self, from: data)
+        let result = try JSONDecoder().decode(MakeResult.self, from: data)
+        guard result.ok else { throw APIError.message(String(localized: "agent.makeFail")) }
+        return result
     }
 
     // 「磨く」— POST /api/make/polish/:sku?t=。現デザインを5軸採点し、弱点を改善した候補を
@@ -108,7 +129,9 @@ struct MUAPI {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
         }
-        return try JSONDecoder().decode(PolishResult.self, from: data)
+        let result = try JSONDecoder().decode(PolishResult.self, from: data)
+        guard result.ok else { throw APIError.message(String(localized: "agent.makeFail")) }
+        return result
     }
 
     // リミックス — 既存デザインに一言足して別バージョンを織る。POST /api/design-remix
@@ -123,7 +146,8 @@ struct MUAPI {
         }
         var comps = URLComponents()
         comps.queryItems = [URLQueryItem(name: "sku", value: sku), URLQueryItem(name: "words", value: words)]
-        req.httpBody = comps.percentEncodedQuery?.data(using: .utf8)
+        // URLComponents leaves '+' literal, but form decoding treats it as a space.
+        req.httpBody = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B").data(using: .utf8)
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw APIError.badStatus(-1) }
         guard (200...299).contains(http.statusCode) else {
@@ -134,7 +158,9 @@ struct MUAPI {
             }
             throw APIError.message((json?["error"] as? String) ?? "HTTP \(http.statusCode)")
         }
-        return try JSONDecoder().decode(MakeResult.self, from: data)
+        let result = try JSONDecoder().decode(MakeResult.self, from: data)
+        guard result.ok else { throw APIError.message(String(localized: "agent.makeFail")) }
+        return result
     }
 
     // アプリ内 AI エージェント。意図判定(make/sales/list_mine/none)を返す。POST /api/app/agent/chat
@@ -153,22 +179,35 @@ struct MUAPI {
         return try JSONDecoder().decode(AgentChatResponse.self, from: data)
     }
 
-    // 作った後に価格を変更。POST /api/make/edit/:sku?t= {price_jpy}。送った価格を返す
-    // (サーバは原価フロア〜¥99,000にクランプ)。
+    // Always return persisted prices, including clamps. Older servers require a canonical GET.
     @discardableResult
-    static func editPrice(sku: String, editToken: String, priceJpy: Int) async throws -> Int {
+    static func editPrice(sku: String, editToken: String, priceJpy: Int,
+                          session: URLSession = .shared) async throws -> SavedMakePrice {
         var comps = URLComponents(url: base.appendingPathComponent("api/make/edit/\(sku)"), resolvingAgainstBaseURL: false)!
         comps.queryItems = [URLQueryItem(name: "t", value: editToken)]
         var req = URLRequest(url: comps.url!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["price_jpy": priceJpy])
-        let (data, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             throw APIError.message((json?["error"] as? String) ?? "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
         }
-        return priceJpy
+        let result = try JSONDecoder().decode(MakePriceResponse.self, from: data)
+        guard result.ok else { throw APIError.message(String(localized: "make.price.unconfirmed")) }
+        if let saved = result.saved { return saved }
+        comps.path = "/api/make/item/\(sku)"
+        var read = URLRequest(url: comps.url!)
+        read.cachePolicy = .reloadIgnoringLocalCacheData
+        let (canonicalData, canonicalResponse) = try await session.data(for: read)
+        guard let http = canonicalResponse as? HTTPURLResponse, http.statusCode == 200 else {
+            throw APIError.message(String(localized: "make.price.unconfirmed"))
+        }
+        guard let saved = try JSONDecoder().decode(MakePriceResponse.self, from: canonicalData).saved else {
+            throw APIError.message(String(localized: "make.price.unconfirmed"))
+        }
+        return saved
     }
 
     // 着画(オンボディmockup)が出来たか確認。GET /api/make/peek?sku=

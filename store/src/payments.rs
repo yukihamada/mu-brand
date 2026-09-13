@@ -350,20 +350,38 @@ pub async fn checkout_crypto(
     //     bonding-curve dynamic price). Unchanged.
     let catalog_sku: Option<String> = body.catalog_sku.as_deref()
         .map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    let mut catalog_line = None;
     let (base_price_jpy, product_name): (i64, String) = if let Some(cs) = catalog_sku.as_ref() {
         let row = {
             let conn = db.lock().unwrap();
             conn.query_row(
-                "SELECT retail_price_jpy, label FROM catalog_products
-                 WHERE sku=? AND is_active=1",
+                "SELECT retail_price_jpy, label, COALESCE(printful_product_id,0),
+                        COALESCE(printful_variant_id,0), meta_json FROM catalog_products
+                 WHERE sku=? AND status='live'",
                 params![cs],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_,i64>(2)?,
+                    r.get::<_,i64>(3)?, r.get::<_,Option<String>>(4)?)),
             )
         };
-        match row {
+        let (price, _, product, variant, meta) = match row {
             Ok(r) => r,
             Err(_) => return (StatusCode::NOT_FOUND, "catalog sku not found").into_response(),
-        }
+        };
+        let meta: serde_json::Value = match serde_json::from_str(meta.as_deref().unwrap_or("{}")) {
+            Ok(m) => m,
+            Err(_) => return (StatusCode::FAILED_DEPENDENCY, "invalid print specification").into_response(),
+        };
+        let sizes = meta["printful_variant_map"].as_object().map(|m| m.len()>1)
+            .unwrap_or_else(|| crate::catalog::resolve_apparel_size_variant(product,variant,"M").is_some());
+        let line = match crate::catalog::checkout_catalog_line(&db, cs, body.quantity as i64,
+            price, sizes, body.size.as_deref()).await
+            .and_then(|line| select_crypto_catalog_line(line, body.size.as_deref(), &pm)) {
+            Ok(line) => line,
+            Err(e) => return (StatusCode::FAILED_DEPENDENCY, e).into_response(),
+        };
+        let name = line["label"].as_str().unwrap_or(cs).to_string();
+        catalog_line = Some(line);
+        (price, name)
     } else {
         let check = {
             let conn = db.lock().unwrap();
@@ -391,6 +409,13 @@ pub async fn checkout_crypto(
     if !shipping.is_complete() {
         return (StatusCode::BAD_REQUEST,
             "shipping required: name, line1, city, zip, country (ISO-2)").into_response();
+    }
+    if let Some(line)=&catalog_line {
+        let snapshot=serde_json::json!({"lines":[line]});
+        let prepared=match crate::order_contract::prepare_checkout(&snapshot,&shipping.country).await {
+            Ok(s)=>s,Err(e)=>return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+        };
+        catalog_line=Some(prepared["lines"][0].clone());
     }
 
     let unit_price_jpy = apply_payment_surcharge(base_price_jpy, &pm);
@@ -432,7 +457,8 @@ pub async fn checkout_crypto(
     // (hex+hyphens) cannot be decoded as a pubkey → no tx ever confirms.
     // For ETH this is also fine — it's just an opaque order identifier there.
     let reference = new_solana_pay_reference();
-    let size_label = body.size.clone().unwrap_or_else(|| "M".into());
+    let size_label = catalog_line.as_ref().and_then(|l| l["size"].as_str()).map(str::to_string)
+        .unwrap_or_else(|| body.size.clone().unwrap_or_else(|| "M".into()));
 
     let (amount_crypto, asset, recipient, pay_url): (String, &str, String, String) = match pm.as_str() {
         "usdc" | "crypto" => {
@@ -468,9 +494,24 @@ pub async fn checkout_crypto(
         _ => unreachable!(),
     };
 
+    if amount_crypto.parse::<f64>().ok().filter(|n| n.is_finite() && *n>0.0).is_none() {
+        return (StatusCode::BAD_REQUEST, "crypto amount rounds to zero; choose another payment method").into_response();
+    }
     {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
+        let mut conn = db.lock().unwrap();
+        let tx = match conn.transaction() {
+            Ok(tx) => tx,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        };
+        if let Some(line) = catalog_line {
+            let spec = serde_json::json!({"version":1,"kind":"crypto_catalog","reference":reference,
+                "amount_jpy":total_jpy,"amount_crypto":amount_crypto,"asset":asset,"recipient":recipient,
+                "lines":[line],"shipping":crypto_recipient(&shipping, &body.email)});
+            if let Err(e) = persist_crypto_snapshot(&tx, &reference, catalog_sku.as_deref().unwrap(), &spec) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+            }
+        }
+        if let Err(e) = tx.execute(
             "INSERT INTO pending_crypto_payments
              (reference, product_id, catalog_sku, email, size, quantity, wallet, payment_method,
               amount_jpy, amount_crypto, asset, recipient, pay_url,
@@ -488,7 +529,12 @@ pub async fn checkout_crypto(
                 shipping.zip.trim(), shipping.country.trim().to_uppercase(),
                 shipping.phone.trim()
             ]
-        );
+        ) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+        if let Err(e) = tx.commit() {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
     }
 
     Json(serde_json::json!({
@@ -509,6 +555,144 @@ pub async fn checkout_crypto(
         "kyc_record_id": if kyc_record_id > 0 { serde_json::Value::from(kyc_record_id) } else { serde_json::Value::Null },
         "kyc_verification_token": if !kyc_token.is_empty() { serde_json::Value::from(kyc_token) } else { serde_json::Value::Null },
     })).into_response()
+}
+
+fn crypto_recipient(shipping: &ShippingInfo, email: &str) -> serde_json::Value {
+    serde_json::json!({"name":shipping.name.trim(),"address1":shipping.line1.trim(),
+        "address2":shipping.line2.trim(),"city":shipping.city.trim(),
+        "state_code":crate::jp_prefecture_to_iso(shipping.state.trim()).unwrap_or(shipping.state.trim()),
+        "country_code":shipping.country.trim().to_uppercase(),"zip":shipping.zip.trim(),
+        "phone":shipping.phone.trim(),"email":email})
+}
+
+fn select_crypto_catalog_line(mut line: serde_json::Value, selected: Option<&str>, method: &str)
+    -> Result<serde_json::Value, String> {
+    if !matches!(line["route"].as_str(),Some("printful_dtg" | "printful_aop" | "printful_embroidery")) {
+        return Err("unsupported crypto fulfillment route".into());
+    }
+    let variants = line["variants"].as_object().filter(|v| !v.is_empty()).ok_or("print specification missing")?;
+    let size = match selected.map(|s| s.trim().to_uppercase()) {
+        Some(s) if line["sync_source_id"].as_i64().is_some() && variants.len()==1
+            && line["sync_size"].as_str().is_some_and(|size|size.trim().eq_ignore_ascii_case(&s)) => "FIXED".into(),
+        Some(s) if variants.contains_key(&s) => s,
+        Some(s) if matches!(s.as_str(),"OS" | "ONE SIZE" | "ONE_SIZE") && variants.len()==1 => {
+            variants.keys().find(|k| matches!(k.as_str(),"OS" | "ONE SIZE" | "ONE_SIZE"))
+                .cloned().ok_or("unsupported size")?
+        }
+        None if variants.len()==1 && line.get("size_field").is_none() => variants.keys().next().unwrap().clone(),
+        _ => return Err("explicit supported size required".into()),
+    };
+    let mut item = variants[&size].clone();
+    crate::order_contract::files(&item["files"])?;
+    if item["variant_id"].as_i64().filter(|v| *v>0).is_none() { return Err("explicit print variant missing".into()); }
+    let unit = line["unit_amount"].as_i64().filter(|v| *v>0).ok_or("invalid price")?;
+    let qty = line["qty"].as_i64().filter(|v| (1..=50).contains(v)).ok_or("invalid quantity")?;
+    let unit = apply_payment_surcharge(unit,method);
+    item["quantity"] = serde_json::json!(qty);
+    item["retail_price"] = serde_json::json!(format!("{:.2}",unit as f64));
+    line["unit_amount"] = serde_json::json!(unit);
+    line["size"] = serde_json::json!(size);
+    line["variants"] = serde_json::json!({size:item});
+    line.as_object_mut().unwrap().remove("size_field");
+    Ok(line)
+}
+
+fn persist_crypto_snapshot(conn: &rusqlite::Connection, reference: &str, sku: &str, spec: &serde_json::Value)
+    -> Result<(), String> {
+    // Namespaced reference uses the existing order-contract storage, not a Stripe payment session.
+    let draft = crate::order_contract::draft(conn,sku,spec)?;
+    let n = conn.execute("UPDATE catalog_orders SET stripe_session_id=? WHERE stripe_session_id=? AND status='checkout_pending'",
+        params![format!("crypto:{reference}"),draft]).map_err(|e|e.to_string())?;
+    if n != 1 { return Err("crypto snapshot binding failed".into()); }
+    Ok(())
+}
+
+/// Only the authenticated webhook/RPC validators may create this confirmed receipt.
+/// Never synthesize Stripe `paid` or Stripe line_items for blockchain settlement.
+fn claim_crypto_catalog(conn: &rusqlite::Connection, reference: &str) -> Result<Option<serde_json::Value>, String> {
+    use rusqlite::OptionalExtension;
+    let receipt: Option<(String,String,i64,String,String,i64,String)> = conn.query_row(
+        "SELECT catalog_sku,size,quantity,asset,amount_crypto,amount_jpy,recipient
+         FROM pending_crypto_payments WHERE reference=? AND status='confirmed'
+         AND length(trim(COALESCE(tx_signature,'')))>0 AND length(trim(COALESCE(confirmed_at,'')))>0",
+        [reference],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)))
+        .optional().map_err(|e|e.to_string())?;
+    let Some((sku,size,qty,asset,amount,total,recipient)) = receipt else { return Ok(None); };
+    let sid = format!("crypto:{reference}");
+    let spec = crate::order_contract::load(conn,&sid)?;
+    let lines = spec["lines"].as_array().filter(|l| l.len()==1).ok_or("crypto snapshot lines missing")?;
+    let line = &lines[0];
+    if spec["kind"] != "crypto_catalog" || spec["reference"] != reference
+        || spec["asset"] != asset || spec["amount_crypto"] != amount || spec["recipient"] != recipient
+        || spec["amount_jpy"] != total || line["sku"] != sku || line["size"] != size || line["qty"] != qty
+        || line["unit_amount"].as_i64().and_then(|u|u.checked_mul(qty)) != Some(total) {
+        return Err("confirmed crypto receipt differs from checkout snapshot".into());
+    }
+    if !matches!(line["route"].as_str(),Some("printful_dtg" | "printful_aop" | "printful_embroidery")) {
+        return Err("unsupported crypto fulfillment route".into());
+    }
+    let item = &line["variants"][&size];
+    crate::order_contract::files(&item["files"])?;
+    if item["variant_id"].as_i64().filter(|v| *v>0).is_none() || item["quantity"] != qty {
+        return Err("invalid frozen crypto item".into());
+    }
+    let n = conn.execute("UPDATE catalog_orders SET status='submitting',payment_status='crypto_confirmed',
+        amount_jpy=?,order_updated_at=datetime('now') WHERE stripe_session_id=?
+        AND status IN ('checkout_pending','retry_ready')",params![total,sid]).map_err(|e|e.to_string())?;
+    Ok((n==1).then_some(spec))
+}
+
+/// Printful permits 32 characters. Hash the entire reference with a versioned
+/// domain separator; 128 retained bits avoid truncating Solana reference entropy
+/// to a shared prefix. The full `crypto:<reference>` remains the DB key.
+fn crypto_supplier_id(reference: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hash = Sha256::new();
+    hash.update(b"mu:printful:crypto:v1\0");
+    hash.update(reference.as_bytes());
+    hex::encode(&hash.finalize()[..16])
+}
+
+async fn submit_crypto_catalog(db: &Db, reference: &str, key: &str, endpoint: &str)
+    -> Result<Option<(String,Option<String>)>,String> {
+    let sid = format!("crypto:{reference}");
+    let spec = { claim_crypto_catalog(&db.lock().unwrap(),reference)? };
+    let Some(spec) = spec else { return Ok(None); };
+    let line = &spec["lines"][0];
+    let name = line["label"].as_str().unwrap_or("").to_string();
+    if key.is_empty() {
+        crate::order_contract::mark(&db.lock().unwrap(),&sid,"failed_no_key","PRINTFUL_API_KEY unset");
+        return Ok(Some((name,None)));
+    }
+    // submit freezes this body once and uses its saved external_id for both GET
+    // and POST. Never rewrite an existing request's identity, even on recovery.
+    let body = serde_json::json!({"external_id":crypto_supplier_id(reference),"recipient":spec["shipping"],
+        "items":[line["variants"][line["size"].as_str().ok_or("size missing")?]],"confirm":true});
+    let result = crate::order_contract::submit(db,&sid,&body,key,endpoint).await;
+    let oid = match result {
+        Ok((status,text)) if status.is_success() => serde_json::from_str::<serde_json::Value>(&text).ok()
+            .and_then(|v|v["result"]["id"].as_i64().filter(|id| *id>0).map(|id|id.to_string())),
+        Ok((status,_)) => { tracing::warn!("[crypto/submit] ref={reference} status={status}"); None }
+        Err(e) => { tracing::warn!("[crypto/submit] ref={reference}: {e}"); None }
+    };
+    if let Some(oid) = &oid {
+        let saved = (|| -> Result<(),String> {
+            let mut conn = db.lock().unwrap();
+            let tx = conn.transaction().map_err(|e|e.to_string())?;
+            tx.execute("UPDATE catalog_orders SET status='submitted',printful_order_id=?,order_error=NULL,
+                order_updated_at=datetime('now') WHERE stripe_session_id=?",params![oid,sid]).map_err(|e|e.to_string())?;
+            tx.execute("UPDATE pending_crypto_payments SET printful_order_id=?,fulfilled_at=? WHERE reference=?",
+                params![oid,now_iso(),reference]).map_err(|e|e.to_string())?;
+            tx.commit().map_err(|e|e.to_string())
+        })();
+        if let Err(e) = saved {
+            crate::order_contract::mark(&db.lock().unwrap(),&sid,"submission_uncertain",&e);
+            return Ok(Some((name,None)));
+        }
+    } else {
+        crate::order_contract::mark(&db.lock().unwrap(),&sid,"submission_uncertain","supplier response unconfirmed; reconcile external_id before retry");
+    }
+    Ok(Some((name,oid)))
 }
 
 /// 256-bit random token used to gate Stripe Identity session creation for
@@ -795,9 +979,9 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
         return;
     };
 
-    // 1b. Resolve product family → (display name, design URL, Printful ids).
-    //     Legacy rows keep the historic black-tee variant table; catalog rows
-    //     carry their own printful_product_id/variant + size resolution.
+    // Catalog orders submit only their checkout snapshot; legacy MUGEN keeps
+    // its separate product-family path below.
+    let mut printful_order_id: Option<String> = None;
     struct PfTarget { variant_id: i64, placements: &'static [&'static str] }
     let (product_name, design_url, pf): (String, String, PfTarget) = if catalog_sku.is_empty() {
         let row: Option<(String, String)> = {
@@ -817,39 +1001,29 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
         };
         (name, design, PfTarget { variant_id, placements: &["front"] })
     } else {
-        let row: Option<(String, String, i64, i64)> = {
-            let conn = db.lock().unwrap();
-            conn.query_row(
-                "SELECT label, COALESCE(design_file,''), printful_product_id, printful_variant_id
-                 FROM catalog_products WHERE sku=?",
-                params![&catalog_sku],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            ).ok()
-        };
-        let Some((label, mut design, pp_id, base_variant)) = row else {
-            tracing::warn!("[fulfill] catalog sku {} missing for ref {}", catalog_sku, reference);
-            return;
-        };
-        if !design.is_empty() && !design.starts_with("http") {
-            design = format!("{}{}", env::var("BASE_URL")
-                .unwrap_or_else(|_| "https://wearmu.com".into()), design);
+        let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+        match submit_crypto_catalog(&db,&reference,&key,"https://api.printful.com/orders").await {
+            Ok(Some((name,oid))) => {
+                printful_order_id = oid;
+                (name,String::new(),PfTarget { variant_id:0,placements:&[] })
+            }
+            Ok(None) => return,
+            Err(e) => {
+                tracing::error!("[crypto/fulfill] held ref={reference}: {e}");
+                crate::order_contract::mark(&db.lock().unwrap(),&format!("crypto:{reference}"),
+                    "blocked_crypto_snapshot",&e);
+                return;
+            }
         }
-        let variant_id = crate::catalog::resolve_size_variant(pp_id, &size)
-            .unwrap_or(base_variant);
-        (label, design, PfTarget {
-            variant_id,
-            placements: crate::catalog::placements_for_product(pp_id),
-        })
     };
 
-    if design_url.is_empty() {
+    if catalog_sku.is_empty() && design_url.is_empty() {
         tracing::warn!("[fulfill] product {}/{} has no design_url; skipping Printful", product_id, catalog_sku);
     }
 
     // 2. Printful order (only if key is configured and design_url present).
     let printful_key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
-    let mut printful_order_id: Option<String> = None;
-    if !printful_key.is_empty() && !design_url.is_empty() {
+    if catalog_sku.is_empty() && !printful_key.is_empty() && !design_url.is_empty() {
         // Order files use "type", not "placement" — see build_printful_item.
         let files: Vec<serde_json::Value> = pf.placements.iter().map(|p| {
             serde_json::json!({"url": design_url, "type": p})
@@ -914,10 +1088,17 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
                     reference, product_id, e));
             }
         }
-    } else {
+    } else if catalog_sku.is_empty() {
         tracing::info!("[fulfill] Printful skipped (no key or no design_url) ref={}", reference);
     }
 
+    if !catalog_sku.is_empty() {
+        match crate::order_contract::effects_once(&db.lock().unwrap(),&format!("crypto:{reference}")) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(e) => { tracing::error!("[crypto/effects] {reference}: {e}"); return; }
+        }
+    }
     // 3. Confirmation email via Resend (independent of Printful outcome).
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
     if !resend_key.is_empty() {
@@ -981,7 +1162,7 @@ async fn fulfill_crypto_order(db: Db, reference: String) {
             |r| r.get::<_, String>(0),
         ).unwrap_or_default()
     };
-    if !buyer_wallet.trim().is_empty() {
+    if catalog_sku.is_empty() && !buyer_wallet.trim().is_empty() {
         crate::nft::mint_soulbound_bg(db.clone(), product_id, buyer_wallet, "helius_webhook");
     } else {
         tracing::info!("[nft] crypto-settle skipped product_id={} ref={}: no wallet", product_id, reference);
@@ -1223,6 +1404,259 @@ pub fn sanitize_kyc_return_url(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{json,Value};
+
+    fn crypto_db() -> Db {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE catalog_orders(id INTEGER PRIMARY KEY,stripe_session_id TEXT UNIQUE NOT NULL,
+            sku TEXT,status TEXT,amount_jpy INTEGER,printful_order_id TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE catalog_products(sku TEXT PRIMARY KEY,status TEXT,retail_price_jpy INTEGER,label TEXT,
+                printful_product_id INTEGER,printful_variant_id INTEGER,fulfillment_route TEXT,description_ja TEXT,meta_json TEXT,
+                printful_sync_variant_id INTEGER,design_file TEXT);
+            CREATE TABLE pending_crypto_payments(reference TEXT PRIMARY KEY,catalog_sku TEXT,size TEXT,quantity INTEGER,
+                asset TEXT,amount_crypto TEXT,amount_jpy INTEGER,recipient TEXT,status TEXT,tx_signature TEXT,
+                confirmed_at TEXT,printful_order_id TEXT,fulfilled_at TEXT);").unwrap();
+        crate::order_contract::migrate(&c).unwrap();
+        let meta = json!({"printful_variant_map":{"M":4012,"L":4013},"printful_options":[{"id":"stitch_color","value":"white"}],
+            "printful_files":[{"type":"front","url":"https://example.test/original.png","position":{"width":10,"height":20}},
+                {"type":"back","url":"https://example.test/back.png"}]});
+        c.execute("INSERT INTO catalog_products VALUES('TEST','live',1000,'Original white tee',71,4012,'printful_dtg','desc',?,NULL,NULL)",
+            [meta.to_string()]).unwrap();
+        Arc::new(Mutex::new(c))
+    }
+
+    async fn reserve_crypto(db: &Db) -> Value {
+        reserve_crypto_reference(db,"test").await
+    }
+
+    async fn reserve_crypto_reference(db: &Db, reference: &str) -> Value {
+        let line = crate::catalog::checkout_catalog_line(db,"TEST",2,1000,true,None).await.unwrap();
+        let line = select_crypto_catalog_line(line,Some(" l "),"usdc").unwrap();
+        let spec = json!({"version":1,"kind":"crypto_catalog","reference":reference,"amount_jpy":2060,
+            "asset":"USDC","amount_crypto":"13.73","recipient":"chain-wallet","lines":[line],
+            "shipping":{"name":"Test","address1":"1 Test","city":"Test","zip":"000","country_code":"JP"}});
+        let mut c = db.lock().unwrap();
+        let tx = c.transaction().unwrap();
+        persist_crypto_snapshot(&tx,reference,"TEST",&spec).unwrap();
+        tx.execute("INSERT INTO pending_crypto_payments(reference,catalog_sku,size,quantity,asset,amount_crypto,
+            amount_jpy,recipient,status) VALUES(?,'TEST','L',2,'USDC','13.73',2060,'chain-wallet','pending')",[reference]).unwrap();
+        tx.commit().unwrap();
+        spec
+    }
+
+    fn confirm_crypto(db: &Db) {
+        db.lock().unwrap().execute("UPDATE pending_crypto_payments SET status='confirmed',tx_signature='validated-chain-tx',confirmed_at='123'",[]).unwrap();
+    }
+
+    #[tokio::test]
+    async fn crypto_snapshot_freezes_white_variant_size_files_options_and_price() {
+        let db = crypto_db(); let expected = reserve_crypto(&db).await;
+        let c = db.lock().unwrap();
+        c.execute("UPDATE catalog_products SET status='retired',retail_price_jpy=99000,meta_json='{}',printful_variant_id=4017",[]).unwrap();
+        let loaded = crate::order_contract::load(&c,"crypto:test").unwrap();
+        assert_eq!(loaded,expected);
+        let line = &loaded["lines"][0];
+        assert_eq!(line["variants"]["L"]["variant_id"],4013); // White/L, never Black/L 4018.
+        assert_eq!(line["variants"]["L"]["quantity"],2);
+        assert_eq!(line["variants"]["L"]["retail_price"],"1030.00");
+        assert_eq!(line["variants"]["L"]["files"].as_array().unwrap().len(),2);
+        assert_eq!(line["variants"]["L"]["files"][0]["position"]["width"],10);
+        assert_eq!(line["variants"]["L"]["options"][0]["value"],"white");
+        assert!(line.get("size_field").is_none());
+        assert!(claim_crypto_catalog(&c,"test").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn crypto_checkout_rejects_unsupported_routes_sizes_and_missing_specs() {
+        let db = crypto_db();
+        let line = crate::catalog::checkout_catalog_line(&db,"TEST",2,1000,true,None).await.unwrap();
+        for size in [None,Some("XL"),Some(""),Some("FIXED")] {
+            assert!(select_crypto_catalog_line(line.clone(),size,"usdc").is_err());
+        }
+        for route in ["manual","digital","gelato_jp","suzuri_jp","printful_unknown"] {
+            let mut bad = line.clone(); bad["route"] = json!(route);
+            assert!(select_crypto_catalog_line(bad,Some("L"),"usdc").is_err());
+        }
+        for meta in [json!({"printful_files":[]}),json!({"printful_variant_map":{"M":0}})] {
+            db.lock().unwrap().execute("UPDATE catalog_products SET meta_json=?",[meta.to_string()]).unwrap();
+            assert!(crate::catalog::checkout_catalog_line(&db,"TEST",1,1000,true,None).await.is_err());
+        }
+        db.lock().unwrap().execute("UPDATE catalog_products SET status='review'",[]).unwrap();
+        assert!(crate::catalog::checkout_catalog_line(&db,"TEST",1,1000,true,None).await.is_err());
+        assert_eq!(db.lock().unwrap().query_row("SELECT COUNT(*) FROM catalog_orders",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    #[tokio::test]
+    async fn crypto_claim_requires_receipt_not_stripe_paid_and_is_atomic() {
+        let db = crypto_db(); reserve_crypto(&db).await;
+        for status in ["pending","paid","no_payment_required","confirmed"] {
+            let c = db.lock().unwrap();
+            c.execute("UPDATE pending_crypto_payments SET status=?",[status]).unwrap();
+            assert!(claim_crypto_catalog(&c,"test").unwrap().is_none());
+        }
+        confirm_crypto(&db);
+        for sql in ["UPDATE pending_crypto_payments SET amount_jpy=1000", "UPDATE pending_crypto_payments SET size='M'",
+            "UPDATE pending_crypto_payments SET amount_crypto='1'","UPDATE pending_crypto_payments SET asset='SOL'",
+            "UPDATE pending_crypto_payments SET recipient='other-wallet'","UPDATE pending_crypto_payments SET quantity=1"] {
+            let mut c = db.lock().unwrap(); let tx = c.transaction().unwrap();
+            tx.execute(sql,[]).unwrap(); assert!(claim_crypto_catalog(&tx,"test").is_err());
+        }
+        let workers: Vec<_> = (0..8).map(|_| { let db = db.clone(); std::thread::spawn(move ||
+            claim_crypto_catalog(&db.lock().unwrap(),"test").unwrap().is_some()) }).collect();
+        assert_eq!(workers.into_iter().map(|w|usize::from(w.join().unwrap())).sum::<usize>(),1);
+        assert_eq!(db.lock().unwrap().query_row("SELECT payment_status FROM catalog_orders",[],|r|r.get::<_,String>(0)).unwrap(),"crypto_confirmed");
+        db.lock().unwrap().execute("UPDATE catalog_orders SET checkout_spec_json=NULL",[]).unwrap();
+        assert!(claim_crypto_catalog(&db.lock().unwrap(),"test").is_err());
+    }
+
+    #[test]
+    fn crypto_snapshot_and_pending_payment_roll_back_together() {
+        let db = crypto_db(); let mut c = db.lock().unwrap();
+        {
+            let tx = c.transaction().unwrap();
+            persist_crypto_snapshot(&tx,"rollback","TEST",&json!({"kind":"crypto_catalog"})).unwrap();
+            assert!(tx.execute("INSERT INTO pending_crypto_payments(unknown_column) VALUES(1)",[]).is_err());
+        }
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM catalog_orders",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    async fn crypto_gateway(posts: Arc<Mutex<Vec<Value>>>, lookup_error: bool) -> (String,tokio::task::JoinHandle<()>) {
+        use axum::routing::{get,post};
+        let received = posts.clone();
+        let router = axum::Router::new().route("/products/71",get(||async {Json(json!({"result":{
+            "product":{"id":71,"is_discontinued":false,"files":[{"type":"front"},{"type":"back"}]},
+            "variants":[{"id":4013,"product_id":71,"in_stock":true}]}}))}))
+        .route("/orders/:external",get(move |Path(external): Path<String>| {
+            let received = received.clone(); async move {
+                if lookup_error { return (StatusCode::TOO_MANY_REQUESTS,Json(json!({}))); }
+                if external.strip_prefix('@').filter(|id| !id.is_empty() && id.len()<=32).is_none() {
+                    return (StatusCode::BAD_REQUEST,Json(json!({"error":"invalid external_id"})));
+                }
+                let existing = received.lock().unwrap().last().cloned();
+                match existing {
+                    Some(body) if external == format!("@{}",body["external_id"].as_str().unwrap()) =>
+                        (StatusCode::OK,Json(json!({"result":{"id":42,"external_id":body["external_id"]}}))),
+                    Some(_) => (StatusCode::NOT_FOUND,Json(json!({}))),
+                    None => (StatusCode::NOT_FOUND,Json(json!({}))),
+                }
+            }
+        })).route("/orders",post(move |Json(body): Json<Value>| { let posts=posts.clone(); async move {
+            if body["external_id"].as_str().filter(|id| !id.is_empty() && id.len()<=32).is_none() {
+                return (StatusCode::BAD_REQUEST,Json(json!({"error":"invalid external_id"})));
+            }
+            posts.lock().unwrap().push(body);
+            (StatusCode::BAD_GATEWAY,Json(json!({"error":"accepted but response lost"})))
+        }}));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener,router).await.unwrap(); });
+        (format!("http://{addr}/orders"),task)
+    }
+
+    #[tokio::test]
+    async fn crypto_lost_response_reconciles_external_id_without_duplicate_or_catalog_reread() {
+        // Real 32-byte base58 reference: 44 chars; the DB key is 51 chars.
+        let reference = bs58::encode([255u8;32]).into_string();
+        assert_eq!(reference.len(),44);
+        let db = crypto_db(); let spec = reserve_crypto_reference(&db,&reference).await; confirm_crypto(&db);
+        let posts = Arc::new(Mutex::new(Vec::new()));
+        let (url,task) = crypto_gateway(posts.clone(),false).await;
+        let first = submit_crypto_catalog(&db,&reference,"fake",&url).await.unwrap().unwrap();
+        assert!(first.1.is_none());
+        assert!(submit_crypto_catalog(&db,&reference,"fake",&url).await.unwrap().is_none());
+        {
+            let c = db.lock().unwrap();
+            c.execute("DELETE FROM catalog_products",[]).unwrap();
+            assert!(crate::order_contract::queue_retry(&c,1).unwrap());
+        }
+        assert_eq!(submit_crypto_catalog(&db,&reference,"fake",&url).await.unwrap().unwrap().1.as_deref(),Some("42"));
+        assert!(submit_crypto_catalog(&db,&reference,"fake",&url).await.unwrap().is_none());
+        let requests = posts.lock().unwrap(); assert_eq!(requests.len(),1);
+        assert_eq!(requests[0]["external_id"],crypto_supplier_id(&reference));
+        assert_eq!(requests[0]["external_id"].as_str().unwrap().len(),32);
+        assert_eq!(requests[0]["items"][0],spec["lines"][0]["variants"]["L"]);
+        let c = db.lock().unwrap();
+        let (db_key, saved): (String,String) = c.query_row("SELECT stripe_session_id,fulfillment_request_json FROM catalog_orders",[],
+            |r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(db_key,format!("crypto:{reference}"));
+        assert_eq!(serde_json::from_str::<Value>(&saved).unwrap(),requests[0]);
+        assert_eq!(c.query_row("SELECT printful_order_id FROM pending_crypto_payments",[],|r|r.get::<_,String>(0)).unwrap(),"42");
+        assert_eq!(c.query_row("SELECT status FROM catalog_orders",[],|r|r.get::<_,String>(0)).unwrap(),"submitted");
+        task.abort();
+    }
+
+    #[test]
+    fn crypto_supplier_ids_are_stable_and_hash_full_reference() {
+        let mut ids = std::collections::HashSet::new();
+        // Valid references sharing their leading bytes must not share supplier IDs.
+        for n in 0u64..10_000 {
+            let mut bytes = [255u8;32];
+            bytes[24..].copy_from_slice(&n.to_be_bytes());
+            let reference = bs58::encode(bytes).into_string();
+            let id = crypto_supplier_id(&reference);
+            assert_eq!(id.len(),32);
+            assert!(id.bytes().all(|b| b.is_ascii_hexdigit()));
+            assert_eq!(id,crypto_supplier_id(&reference));
+            assert!(ids.insert(id));
+        }
+    }
+
+    #[tokio::test]
+    async fn crypto_recovery_preserves_preexisting_request_identity() {
+        let db = crypto_db(); let spec = reserve_crypto(&db).await; confirm_crypto(&db);
+        let original = json!({"external_id":"crypto:test","recipient":spec["shipping"],
+            "items":[spec["lines"][0]["variants"]["L"]],"confirm":true});
+        let saved = original.to_string();
+        db.lock().unwrap().execute("UPDATE catalog_orders SET fulfillment_request_json=?,status='submission_uncertain'",
+            [&saved]).unwrap();
+        assert!(crate::order_contract::queue_retry(&db.lock().unwrap(),1).unwrap());
+        // Supplier already accepted this exact old request before the ID change.
+        let posts = Arc::new(Mutex::new(vec![original]));
+        let (url,task) = crypto_gateway(posts.clone(),false).await;
+        assert_eq!(submit_crypto_catalog(&db,"test","fake",&url).await.unwrap().unwrap().1.as_deref(),Some("42"));
+        assert_eq!(posts.lock().unwrap().len(),1);
+        assert_eq!(db.lock().unwrap().query_row("SELECT fulfillment_request_json FROM catalog_orders",[],
+            |r|r.get::<_,String>(0)).unwrap(),saved);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn crypto_lookup_failure_and_legacy_missing_snapshot_never_post() {
+        let db = crypto_db(); reserve_crypto(&db).await; confirm_crypto(&db);
+        let posts = Arc::new(Mutex::new(Vec::new()));
+        let (url,task) = crypto_gateway(posts.clone(),true).await;
+        assert!(submit_crypto_catalog(&db,"test","fake",&url).await.unwrap().unwrap().1.is_none());
+        db.lock().unwrap().execute("DELETE FROM catalog_orders",[]).unwrap();
+        assert!(submit_crypto_catalog(&db,"test","fake",&url).await.is_err());
+        assert!(posts.lock().unwrap().is_empty());
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn crypto_vendor_stock_hold_survives_caller_and_releases_on_fresh_stock() {
+        use axum::routing::{get,post};
+        let stock=Arc::new(std::sync::atomic::AtomicBool::new(false));let state=stock.clone();
+        let posts=Arc::new(std::sync::atomic::AtomicUsize::new(0));let count=posts.clone();
+        let app=axum::Router::new().route("/products/71",get(move || {let s=state.clone();async move {
+            Json(json!({"result":{"product":{"id":71,"is_discontinued":false,"files":[{"type":"front"},{"type":"back"}]},
+                "variants":[{"id":4013,"product_id":71,"in_stock":s.load(std::sync::atomic::Ordering::SeqCst)}]}}))
+        }})).route("/orders/:id",get(||async {(StatusCode::NOT_FOUND,Json(json!({})))}))
+            .route("/orders",post(move || {let n=count.clone();async move {
+                n.fetch_add(1,std::sync::atomic::Ordering::SeqCst);Json(json!({"result":{"id":42}}))
+            }}));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url=format!("http://{}/orders",listener.local_addr().unwrap());
+        let task=tokio::spawn(async move {axum::serve(listener,app).await.unwrap();});
+        let db=crypto_db();reserve_crypto(&db).await;confirm_crypto(&db);
+        assert!(submit_crypto_catalog(&db,"test","fake",&url).await.unwrap().unwrap().1.is_none());
+        assert_eq!(posts.load(std::sync::atomic::Ordering::SeqCst),0);
+        assert_eq!(db.lock().unwrap().query_row("SELECT status FROM catalog_orders",[],|r|r.get::<_,String>(0)).unwrap(),"blocked_vendor_preflight");
+        stock.store(true,std::sync::atomic::Ordering::SeqCst);
+        assert!(crate::order_contract::queue_retry(&db.lock().unwrap(),1).unwrap());
+        assert_eq!(submit_crypto_catalog(&db,"test","fake",&url).await.unwrap().unwrap().1.as_deref(),Some("42"));
+        assert_eq!(posts.load(std::sync::atomic::Ordering::SeqCst),1);
+        task.abort();
+    }
 
     #[test]
     fn surcharge_three_percent_for_crypto() {
@@ -1387,6 +1821,29 @@ async fn sweep_expired_pending(db: Db, ttl_min: i64) {
     }
 }
 
+/// Recover only orders with an immutable snapshot and a validator-confirmed receipt.
+/// Includes the crash window between recording a receipt and spawning fulfillment.
+async fn retry_crypto_catalog_orders(db: &Db) -> Result<(),String> {
+    let candidates: Vec<(i64,String,String)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT o.id,p.reference,o.status FROM catalog_orders o
+            JOIN pending_crypto_payments p ON o.stripe_session_id='crypto:'||p.reference
+            WHERE p.status='confirmed' AND length(trim(COALESCE(p.tx_signature,'')))>0
+            AND length(trim(COALESCE(p.confirmed_at,'')))>0 AND o.checkout_spec_json IS NOT NULL
+            AND (o.status='checkout_pending' OR (o.retry_count<3 AND
+                (o.status IN ('failed','failed_network','failed_no_key','submission_uncertain')
+                OR (o.status IN ('submitting','sending','retry_ready') AND o.order_updated_at<datetime('now','-30 minutes')))))
+            ORDER BY o.id LIMIT 2").map_err(|e|e.to_string())?;
+        let rows = stmt.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(|e|e.to_string())?;
+        rows.collect::<Result<_,_>>().map_err(|e|e.to_string())?
+    };
+    for (id,reference,status) in candidates {
+        if status != "checkout_pending" && !crate::order_contract::queue_retry(&db.lock().unwrap(),id)? { continue; }
+        fulfill_crypto_order(db.clone(),reference).await;
+    }
+    Ok(())
+}
+
 /// Start the background cron tasks. Called once from main.rs after the
 /// router DB is initialised. Idempotent on re-call (returns early).
 pub fn start_crons(db: Db) {
@@ -1423,6 +1880,9 @@ pub fn start_crons(db: Db) {
         tokio::time::sleep(std::time::Duration::from_secs(30)).await;
         loop {
             sweep_expired_pending(db2.clone(), CRYPTO_PAYMENT_TTL_MIN).await;
+            if let Err(e) = retry_crypto_catalog_orders(&db2).await {
+                tracing::error!("[crypto/retry] {e}");
+            }
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         }
     });

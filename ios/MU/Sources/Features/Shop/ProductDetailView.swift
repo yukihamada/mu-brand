@@ -51,6 +51,8 @@ struct ProductDetailView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .foregroundStyle(.black)
+                .accessibilityIdentifier("pdp.buy")
+                .accessibilityValue(product.checkoutUrl)
 
                 // 販売者の明示 (App Review Guideline 4.9: 決済シートに出る
                 // merchant 名 = Stripe アカウント名義 "Enabler Inc." を購入前に開示)

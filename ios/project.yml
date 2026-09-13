@@ -53,13 +53,34 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - MUTests
+      - path: MUTests
+        excludes:
+          - Fixtures
+      - path: MUTests/Fixtures
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: MU
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
         PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu.tests
+
+  # Production-connected device smoke tests; stop before generation/checkout.
+  MUUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: MUUITests
+        excludes:
+          - README.md
+    dependencies:
+      - target: MU
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.wearmu.mu.uitests
+        TEST_TARGET_NAME: MU
 
 # scheme に test ターゲットを束ねて `xcodebuild -scheme MU test` を通す。
 schemes:
@@ -70,6 +91,8 @@ schemes:
     test:
       targets:
         - MUTests
+        - name: MUUITests
+          parallelizable: false
       gatherCoverageData: true
     run:
       config: Debug

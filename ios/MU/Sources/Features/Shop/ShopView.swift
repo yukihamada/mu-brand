@@ -22,6 +22,7 @@ struct ShopView: View {
                         ForEach(products) { p in
                             NavigationLink(value: p) { GridCard(product: p) }
                                 .buttonStyle(.plain)
+                                .accessibilityIdentifier("shop.product.\(p.sku)")
                                 .onAppear { if p == products.last { Task { await loadMore() } } }
                         }
                     }

@@ -41,12 +41,24 @@
       </MacroExpansion>
       <Testables>
          <TestableReference
-            skipped = "NO">
+            skipped = "NO"
+            parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "D4D69B41CDC4EBE3E241C378"
                BuildableName = "MUTests.xctest"
                BlueprintName = "MUTests"
+               ReferencedContainer = "container:MU.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "378E10B4C016A7FB25702E59"
+               BuildableName = "MUUITests.xctest"
+               BlueprintName = "MUUITests"
                ReferencedContainer = "container:MU.xcodeproj">
             </BuildableReference>
          </TestableReference>

@@ -376,23 +376,23 @@ async fn remix_royalty_pays_original_maker_once_and_skips_self_remix() {
     };
 
     // 1) 他人リミックスが¥4,900で売れた → 元作者に5% = ¥245。
-    crate::catalog::apply_remix_royalty(&db, "cs_1", &session, "MAKE-RX-TEE-rx1", 4900).await;
+    crate::catalog::apply_remix_royalty(&db, "cs_1", &session, "MAKE-RX-TEE-rx1", 4900).await.unwrap();
     assert_eq!(balance(&db, "orig@example.com"), 245, "original maker gets 5%");
 
     // 2) 同じ session の再実行(webhook リトライ) → 二重払いしない。
-    crate::catalog::apply_remix_royalty(&db, "cs_1", &session, "MAKE-RX-TEE-rx1", 4900).await;
+    crate::catalog::apply_remix_royalty(&db, "cs_1", &session, "MAKE-RX-TEE-rx1", 4900).await.unwrap();
     assert_eq!(balance(&db, "orig@example.com"), 245, "idempotent per session");
 
     // 3) 別 session の2枚目 → もう ¥245。
-    crate::catalog::apply_remix_royalty(&db, "cs_2", &session, "MAKE-RX-TEE-rx1", 4900).await;
+    crate::catalog::apply_remix_royalty(&db, "cs_2", &session, "MAKE-RX-TEE-rx1", 4900).await.unwrap();
     assert_eq!(balance(&db, "orig@example.com"), 490, "second sale pays again");
 
     // 4) 自作リミックス → 印税側は支払わない(10%側で受領済み)。
-    crate::catalog::apply_remix_royalty(&db, "cs_3", &session, "MAKE-RX-TEE-rx2", 4900).await;
+    crate::catalog::apply_remix_royalty(&db, "cs_3", &session, "MAKE-RX-TEE-rx2", 4900).await.unwrap();
     assert_eq!(balance(&db, "same@example.com"), 0, "self-remix gets no extra royalty");
 
     // 5) リミックスでない商品 → no-op。
-    crate::catalog::apply_remix_royalty(&db, "cs_4", &session, "PLAIN-TEE-1", 4900).await;
+    crate::catalog::apply_remix_royalty(&db, "cs_4", &session, "PLAIN-TEE-1", 4900).await.unwrap();
     let ledger_n: i64 = db.lock().unwrap().query_row(
         "SELECT COUNT(*) FROM mu_credit_ledger", [], |r| r.get(0)).unwrap();
     assert_eq!(ledger_n, 2, "exactly two royalty ledger rows (cs_1 + cs_2)");
@@ -402,7 +402,7 @@ async fn remix_royalty_pays_original_maker_once_and_skips_self_remix() {
         "currency": "jpy",
         "customer_details": {"email": "orig@example.com"}
     });
-    crate::catalog::apply_remix_royalty(&db, "cs_5", &self_buy, "MAKE-RX-TEE-rx1", 4900).await;
+    crate::catalog::apply_remix_royalty(&db, "cs_5", &self_buy, "MAKE-RX-TEE-rx1", 4900).await.unwrap();
     assert_eq!(balance(&db, "orig@example.com"), 490, "original maker buying their own remix pays no royalty");
 }
 

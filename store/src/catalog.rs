@@ -149,6 +149,9 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
     );
 
     // Idempotent ALTER for the V1 catalog contract additions (see
+    crate::order_contract::migrate(conn).expect("catalog order contract migration");
+
+    // Idempotent ALTER for the V1 catalog contract additions (see
     // docs/CATALOG_CONTRACT.md). Runs AFTER the CREATE TABLEs so a fresh
     // DB picks up the new columns (the ALTER is a no-op on a missing
     // table, so order matters). SQLite has no IF NOT EXISTS on ALTER —
@@ -772,48 +775,314 @@ pub fn migrate_legacy_to_catalog(conn: &rusqlite::Connection) {
         )
         .unwrap_or(0) as i64;
 
-    // collab_products → catalog_products. Legacy PK is (slug UNIQUE);
-    // synthesize "COLLAB-<PARTNER>-<SLUG>".
-    let n_collab: i64 = conn
-        .execute(
-            "INSERT OR IGNORE INTO catalog_products
+    // collab_line uses this exact canonical SKU and requires status='live'.
+    // Preserve the supplier specification, including file-level placement/options,
+    // independently of the display image. Zero is an unavailable-ID sentinel for
+    // the existing NOT NULL columns, never a substitute Printful product/variant.
+    // V2 is a one-shot ownership marker: subsequent boots must not overwrite edits.
+    // Unmarked rows are repaired ONLY if the entire old mirror fingerprint still
+    // matches, with no metadata, timestamp, integration or extra-image edits.
+    let collab_result = (|| -> rusqlite::Result<usize> {
+        let exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='collab_products')",
+            [], |r| r.get(0),
+        )?;
+        if !exists { return Ok(0); }
+        conn.execute(
+            "WITH source AS (
+                SELECT *,
+                    CASE WHEN json_valid(printful_files) THEN printful_files ELSE 'null' END AS files_json,
+                    CASE
+                      WHEN active=1 AND draft=0 AND partner_approved=1 THEN 'live'
+                      WHEN COALESCE(partner_approved,0)=0 THEN 'review'
+                      WHEN draft=1 THEN 'draft'
+                      ELSE 'approved'
+                    END AS catalog_status
+                FROM collab_products
+             )
+             INSERT INTO catalog_products
                 (sku, brand, label, description_ja, retail_price_jpy,
                  printful_product_id, printful_variant_id, printful_placement,
                  printful_print_w, printful_print_h,
                  design_file, mockup_main_file, mockup_url_external,
-                 is_active, sort_order, status, fulfillment_route, legacy_source)
+                 is_active, sort_order, status, fulfillment_route, legacy_source, meta_json)
              SELECT 'COLLAB-' || UPPER(partner) || '-' || UPPER(slug),
-                    partner,
-                    name, COALESCE(description, name), price_jpy,
-                    COALESCE(printful_product_id, 71),
-                    COALESCE(printful_variant_id, 4017),
-                    'front', 0, 0,
-                    image_url, image_url, image_url,
-                    CASE WHEN active=1 AND draft=0 THEN 1 ELSE 0 END,
-                    100,
-                    CASE
-                      WHEN active=1 AND draft=0 AND partner_approved=1 THEN 'live'
-                      WHEN partner_approved=0 THEN 'review'
-                      WHEN draft=1 THEN 'draft'
-                      ELSE 'approved'
-                    END,
-                    CASE production_route
-                      WHEN 'printful' THEN 'printful_dtg'
-                      WHEN 'sweep_manual' THEN 'manual'
-                      ELSE 'manual'
-                    END,
-                    'collab_products'
-             FROM collab_products
-             WHERE image_url IS NOT NULL AND image_url != ''",
+                     partner,
+                     name, COALESCE(description, name), price_jpy,
+                     COALESCE(printful_product_id, 0),
+                     COALESCE(printful_variant_id, 0),
+                     CASE WHEN json_type(files_json)='array' AND json_array_length(files_json)=1
+                               AND json_type(files_json,'$[0].type')='text'
+                          THEN json_extract(files_json,'$[0].type') ELSE '' END,
+                     0, 0,
+                     CASE WHEN json_type(files_json)='array' AND json_array_length(files_json)=1
+                               AND json_type(files_json,'$[0].url')='text'
+                          THEN json_extract(files_json,'$[0].url') ELSE NULL END,
+                     image_url, image_url,
+                     CASE WHEN catalog_status='live' THEN 1 ELSE 0 END,
+                     100, catalog_status,
+                     CASE production_route
+                       WHEN 'printful' THEN 'printful_dtg'
+                       WHEN 'sweep_manual' THEN 'manual'
+                       ELSE 'manual'
+                     END,
+                     'collab_products',
+                     json_object(
+                       'collab_migration_version', 2,
+                       'printful_files', json(CASE WHEN json_valid(printful_files) THEN printful_files ELSE json_quote(printful_files) END),
+                       'printful_options', json(CASE WHEN json_valid(printful_options) THEN printful_options ELSE json_quote(printful_options) END),
+                       'printful_variant_map', json(CASE WHEN json_valid(printful_variant_map) THEN printful_variant_map ELSE json_quote(printful_variant_map) END),
+                       'legacy_collab', json_object(
+                         'partner', partner, 'slug', slug, 'production_route', production_route,
+                         'printful_product_id', printful_product_id, 'printful_variant_id', printful_variant_id,
+                         'printful_files', printful_files, 'printful_options', printful_options,
+                         'printful_variant_map', printful_variant_map,
+                         'active', active, 'draft', draft, 'partner_approved', partner_approved))
+              FROM source WHERE true
+              ON CONFLICT(sku) DO UPDATE SET
+                printful_product_id=excluded.printful_product_id,
+                printful_variant_id=excluded.printful_variant_id,
+                printful_placement=excluded.printful_placement,
+                design_file=excluded.design_file,
+                is_active=excluded.is_active,
+                status=excluded.status,
+                meta_json=excluded.meta_json
+              WHERE catalog_products.legacy_source='collab_products'
+                AND (catalog_products.meta_json IS NULL OR trim(catalog_products.meta_json) IN ('','{}'))
+                AND catalog_products.updated_at IS catalog_products.created_at
+                AND catalog_products.brand IS excluded.brand
+                AND catalog_products.label IS excluded.label
+                AND catalog_products.description_ja IS excluded.description_ja
+                AND catalog_products.description_en IS NULL
+                AND catalog_products.retail_price_jpy IS excluded.retail_price_jpy
+                AND catalog_products.printful_product_id IS COALESCE(json_extract(excluded.meta_json,'$.legacy_collab.printful_product_id'),71)
+                AND catalog_products.printful_variant_id IS COALESCE(json_extract(excluded.meta_json,'$.legacy_collab.printful_variant_id'),4017)
+                AND catalog_products.printful_placement='front'
+                AND catalog_products.printful_print_w=0 AND catalog_products.printful_print_h=0
+                AND catalog_products.design_file IS excluded.mockup_main_file
+                AND catalog_products.mockup_main_file IS excluded.mockup_main_file
+                AND catalog_products.mockup_url_external IS excluded.mockup_url_external
+                AND catalog_products.printful_sync_product_id IS NULL
+                AND catalog_products.printful_sync_variant_id IS NULL
+                AND catalog_products.stripe_product_id IS NULL AND catalog_products.stripe_price_id IS NULL
+                AND catalog_products.suzuri_url IS NULL
+                AND catalog_products.sort_order=100
+                AND catalog_products.status IS excluded.status
+                AND catalog_products.fulfillment_route IS excluded.fulfillment_route
+                AND catalog_products.is_active=CASE
+                    WHEN json_extract(excluded.meta_json,'$.legacy_collab.active')=1
+                     AND json_extract(excluded.meta_json,'$.legacy_collab.draft')=0 THEN 1 ELSE 0 END
+                AND NOT EXISTS(SELECT 1 FROM catalog_product_extras WHERE sku=catalog_products.sku)",
             [],
         )
-        .unwrap_or(0) as i64;
+    })();
+    let n_collab = match collab_result {
+        Ok(n) => n as i64,
+        Err(e) => {
+            tracing::error!("[catalog/migrate] collab migration failed: {e}");
+            0
+        }
+    };
 
     if n_proposal + n_collab > 0 {
         tracing::info!(
             "[catalog/migrate] phase A: proposal_skus={} collab_products={} mirrored into catalog_products",
             n_proposal, n_collab
         );
+    }
+}
+
+#[cfg(test)]
+mod collab_migration_tests {
+    use super::{ensure_schema, migrate_legacy_to_catalog};
+    use rusqlite::{params, Connection};
+    use serde_json::{json, Value};
+
+    fn database() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&conn);
+        conn.execute_batch("CREATE TABLE collab_products (
+            slug TEXT UNIQUE, partner TEXT, name TEXT, description TEXT, price_jpy INTEGER,
+            image_url TEXT, printful_product_id INTEGER, printful_variant_id INTEGER,
+            active INTEGER, draft INTEGER, partner_approved INTEGER, production_route TEXT,
+            printful_files TEXT, printful_options TEXT, printful_variant_map TEXT);").unwrap();
+        conn
+    }
+
+    fn seed(conn: &Connection) {
+        // Existing Nakamura sample slug + supplier specification from main.rs.
+        conn.execute("INSERT INTO collab_products VALUES (
+            'nakamura-camp-tee','nakamura','Camp Tee',NULL,8800,'https://example.com/mockup.jpg',
+            71,4011,1,0,1,'printful',?,?,?)", params![
+            r#"[{"type":"embroidery_chest_left","url":"https://lifestyle.wearmu.com/kokon/_logo_v3b.png"}]"#,
+            r##"[{"id":"thread_colors","value":["#FFD700"]}]"##,
+            r#"{"S":4011,"M":4012,"L":4013,"OS":4012,"ONE SIZE":4012}"#,
+        ]).unwrap();
+    }
+
+    fn old_mirror(conn: &Connection) {
+        conn.execute("INSERT INTO catalog_products
+            (sku,brand,label,description_ja,retail_price_jpy,printful_product_id,printful_variant_id,
+             printful_placement,design_file,mockup_main_file,mockup_url_external,is_active,status,
+             fulfillment_route,legacy_source)
+            SELECT 'COLLAB-'||UPPER(partner)||'-'||UPPER(slug),partner,name,COALESCE(description,name),
+             price_jpy,COALESCE(printful_product_id,71),COALESCE(printful_variant_id,4017),'front',
+             image_url,image_url,image_url,CASE WHEN active=1 AND draft=0 THEN 1 ELSE 0 END,
+             CASE WHEN active=1 AND draft=0 AND partner_approved=1 THEN 'live'
+                  WHEN partner_approved=0 THEN 'review' WHEN draft=1 THEN 'draft' ELSE 'approved' END,
+             CASE production_route WHEN 'printful' THEN 'printful_dtg' ELSE 'manual' END,'collab_products'
+            FROM collab_products", []).unwrap();
+    }
+
+    fn meta(conn: &Connection) -> Value {
+        let raw: String = conn.query_row("SELECT meta_json FROM catalog_products", [], |r| r.get(0)).unwrap();
+        serde_json::from_str(&raw).unwrap()
+    }
+
+    fn row(conn: &Connection) -> Vec<rusqlite::types::Value> {
+        let mut stmt = conn.prepare("SELECT * FROM catalog_products ORDER BY sku").unwrap();
+        let columns = stmt.column_count();
+        stmt.query_row([], |r| (0..columns).map(|i| r.get(i)).collect()).unwrap()
+    }
+
+    #[test]
+    fn approved_sample_resolves_canonical_sku_and_exact_embroidery_spec() {
+        let conn = database();
+        seed(&conn);
+        old_mirror(&conn);
+        migrate_legacy_to_catalog(&conn);
+        let fields: (String, String, String, String) = conn.query_row(
+            "SELECT sku,status,design_file,printful_placement FROM catalog_products", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)),
+        ).unwrap();
+        assert_eq!(fields, ("COLLAB-NAKAMURA-NAKAMURA-CAMP-TEE".into(), "live".into(),
+            "https://lifestyle.wearmu.com/kokon/_logo_v3b.png".into(), "embroidery_chest_left".into()));
+        let line = crate::order_contract::collab_line(&conn,"nakamura","nakamura-camp-tee","M",1,8800,crate::order_contract::OrderPurpose::Sale).unwrap();
+        let m = meta(&conn);
+        assert_eq!(line["variants"]["M"]["files"], m["printful_files"]);
+        assert_eq!(line["variants"]["M"]["options"], m["printful_options"]);
+        assert_eq!(line["variant_map"], m["printful_variant_map"]);
+        assert_eq!(line["variants"]["M"]["variant_id"], 4012);
+        assert_eq!(m["collab_migration_version"], 2);
+        let before = row(&conn);
+        migrate_legacy_to_catalog(&conn);
+        assert_eq!(row(&conn), before);
+    }
+
+    #[tokio::test]
+    async fn migrated_single_and_multifile_reach_canonical_shop_checkout_unchanged() {
+        for multi in [false,true] {
+            let conn=database(); seed(&conn);
+            if multi {
+                conn.execute("UPDATE collab_products SET printful_files=?",[
+                    r#"[{"type":"front","url":"https://example.test/front.png","position":{"left":12,"top":34}},
+                       {"type":"back","url":"https://example.test/back.png","options":[{"id":"layer","value":"back"}]}]"#]).unwrap();
+            }
+            migrate_legacy_to_catalog(&conn);
+            let m=meta(&conn);
+            let db=std::sync::Arc::new(std::sync::Mutex::new(conn));
+            let line=super::checkout_catalog_line(&db,"COLLAB-NAKAMURA-NAKAMURA-CAMP-TEE",1,8800,true,None).await.unwrap();
+            assert_eq!(line["variants"]["M"]["files"],m["printful_files"]);
+            assert_eq!(line["variants"]["M"]["options"],m["printful_options"]);
+            assert_eq!(line["variant_map"],m["printful_variant_map"]);
+            let size=if line.get("size_field").is_some() { json!([{"key":"size","dropdown":{"value":"M"}}]) } else { json!([]) };
+            let session=json!({"currency":"jpy","custom_fields":size,"line_items":{"data":[{"quantity":1,"price":{"currency":"jpy","unit_amount":8800}}]}});
+            let items=crate::order_contract::purchased_items(&json!({"lines":[line]}),&session).unwrap();
+            assert_eq!(items[0]["files"],m["printful_files"]);
+            assert_eq!(items[0]["variant_id"],4012);
+        }
+    }
+
+    #[test]
+    fn multifile_snapshot_keeps_positions_options_and_raw_bytes_without_design_fallback() {
+        let conn = database();
+        seed(&conn);
+        let files = r#"[ {"type":"front","url":"https://example.com/front.png","position":{"left":12,"top":34},"options":[{"id":"foo","value":true}]}, {"type":"back","url":"https://example.com/back.png"} ]"#;
+        conn.execute("UPDATE collab_products SET printful_files=?, image_url=NULL", [files]).unwrap();
+        migrate_legacy_to_catalog(&conn);
+        let m = meta(&conn);
+        assert_eq!(m["printful_files"], serde_json::from_str::<Value>(files).unwrap());
+        assert_eq!(m["legacy_collab"]["printful_files"], files);
+        let fields: (Option<String>, String) = conn.query_row(
+            "SELECT design_file,printful_placement FROM catalog_products", [], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).unwrap();
+        assert_eq!(fields, (None, String::new()));
+        let line = crate::order_contract::collab_line(&conn,"nakamura","nakamura-camp-tee","M",1,8800,crate::order_contract::OrderPurpose::Sale).unwrap();
+        assert_eq!(line["variants"]["M"]["files"], m["printful_files"]);
+    }
+
+    #[test]
+    fn approval_and_active_alias_match_for_new_and_old_rows() {
+        for old in [false, true] {
+            for (active, draft, approved, status) in [
+                (1,0,0,"review"), (1,1,0,"review"), (1,1,1,"draft"),
+                (0,0,1,"approved"), (0,1,1,"draft"), (1,0,1,"live"),
+            ] {
+                let conn = database();
+                seed(&conn);
+                conn.execute("UPDATE collab_products SET active=?,draft=?,partner_approved=?",
+                    params![active,draft,approved]).unwrap();
+                if old { old_mirror(&conn); }
+                migrate_legacy_to_catalog(&conn);
+                let actual: (String, i64) = conn.query_row("SELECT status,is_active FROM catalog_products", [],
+                    |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+                assert_eq!(actual, (status.into(), i64::from(status == "live")));
+                assert_eq!(meta(&conn)["collab_migration_version"], 2);
+                assert_eq!(crate::order_contract::collab_line(&conn,"nakamura","nakamura-camp-tee","M",1,8800,crate::order_contract::OrderPurpose::Sale).is_ok(), status == "live");
+            }
+        }
+    }
+
+    #[test]
+    fn missing_or_malformed_spec_is_retained_without_fabricated_vendor_ids() {
+        for files in [None, Some("[broken"), Some("[]")] {
+            let conn = database();
+            seed(&conn);
+            conn.execute("UPDATE collab_products SET printful_product_id=NULL,printful_variant_id=NULL,
+                printful_files=?,printful_variant_map=NULL,printful_options=NULL", [files]).unwrap();
+            old_mirror(&conn);
+            migrate_legacy_to_catalog(&conn);
+            let actual: (i64, i64, Option<String>, String) = conn.query_row(
+                "SELECT printful_product_id,printful_variant_id,design_file,printful_placement FROM catalog_products",
+                [], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).unwrap();
+            assert_eq!(actual, (0,0,None,String::new()));
+            let m = meta(&conn);
+            assert_eq!(m["legacy_collab"]["printful_files"], json!(files));
+            assert_eq!(m["printful_variant_map"], Value::Null);
+            assert!(crate::order_contract::collab_line(&conn,"nakamura","nakamura-camp-tee","M",1,8800,crate::order_contract::OrderPurpose::Sale).is_err());
+        }
+    }
+
+    #[test]
+    fn modern_edits_and_other_provenance_are_never_overwritten() {
+        for edit in [
+            "UPDATE catalog_products SET design_file='https://example.com/new.png'",
+            "UPDATE catalog_products SET label='Edited'",
+            "UPDATE catalog_products SET retail_price_jpy=9999",
+            "UPDATE catalog_products SET status='retired',is_active=0",
+            "UPDATE catalog_products SET meta_json='{\"printful_files\":[]}'",
+            "UPDATE catalog_products SET meta_json='{\"collab_migration_version\":2}'",
+            "UPDATE catalog_products SET updated_at='2099-01-01'",
+            "UPDATE catalog_products SET printful_sync_variant_id=123",
+            "UPDATE catalog_products SET legacy_source='make'",
+            "INSERT INTO catalog_product_extras(sku,label,image_url) SELECT sku,'design','https://example.com/new.png' FROM catalog_products",
+        ] {
+            let conn = database();
+            seed(&conn);
+            old_mirror(&conn);
+            conn.execute(edit, []).unwrap();
+            let before = row(&conn);
+            migrate_legacy_to_catalog(&conn);
+            assert_eq!(row(&conn), before, "{edit}");
+        }
+        let conn = database();
+        seed(&conn);
+        migrate_legacy_to_catalog(&conn);
+        conn.execute("UPDATE catalog_products SET label='Modern',status='retired',is_active=0", []).unwrap();
+        conn.execute("UPDATE collab_products SET name='Legacy changed',printful_files='[]'", []).unwrap();
+        let before = row(&conn);
+        migrate_legacy_to_catalog(&conn);
+        assert_eq!(row(&conn), before);
     }
 }
 
@@ -1043,8 +1312,19 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // 301 = Men's AOP Rash Guard, 302/368/369/836 = sister AOP products
         // (per fulfill_catalog_order's stitch_color guard at line 2736).
         // 384 = AOP kids crew tee (front/back/両袖) も同じ4パネル cover-fill。
-        // 594 = AOP Gym Bag も同じ4パネル (front/back/両袖)
-        301 | 302 | 368 | 369 | 836 | 384 | 594 => &["front", "back", "sleeve_left", "sleeve_right"],
+        301 | 302 | 368 | 369 | 836 | 384 => &["front", "back", "sleeve_left", "sleeve_right"],
+        // GET /products snapshots 2026-09-13: exterior AOP panels / set members.
+        // Public files describe supported surfaces, not authenticated printfile
+        // dimensions or mandatory uploads. Exclude optional branding and inside
+        // pockets; null additional_price alone does NOT make a file mandatory.
+        594 => &["front", "back", "bottom", "side_right", "side_left", "pocket"],
+        279 => &["front", "top", "bottom"],
+        350 => &["front", "top", "back"],
+        214 | 215 | 693 | 745 | 746 | 764 | 964 => &["front", "back"],
+        750 => &["front", "back", "default"], // leash (both sides) + collar
+        660 => &["front", "first", "second", "third", "fourth"],
+        // One-image MAKE cannot supply independently designed book pages.
+        1563 | 1564 => &[],
         // 1 = matte poster, 19 = 11oz mug, 358 = kiss-cut sticker,
         // 601 = Tough iPhone Case — Printful's mockup-generator rejects
         // "front" for these ("File type front is not allowed", MG-4); their
@@ -1059,10 +1339,11 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         // 一人暮らし+犬セット: pet bowl / coffee tumbler のみ単一 printfile "default"。
         // 他 (bandana/feeding mat/sweater/collar/duvet/hand towel/ornament/
         // greeting card/planner) は "front" (printfiles で検証 2026-09-11)。
-        | 539 | 515 | 385 | 634
-        | 678 | 585 => &["default"],
-        // 654 = AOP reversible bucket hat。"front"/"default" は無効で外面のみ有効。
-        654 => &["outside_front"],
+        | 515 | 385 | 634
+        | 678 | 585 | 761 | 853 | 433 | 837 | 407 | 632 | 395 | 938
+        | 786 | 2 | 973 => &["default"],
+        // Reversible hat: both sides, excluding optional branding labels.
+        654 => &["outside_front", "outside_back", "inside_front", "inside_back"],
         // 99 = embroidered cap — its only valid placement is the embroidery
         // front zone, not "front". build_printful_item (fulfillment) and
         // generate_onbody_mockup both read this, so the cap stitches + mocks
@@ -1075,7 +1356,7 @@ pub(crate) fn placements_for_product(printful_product_id: i64) -> &'static [&'st
         809 => &["embroidery_front"],
         536 | 635 => &["embroidery_corner_right"],
         895 => &["leg_front_right"],
-        709 => &["first"],
+        709 => &["first", "second", "third", "fourth"],
         _ => &["front"],
     }
 }
@@ -1402,7 +1683,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         retail_jpy: 4900,
         spec_html: "Bella+Canvas 3001 unisex tee · Black · 4.2 oz (142 gsm) · \
                     100% airlume combed ringspun cotton · DTG print 30×30cm front · \
-                    machine washable · sourced + printed in EU",
+                    machine washable · blank sourced from Nicaragua, Mexico, Honduras or US",
     },
     ProductSpec {
         kind: "tee_white",
@@ -1417,7 +1698,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         retail_jpy: 4900,
         spec_html: "Bella+Canvas 3001 unisex tee · White · 4.2 oz (142 gsm) · \
                     100% airlume combed ringspun cotton · DTG print 30×30cm front · \
-                    machine washable · sourced + printed in EU",
+                    machine washable · blank sourced from Nicaragua, Mexico, Honduras or US",
     },
     ProductSpec {
         kind: "rashguard_ls",
@@ -1425,9 +1706,8 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 9328, // White M
         placement: "front",
         retail_jpy: 9800,
-        spec_html: "Men's all-over-print long-sleeve rashguard · 82% polyester / 18% spandex · \
-                    UPF 50+ UV protection · 4-way stretch · flatlock seams (no chafe) · \
-                    sublimation print (won't fade or peel) · IBJJF gi/no-gi compliant fit",
+        spec_html: "Men's all-over-print long-sleeve rashguard · US/Mexico: 75% recycled polyester / 25% elastane · \
+                    Latvia: 82% polyester / 18% elastane · 4-way stretch · flat seams · sublimation print",
     },
     ProductSpec {
         kind: "rashguard_black",
@@ -1439,9 +1719,9 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 9328,
         placement: "front",
         retail_jpy: 9800,
-        spec_html: "Men's all-over-print long-sleeve rashguard · 黒ベース · 82% polyester / 18% spandex · \
-                    UPF 50+ · 4-way stretch · flatlock seams · sublimation print (full black canvas) · \
-                    IBJJF gi/no-gi compliant",
+        spec_html: "Men's all-over-print long-sleeve rashguard · 黒デザイン・白い生地に昇華印刷 · \
+                    US/Mexico: 75% recycled polyester / 25% elastane · Latvia: 82% polyester / 18% elastane · \
+                    4-way stretch · flat seams · sublimation print",
     },
     ProductSpec {
         kind: "hoodie",
@@ -1470,7 +1750,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         // 'front', see store/migrations/20260523*.sql).
         printful_product_id: 19,
         printful_variant_id: 1320,
-        placement: "front",
+        placement: "default",
         retail_jpy: 2200,
         spec_html: "11oz 白磁マグ · 光沢仕上げ · 電子レンジ・食洗機対応 · \
                     ラップ印刷(取っ手まわり以外の全面) · 縁まで鮮やかな発色 · 1点ずつ印刷",
@@ -1482,7 +1762,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         // (358/10164, placement 'front').
         printful_product_id: 358,
         printful_variant_id: 10164,
-        placement: "front",
+        placement: "default",
         retail_jpy: 800,
         spec_html: "キスカット ステッカー · 4×4インチ(約10cm) · 耐水・耐光ビニール · \
                     強粘着 · 屋外耐候 · ノートPC/水筒/ギアに貼れる",
@@ -1509,15 +1789,15 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         // AS Colour 1001 Cotton Tote — product 641 / variant 16287, placement
         // "front". Verified live: JF-TOTE-01 / KK-TOTE-01 are synced to Printful
         // (sync_product_id 434208580) with exactly this product/variant/placement.
-        // DTG print on natural cotton — the gym-bag for hauling a gi.
+        // GET /products/641: default variant 16287 is Black, not Natural.
         // placements_for_product(641) → ["front"], so the stored placement is honored.
         printful_product_id: 641,
         printful_variant_id: 16287,
         placement: "front",
         retail_jpy: 3800,
-        spec_html: "AS Colour 1001 コットントート · ナチュラル無染コットン100% · \
-                    約 W37×H42cm · DTG プリント前面 · 道着・ギア・本が入る大容量 · \
-                    肩掛け対応ロングハンドル · 1点ずつ印刷・Printful EU/US 製造",
+        spec_html: "AS Colour 1001 コットントート · Black（黒）· コットン100% · 320 gsm · \
+                    約 W42×H42cm · DTG プリント前面 · 補強ショルダーストラップ · \
+                    無地製品の調達国：中国 · 1点ずつ印刷",
     },
     ProductSpec {
         kind: "tank",
@@ -1532,7 +1812,7 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         retail_jpy: 4200,
         spec_html: "AS Colour 5025 ドロップアーム タンクトップ · Black · コットン100% · \
                     ドロップアームホール(可動域広め) · DTG プリント前面 · \
-                    ノーギ/筋トレ/夏稽古向け · 1点ずつ印刷・Printful EU/US 製造",
+                    無地製品の調達国：バングラデシュ · 配送先はオーストラリア・ニュージーランド限定",
     },
     ProductSpec {
         kind: "cap",
@@ -1676,8 +1956,8 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         kind: "bottle",
         printful_product_id: 848, printful_variant_id: 22016, placement: "default",
         retail_jpy: 5800,
-        spec_html: "CamelBak Thrive ウォーターボトル · プリント · 保冷/携帯 · \
-                    稽古/通勤/アウトドアに · Printful 製造",
+        spec_html: "CamelBak Thrive ウォーターボトル · 25oz（739ml）· Tritan Renew プラスチック（50%再生素材）· \
+                    フリップストロー・持ち運びハンドル · プリント · Printful 製造",
     },
     ProductSpec {
         kind: "mouse_pad",
@@ -1852,8 +2132,8 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 7290, // M
         placement: "default",
         retail_jpy: 3200,
-        spec_html: "全面プリント ソックス · 昇華プリント(色褪せ・剥がれなし) · \
-                    足裏まで一面デザイン · ポリ混 · 1点ずつ製造・Printful 製造",
+        spec_html: "レッグ部分プリント ソックス · 足部は黒・クッション付き · 昇華プリント · \
+                    ナイロン60%・コットン22%・スパンデックス18% · Printful 製造",
     },
     ProductSpec {
         kind: "drawstring_bag",
@@ -2016,8 +2296,8 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 24305, // One size
         placement: "front",
         retail_jpy: 2800,
-        spec_html: "ウィークリープランナー(リングノート) · 罫線 · \
-                    予定/犬の記録に · Printful 製造",
+        spec_html: "罫線入りリングノート · 118ページ（59枚）· 約15.2×20.3cm · \
+                    表紙プリント・週間レイアウトなし · Printful 製造",
     },
     // ── 一人暮らし+犬 追加 (AOP/embroidery/DTG 既存ルートに乗る) ──────
     ProductSpec {
@@ -2030,11 +2310,11 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
     },
     ProductSpec {
         kind: "dog_tee",
-        printful_product_id: 384, // AOP Kids Crew Neck (size 6) — 小型犬ウェア代用
+        printful_product_id: 384, // Human Kids Crew Neck, NOT dog clothing. Blocked by kind_availability.
         printful_variant_id: 10821,
         placement: "front",
         retail_jpy: 4900,
-        spec_html: "犬用Tシャツ(小型犬) · 全面プリント · 愛犬の名前/柄入りに · Printful 製造",
+        spec_html: "販売停止：登録された製造元商品は人間用キッズTシャツです。犬用ウェアではありません。",
     },
     // ── 一人暮らし+犬 第2弾 (2026-09-11) ────────────────────────────────
     ProductSpec {
@@ -2139,7 +2419,8 @@ const PRODUCT_SPECS: &[ProductSpec] = &[
         printful_variant_id: 17599, // One size White
         placement: "front",
         retail_jpy: 3200,
-        spec_html: "犬用クリスマス靴下 · 全面プリント · 名前入りに · Printful 製造",
+        spec_html: "クリスマスストッキング（吊り下げ飾り）· 約17.8×45.7cm · ポリエステル100% · \
+                    前面プリント・裏面オフホワイト · 着用する靴下ではありません · Printful 製造",
     },
     ProductSpec {
         kind: "pennant",
@@ -2968,7 +3249,7 @@ pub async fn design_remix_create(
             (db.clone(), sku.clone(), url.clone(), display.clone(), hook.clone());
         tokio::spawn(async move {
             match crate::gemini::call_gemini_judge(&url_s, &title_s, &hook_s).await {
-                Ok(score) => store_score(&db_s, &sku_s, &score),
+                Ok(score) => store_score_for_design(&db_s, &sku_s, &url_s, &score),
                 Err(e) => tracing::warn!("[catalog/score] remix {} judge failed: {}", sku_s, e),
             }
         });
@@ -3271,6 +3552,8 @@ pub async fn generate_one(
     kind: &str,
     seed: &str,
 ) -> Result<String, String> {
+    let availability = kind_availability(kind, Some("JP"));
+    if let Some(reason) = availability.unavailable_reason_ja { return Err(reason.to_string()); }
     let (theme, spec) = theme_and_spec(theme_slug, kind)
         .ok_or_else(|| format!("unknown theme/kind: {}/{}", theme_slug, kind))?;
     let sku = format!(
@@ -3571,6 +3854,14 @@ pub async fn generate_lifestyle_photo(
     kind: String,
     variant: u32,
 ) -> Result<(), String> {
+    let snapshot = {
+        let conn = db.lock().unwrap();
+        let brand: String = conn.query_row("SELECT brand FROM catalog_products WHERE sku=?",
+            rusqlite::params![&sku], |r| r.get(0)).map_err(|e| e.to_string())?;
+        // MAKE already queues an authoritative product/variant/position render.
+        if brand == "minna" { return Ok(()); }
+        preview_snapshot(&conn, &sku)?
+    };
     let scene = scene_for_kind(&kind, variant);
     let brand_ctx = brand_context(&theme_slug);
     // Budget check (¥6 per Gemini image).
@@ -3637,11 +3928,12 @@ pub async fn generate_lifestyle_photo(
         crate::gemini::call_gemini(&prompt).await
     }
     .map_err(|e| format!("gemini: {}", e))?;
-    let key = format!("catalog/lifestyle/{}-v{}.png", sku, variant);
+    let key = format!("catalog/lifestyle/{}-v{}-{}.png", sku, variant, uuid::Uuid::new_v4());
     let url = crate::store_r2_bytes(&key, &img.bytes, &img.mime).await
         .ok_or_else(|| "R2 upload failed".to_string())?;
     {
         let conn = db.lock().unwrap();
+        if preview_snapshot(&conn, &sku)? != snapshot { return Err("superseded lifestyle".into()); }
         let _ = conn.execute(
             "INSERT INTO catalog_product_extras (sku, label, image_url, sort_order)
              VALUES (?, ?, ?, ?)",
@@ -3803,6 +4095,10 @@ async fn composite_lifestyle_to_r2(
     kind: &str,
     design_file: &str,
 ) -> Result<String, String> {
+    let snapshot = preview_snapshot(&db.lock().unwrap(), sku)?;
+    if snapshot.design != design_file || snapshot.position.is_some() {
+        return Err("composite base has no calibration for this design/position".into());
+    }
     let bases = lifestyle_bases(kind);
     if bases.is_empty() {
         return Err(format!("kind {} not a chest-print item", kind));
@@ -3818,11 +4114,12 @@ async fn composite_lifestyle_to_r2(
         .bytes().await.map_err(|e| format!("read design: {}", e))?
         .to_vec();
     let out = compose_lifestyle_png(&design_png, &base_png, b)?;
-    let key = format!("catalog/lifestyle/{}-fit.png", sku);
+    let key = format!("catalog/lifestyle/{}-fit-{}.png", sku, uuid::Uuid::new_v4());
     let url = crate::store_r2_bytes(&key, &out, "image/png").await
         .ok_or_else(|| "R2 upload failed".to_string())?;
     {
         let conn = db.lock().unwrap();
+        if preview_snapshot(&conn, sku)? != snapshot { return Err("superseded composite".into()); }
         let _ = conn.execute(
             "UPDATE catalog_product_extras SET image_url=? WHERE sku=? AND lower(label) LIKE 'lifestyle%'",
             rusqlite::params![&url, sku],
@@ -4234,9 +4531,64 @@ async fn sock_worn_subimage(db: Db, sku: String, design_url: String) -> Result<(
     Ok(())
 }
 
+/// Identity captured before rendering; compare under the write lock after awaits.
+#[derive(Clone, Debug, PartialEq)]
+struct PreviewSnapshot {
+    design: String,
+    revision: i64,
+    product: i64,
+    variant: i64,
+    position: Option<serde_json::Value>,
+}
+
+fn preview_snapshot(conn: &rusqlite::Connection, sku: &str) -> Result<PreviewSnapshot, String> {
+    conn.query_row(
+        "SELECT COALESCE(design_file,''), COALESCE(meta_json,'{}'), printful_product_id, printful_variant_id
+         FROM catalog_products WHERE sku=?",
+        rusqlite::params![sku], |r| {
+            let meta: serde_json::Value = serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or_default();
+            Ok(PreviewSnapshot { design: r.get(0)?, revision: meta["preview_revision"].as_i64().unwrap_or(0),
+                product: r.get(2)?, variant: r.get(3)?, position: meta.get("print_position_box").cloned() })
+        },
+    ).map_err(|e| e.to_string())
+}
+
+/// Caller holds the same DB lock/transaction as its design/position update.
+pub(crate) fn invalidate_preview(conn: &rusqlite::Connection, sku: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM catalog_product_extras WHERE sku=? AND
+        (lower(label) LIKE 'lifestyle%' OR lower(label) LIKE 'mockup%' OR lower(label) LIKE 'concept_ai%' OR label IN ('flatlay','worn'))",
+        rusqlite::params![sku])?;
+    conn.execute("UPDATE catalog_products SET mockup_url_external=NULL, meta_json=json_remove(
+        json_set(COALESCE(meta_json,'{}'), '$.preview_revision',
+        COALESCE(json_extract(meta_json,'$.preview_revision'),0)+1), '$.preview') WHERE sku=?",
+        rusqlite::params![sku])?;
+    Ok(())
+}
+
+fn publish_preview(db: &Db, sku: &str, expected: &PreviewSnapshot, url: &str, kind: &str) -> Result<(), String> {
+    let mut conn = db.lock().unwrap();
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if preview_snapshot(&tx, sku)? != *expected { return Err("superseded preview".into()); }
+    // A fallback completing later must not downgrade an authoritative preview.
+    if kind != "printful" {
+        let authoritative: bool = tx.query_row("SELECT COALESCE(json_extract(meta_json,'$.preview.kind')='printful',0)
+            FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0)).map_err(|e| e.to_string())?;
+        if authoritative { return Ok(()); }
+    }
+    let preview = serde_json::json!({"kind":kind,"revision":expected.revision,"design_url":expected.design,
+        "product_id":expected.product,"variant_id":expected.variant,"position":expected.position,"url":url});
+    tx.execute("UPDATE catalog_products SET mockup_url_external=?,
+        meta_json=json_set(COALESCE(meta_json,'{}'),'$.preview',json(?)) WHERE sku=?",
+        rusqlite::params![url, preview.to_string(), sku]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM catalog_product_extras WHERE sku=? AND label='mockup_0'", rusqlite::params![sku]).map_err(|e| e.to_string())?;
+    tx.execute("INSERT INTO catalog_product_extras(sku,label,image_url,sort_order) VALUES (?,'mockup_0',?,0)",
+        rusqlite::params![sku,url]).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
 /// Download the design, compose a local card mockup, mirror to R2 and swap
 /// `mockup_url_external`. The MU-side fallback path for `generate_onbody_mockup`.
-async fn local_card_to_r2(db: Db, sku: String, design_url: String) -> Result<(), String> {
+async fn local_card_to_r2(db: Db, sku: String, design_url: String, snapshot: &PreviewSnapshot) -> Result<(), String> {
     if !design_url.starts_with("http") {
         return Err("no design url for local card".into());
     }
@@ -4250,29 +4602,17 @@ async fn local_card_to_r2(db: Db, sku: String, design_url: String) -> Result<(),
         .map_err(|e| format!("read design: {}", e))?
         .to_vec();
     let card = compose_card_mockup(&bytes, kind_from_sku(&sku))?;
-    let r2_key = format!("catalog/mockups/{}.png", sku);
+    let r2_key = format!("catalog/mockups/{}-{}.png", sku, uuid::Uuid::new_v4());
     let r2_url = crate::store_r2_bytes(&r2_key, &card, "image/png")
         .await
         .ok_or_else(|| "R2 upload failed".to_string())?;
-    {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
-            rusqlite::params![&r2_url, &sku],
-        );
-    }
+    publish_preview(&db, &sku, snapshot, &r2_url, "card")?;
     tracing::info!("[catalog/mockup] local card sku={} → {}", sku, r2_url);
     Ok(())
 }
 
-/// On-body mockup entry point. For `socks` we render an MU-native sock-shaped
-/// mockup first (deterministic, offline) — Printful's mockup-generator only
-/// returns a flat all-over print panel for socks, which doesn't read as a sock.
-/// Otherwise tries Printful's mockup-generator (real garment render); if
-/// Printful can't do this product — no `position` geometry for the kind, AOP,
-/// timeout, or a digital/manual kind with `printful_product <= 0` — falls back
-/// to a MU-side local card so the shop never shows a bare design. Call sites
-/// are unchanged.
+/// Version-guarded real product render. If the vendor cannot render this
+/// product, publish a clearly typed reference card, never an AI-invented hero.
 pub async fn generate_onbody_mockup(
     db: Db,
     sku: String,
@@ -4280,17 +4620,13 @@ pub async fn generate_onbody_mockup(
     printful_variant: i64,
     design_url: String,
 ) -> Result<(), String> {
-    if kind_from_sku(&sku) == "socks" {
-        match mu_sock_mockup(db.clone(), sku.clone(), design_url.clone()).await {
-            Ok(()) => return Ok(()),
-            Err(e) => tracing::warn!(
-                "[catalog/mockup] MU sock render failed sku={} ({}) → printful/card fallback", sku, e
-            ),
-        }
+    let snapshot = preview_snapshot(&db.lock().unwrap(), &sku)?;
+    if snapshot.design != design_url || snapshot.product != printful_product || snapshot.variant != printful_variant {
+        return Err("superseded preview input".into());
     }
     if printful_product > 0 {
         match printful_onbody_mockup(
-            db.clone(), sku.clone(), printful_product, printful_variant, design_url.clone(),
+            db.clone(), sku.clone(), printful_product, printful_variant, design_url.clone(), &snapshot,
         ).await {
             Ok(()) => return Ok(()),
             Err(e) => tracing::warn!(
@@ -4298,7 +4634,7 @@ pub async fn generate_onbody_mockup(
             ),
         }
     }
-    local_card_to_r2(db, sku, design_url).await
+    local_card_to_r2(db, sku, design_url, &snapshot).await
 }
 
 /// Async background task: render via `printful_render_mockup_bytes`, upload
@@ -4312,19 +4648,12 @@ async fn printful_onbody_mockup(
     printful_product: i64,
     printful_variant: i64,
     design_url: String,
+    snapshot: &PreviewSnapshot,
 ) -> Result<(), String> {
     // /make/edit・/api/agent の位置指定: 保存時に aspect-fit 解決済みのボックスが
     // meta_json.print_position_box にあれば、モックアップもそれを使う
     // (実発注 build_printful_item と同じボックス = WYSIWYG)。
-    let custom_pos: Option<serde_json::Value> = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT json_extract(COALESCE(meta_json,'{}'),'$.print_position_box')
-             FROM catalog_products WHERE sku=?",
-            rusqlite::params![&sku],
-            |r| r.get::<_, Option<String>>(0),
-        ).ok().flatten().and_then(|s| serde_json::from_str(&s).ok())
-    };
+    let custom_pos = snapshot.position.clone();
 
     let (mockup_bytes, printful_tmp_url) = printful_render_mockup_bytes(
         printful_product, printful_variant, &design_url, custom_pos,
@@ -4333,20 +4662,14 @@ async fn printful_onbody_mockup(
 
     // Mirror to R2 so the URL survives Printful's ~24h presign and
     // becomes part of the catalog forever.
-    let r2_key = format!("catalog/mockups/{}.png", sku);
+    let r2_key = format!("catalog/mockups/{}-{}.png", sku, uuid::Uuid::new_v4());
     let r2_url = crate::store_r2_bytes(&r2_key, &mockup_bytes, "image/png")
         .await
-        .unwrap_or(printful_tmp_url);
+        .ok_or_else(|| format!("R2 upload failed for {}", printful_tmp_url))?;
 
     // Swap mockup_url_external. mockup_main_file (the design URL) stays
     // as the fallback for Printful fulfillment files.
-    {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "UPDATE catalog_products SET mockup_url_external=? WHERE sku=?",
-            rusqlite::params![&r2_url, &sku],
-        );
-    }
+    publish_preview(&db, &sku, snapshot, &r2_url, "printful")?;
     tracing::info!("[catalog/mockup] OK sku={} → {}", sku, r2_url);
     {
         let conn = db.lock().unwrap();
@@ -4402,96 +4725,11 @@ async fn printful_render_mockup_bytes(
     //    Mug/sticker have their own printfile geometry (the tee 1800×2400
     //    box overflows them → "position out of print area"), so size the
     //    design to each product's actual printfile.
-    let position = match printful_product {
-        // 11oz mug: wrap printfile 2700×1050. The default mockup's visible
-        // front face sits ~70% across the wrap, so left=1400 (not center
-        // 850) lands the square artwork dead-centre on the photographed
-        // face — verified against gt-929310805 (left=850 / 1850 both clip).
-        19 => serde_json::json!({
-            "area_width": 2700, "area_height": 1050,
-            "width": 950,       "height": 950,
-            "top": 50,          "left": 1400
-        }),
-        // Matte poster 18×24: printfile 7200×5400 (landscape, can_rotate).
-        // Centre the square artwork at full height.
-        1 => serde_json::json!({
-            "area_width": 7200, "area_height": 5400,
-            "width": 5400,      "height": 5400,
-            "top": 0,           "left": 900
-        }),
-        // Kiss-cut sticker: 900×900 printfile — fill it edge to edge.
-        358 => serde_json::json!({
-            "area_width": 900, "area_height": 900,
-            "width": 900,      "height": 900,
-            "top": 0,          "left": 0
-        }),
-        // Tough Case for iPhone (601): single "default" printfile 1392×2220
-        // (verified GET /mockup-generator/printfiles/601). Fill the whole
-        // case back edge to edge — the tee 1800×2400 box overflows it.
-        601 => serde_json::json!({
-            "area_width": 1392, "area_height": 2220,
-            "width": 1392,      "height": 2220,
-            "top": 0,           "left": 0
-        }),
-        // /make/edit で位置指定された DTG アパレル: 保存時に解決済みのボックス
-        // (meta_json.print_position_box・aspect-fit 済み)をそのまま使う。
-        // AOP(301系)は4パネル cover-fill が正なので対象外。
-        71 | 146 | 145 | 539 | 356 if custom_pos.is_some() => custom_pos.clone().unwrap(),
-        // 前面チェストDTGアパレル → tee 1800×2400 box。
-        // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356)。
-        // AOPラッシュガード(301/302/368/369/836)はここに入れない:
-        // 4パネル(front/back/sleeve_*)は printfile 寸法が別々で、単一チェスト
-        // box を流用すると下半分が白+袖タイルになる(既知バグ)。→ 下の _ アーム
-        // + files ループで per-placement cover-fill する。
-        71 | 146 | 145 | 539 | 356 => match design_dims {
-            // Center-fit the design inside the 1260×1260 chest box (top-left
-            // 270,380 in the 1800×2400 print area), preserving aspect so a
-            // non-square design isn't stretched.
-            Some((dw, dh)) => aspect_fit_position(1800, 2400, 270, 380, 1260, dw, dh),
-            None => serde_json::json!({
-                "area_width": 1800, "area_height": 2400,
-                "width": 1260,      "height": 1260,
-                "top": 380,         "left": 270
-            }),
-        },
-        // それ以外(tote/cap/canvas/mug/pillow/coaster/bottle/leggings/joggers/
-        // apron/shorts/... 等)は印刷面の寸法を Printful から取得し「中央fit」配置。
-        // 印刷面ごとに形が違うため tee box だとクリップ/歪み/文字はみ出しになる。
-        // printful_fill_position はアスペクト維持で中央に余白付き配置(=はみ出さない)。
-        // 失敗時のみ tee box にフォールバック。
-        _ => {
-            let placement = placements_for_product(printful_product)
-                .first().copied().unwrap_or("front");
-            printful_fill_position(&client, &key, printful_product, placement, design_dims)
-                .await
-                .unwrap_or_else(|| serde_json::json!({
-                    "area_width": 1800, "area_height": 2400,
-                    "width": 1260,      "height": 1260,
-                    "top": 380,         "left": 270
-                }))
-        }
-    };
-    let placements = placements_for_product(printful_product);
-    // AOP(301系)は各パネル(front/back/sleeve_*)で printfile 寸法が違うため、
-    // 上で計算した単一 position を全パネルに流用すると下半分が白く残り袖に
-    // タイルされる(旧バグ)。パネルごとに cover-fill 位置を取り直す。
-    // 非AOPは placements=["front"] の1枚なので従来どおり単一 position。
-    let is_aop = matches!(printful_product, 301 | 302 | 368 | 369 | 836);
-    let mut files: Vec<serde_json::Value> = Vec::with_capacity(placements.len());
-    for p in placements.iter() {
-        let pos = if is_aop {
-            printful_fill_position(&client, &key, printful_product, *p, design_dims)
-                .await
-                .unwrap_or_else(|| position.clone())
-        } else {
-            position.clone()
-        };
-        files.push(serde_json::json!({
-            "placement": p,
-            "image_url": design_url,
-            "position": pos,
-        }));
-    }
+    let files = resolve_printful_positions(&client, &key, printful_product, printful_variant,
+        design_dims.ok_or_else(|| "cannot resolve design dimensions".to_string())?, custom_pos).await?
+        .into_iter().map(|(placement, position)| serde_json::json!({
+            "placement": placement, "image_url": design_url, "position": position,
+        })).collect::<Vec<_>>();
     let create_body = serde_json::json!({
         "variant_ids": [printful_variant],
         "format": "png",
@@ -4519,9 +4757,6 @@ async fn printful_render_mockup_bytes(
         .ok_or_else(|| "no task_key".to_string())?
         .to_string();
 
-    // Log attempt start in spend ledger (¥0) so we can see backfill activity
-    // in /admin/catalog/status — tracing!/warn! logs go to Fly stdout which
-    // isn't easily readable from outside.
     if let Some((db, ref_id)) = &spend_ref {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
@@ -4530,9 +4765,6 @@ async fn printful_render_mockup_bytes(
             rusqlite::params![format!("printful task_key={}", task_key), ref_id],
         );
     }
-
-    // 2. Poll up to 60 × 4s = 4 min. Printful's queue can be slow during
-    //    peak hours; cycles 2-3 of the first deploy timed out at 2 min.
     let mut mockup_url: Option<String> = None;
     for attempt in 0..60 {
         tokio::time::sleep(std::time::Duration::from_secs(if attempt == 0 { 5 } else { 4 })).await;
@@ -4541,9 +4773,7 @@ async fn printful_render_mockup_bytes(
             Ok(r) => r,
             Err(_) => continue,
         };
-        if !r.status().is_success() {
-            continue;
-        }
+        if !r.status().is_success() { continue; }
         let pj: serde_json::Value = match r.json().await {
             Ok(v) => v,
             Err(_) => continue,
@@ -4553,22 +4783,83 @@ async fn printful_render_mockup_bytes(
                 mockup_url = pj["result"]["mockups"][0]["mockup_url"].as_str().map(String::from);
                 break;
             }
-            Some("failed") => {
-                return Err("printful task failed".into());
-            }
+            Some("failed") => return Err("printful task failed".into()),
             _ => continue,
         }
     }
     let mockup_url = mockup_url.ok_or_else(|| "poll timeout (4min)".to_string())?;
-
-    // 3. Download the rendered mockup. Printful's URL is a ~24h presign —
-    //    callers MUST persist the bytes (R2) and never store this URL.
     let mockup_bytes = client.get(&mockup_url).send().await
         .map_err(|e| format!("download mockup: {}", e))?
-        .bytes().await
-        .map_err(|e| format!("read mockup bytes: {}", e))?
-        .to_vec();
+        .bytes().await.map_err(|e| format!("read mockup bytes: {}", e))?.to_vec();
     Ok((mockup_bytes, mockup_url))
+}
+
+/// Exact default geometry shared with fulfillment. None means query the actual
+/// product/variant printfile; never substitute a tee box for unknown products.
+pub(crate) fn default_print_position(printful_product: i64, dims: (u32, u32), custom_pos: Option<serde_json::Value>) -> Option<serde_json::Value> {
+    let (dw, dh) = dims;
+    let mut position = match printful_product {
+        // 11oz mug: wrap printfile 2700×1050. The default mockup's visible
+        // front face sits ~70% across the wrap, so left=1400 (not center
+        // 850) lands the square artwork dead-centre on the photographed
+        // face — verified against gt-929310805 (left=850 / 1850 both clip).
+        19 => aspect_fit_position(2700, 1050, 1400, 50, 950, dw, dh),
+        // Matte poster 18×24: printfile 7200×5400 (landscape, can_rotate).
+        // Centre the square artwork at full height.
+        1 => aspect_fit_position(7200, 5400, 900, 0, 5400, dw, dh),
+        // Kiss-cut sticker: 900×900 printfile — fill it edge to edge.
+        358 => aspect_fit_position(900, 900, 0, 0, 900, dw, dh),
+        // Tough Case for iPhone (601): single "default" printfile 1392×2220
+        // (verified GET /mockup-generator/printfiles/601). Fill the whole
+        // case back edge to edge — the tee 1800×2400 box overflows it.
+        601 => cover_print_position(1392, 2220, dw, dh),
+        // /make/edit で位置指定された DTG アパレル: 保存時に解決済みのボックス
+        // (meta_json.print_position_box・aspect-fit 済み)をそのまま使う。
+        // AOP(301系)は4パネル cover-fill が正なので対象外。
+        71 | 146 | 145 | 539 | 356 if custom_pos.is_some() => custom_pos.clone().unwrap(),
+        // 前面チェストDTGアパレル → tee 1800×2400 box。
+        // tee(71)/hoodie(146)/crewneck(145)/tank(539)/long_sleeve(356)。
+        // AOPラッシュガード(301/302/368/369/836)はここに入れない:
+        // 4パネル(front/back/sleeve_*)は printfile 寸法が別々で、単一チェスト
+        // box を流用すると下半分が白+袖タイルになる(既知バグ)。→ 下の _ アーム
+        // + files ループで per-placement cover-fill する。
+        71 | 146 | 145 | 539 | 356 => aspect_fit_position(1800, 2400, 270, 380, 1260, dw, dh),
+        // それ以外(tote/cap/canvas/mug/pillow/coaster/bottle/leggings/joggers/
+        // apron/shorts/... 等)は印刷面の寸法を Printful から取得し「中央fit」配置。
+        // 印刷面ごとに形が違うため tee box だとクリップ/歪み/文字はみ出しになる。
+        // printful_fill_position はアスペクト維持で中央に余白付き配置(=はみ出さない)。
+        // Unknown dimensions fail closed rather than using a tee box.
+        _ => return None,
+    };
+    if printful_product != 601 { position["limit_to_print_area"] = serde_json::json!(true); }
+    Some(position)
+}
+
+/// Shared by mockup and order preparation. `custom_pos` is meta_json.print_position_box.
+/// Each AOP panel uses its own variant-specific printfile and aspect-preserving cover.
+pub(crate) async fn resolve_printful_positions(
+    client: &reqwest::Client, key: &str, printful_product: i64, printful_variant: i64,
+    dims: (u32, u32), custom_pos: Option<serde_json::Value>,
+) -> Result<Vec<(String, serde_json::Value)>, String> {
+    let position = default_print_position(printful_product, dims, custom_pos);
+    let placements = placements_for_product(printful_product);
+    // AOP(301系)は各パネル(front/back/sleeve_*)で printfile 寸法が違うため、
+    // 上で計算した単一 position を全パネルに流用すると下半分が白く残り袖に
+    // タイルされる(旧バグ)。パネルごとに cover-fill 位置を取り直す。
+    // 非AOPは placements=["front"] の1枚なので従来どおり単一 position。
+    let is_aop = matches!(printful_product, 301 | 302 | 368 | 369 | 836 | 384 | 594);
+    let mut files = Vec::with_capacity(placements.len());
+    for p in placements.iter() {
+        let pos = if is_aop || position.is_none() {
+            printful_fill_position(client, key, printful_product, printful_variant, *p, Some(dims))
+                .await
+                .ok_or_else(|| format!("unknown print geometry: product={} variant={} placement={}", printful_product, printful_variant, p))?
+        } else {
+            position.clone().unwrap()
+        };
+        files.push(((*p).to_string(), pos));
+    }
+    Ok(files)
 }
 
 /// Fetch a Printful product's printfile dimensions for a placement and return
@@ -4577,11 +4868,12 @@ async fn printful_render_mockup_bytes(
 /// goods). Mirrors merch-bridge's printfile-driven generation but fits the
 /// square design INSIDE the print area instead of stretching to fill it — so
 /// text never overflows or distorts (the "文字がはみ出す" fix). None on any
-/// API hiccup so the caller can fall back to the tee box.
+/// API hiccup so the caller can decline an unverified product render.
 async fn printful_fill_position(
     client: &reqwest::Client,
     key: &str,
     product: i64,
+    variant: i64,
     placement: &str,
     design_dims: Option<(u32, u32)>,
 ) -> Option<serde_json::Value> {
@@ -4591,10 +4883,14 @@ async fn printful_fill_position(
         return None;
     }
     let j: serde_json::Value = r.json().await.ok()?;
-    let res = &j["result"];
-    // variant_printfiles[0].placements[placement] → printfile_id
+    print_position_from_printfiles(&j["result"], product, variant, placement, design_dims?)
+}
+
+fn print_position_from_printfiles(res: &serde_json::Value, product: i64, variant: i64,
+    placement: &str, dims: (u32, u32)) -> Option<serde_json::Value> {
+    // Match the purchased variant, not the first catalog variant (often XS).
     let pf_id = res["variant_printfiles"]
-        .get(0)
+        .as_array()?.iter().find(|v| v["variant_id"].as_i64() == Some(variant))
         .and_then(|v| v["placements"].get(placement))
         .and_then(|v| v.as_i64())?;
     let pf = res["printfiles"]
@@ -4603,6 +4899,11 @@ async fn printful_fill_position(
         .find(|f| f["printfile_id"].as_i64() == Some(pf_id))?;
     let w = pf["width"].as_i64()?;
     let h = pf["height"].as_i64()?;
+    if w <= 0 || h <= 0 { return None; }
+    if matches!(product, 301 | 302 | 368 | 369 | 836 | 384 | 594 | 186 | 262 | 259 | 654) {
+        let (dw, dh) = dims;
+        return Some(cover_print_position(w, h, dw, dh));
+    }
     // A square box at 92% of the print area's SHORTER side, centered, gives a
     // safe margin regardless of print-area shape. Inside that box, center-fit
     // the design by its true aspect ratio so non-square artwork isn't stretched
@@ -4611,20 +4912,13 @@ async fn printful_fill_position(
     let side = ((w.min(h) as f64) * 0.92) as i64;
     let box_left = (w - side) / 2;
     let box_top = (h - side) / 2;
-    match design_dims {
-        Some((dw, dh)) => Some(aspect_fit_position(w, h, box_left, box_top, side, dw, dh)),
-        None => Some(serde_json::json!({
-            "area_width": w, "area_height": h,
-            "width": side,   "height": side,
-            "top": box_top,  "left": box_left
-        })),
-    }
+    Some(aspect_fit_position(w, h, box_left, box_top, side, dims.0, dims.1))
 }
 
 /// Fetch just the pixel dimensions of a design image (decodes it once).
 /// Used so the Printful mockup position can preserve the design's aspect
 /// ratio instead of stretching a non-square design into a square box.
-async fn design_dims(client: &reqwest::Client, url: &str) -> Option<(u32, u32)> {
+pub(crate) async fn design_dims(client: &reqwest::Client, url: &str) -> Option<(u32, u32)> {
     use image::GenericImageView;
     let bytes = client.get(url).send().await.ok()?.bytes().await.ok()?;
     let im = image::load_from_memory(&bytes).ok()?;
@@ -4661,6 +4955,14 @@ fn aspect_fit_position(
         "width": w, "height": h,
         "top": top, "left": left
     })
+}
+
+fn cover_print_position(area_w: i64, area_h: i64, dw: u32, dh: u32) -> serde_json::Value {
+    let scale = (area_w as f64 / dw.max(1) as f64).max(area_h as f64 / dh.max(1) as f64);
+    let w = (dw.max(1) as f64 * scale).ceil() as i64;
+    let h = (dh.max(1) as f64 * scale).ceil() as i64;
+    serde_json::json!({"area_width":area_w,"area_height":area_h,
+        "width":w,"height":h,"left":(area_w-w)/2,"top":(area_h-h)/2})
 }
 
 /// %指定 (幅 w_pct / 横 x_pct / 縦 y_pct) を tee 1800×2400 プリントエリアの
@@ -4815,6 +5117,24 @@ fn kind_from_sku(sku: &str) -> &'static str {
     if s.contains("-TEE")  || s.starts_with("MU-")    { return "tee"; }
     if s.contains("AUTO-")  && s.contains("-TEE-")    { return "tee"; }
     "tee"  // safe default for the spec block
+}
+
+/// Order gating cannot use the PDP's "tee" fallback. Match complete kind
+/// tokens, longest first, including historical MAKE/AUTO/partner SKUs.
+pub(crate) fn order_kind_from_sku(sku: &str) -> Option<&'static str> {
+    let normalized=format!("-{}-",sku.to_lowercase().replace('_',"-"));
+    PRODUCT_SPECS.iter().filter(|s|normalized.contains(&format!("-{}-",s.kind.replace('_',"-"))))
+        .max_by_key(|s|s.kind.len()).map(|s|s.kind)
+}
+
+/// Product-level restrictions also apply when a legacy SKU has no kind tag.
+/// Do not map 384 to dog_tee: genuine kids_tee uses the same vendor product.
+pub(crate) fn order_product_restriction(product: i64) -> Option<&'static str> {
+    match product {
+        539=>Some("tank"),678=>Some("pet_bowl"),786=>Some("notepad"),635=>Some("towel"),
+        1564=>Some("hardcover_photo_book"),1563=>Some("softcover_photo_book"),
+        _=>None,
+    }
 }
 
 /// Brand-specific setting / mood string spliced into lifestyle prompts so
@@ -5112,6 +5432,15 @@ pub(crate) fn store_score(db: &Db, sku: &str, score: &crate::gemini::DesignScore
     );
 }
 
+fn store_score_for_design(db: &Db, sku: &str, design: &str, score: &crate::gemini::DesignScore) {
+    let conn = db.lock().unwrap();
+    if let Err(e) = conn.execute("UPDATE catalog_products SET meta_json=json_set(COALESCE(meta_json,'{}'),
+        '$.score',json(?)) WHERE sku=? AND design_file=?",
+        rusqlite::params![score_json(score).to_string(),sku,design]) {
+        tracing::warn!("[catalog/score] save {}: {}", sku, e);
+    }
+}
+
 /// GET /admin/catalog/score_backfill?token=&brand=&limit=&only_missing=1 —
 /// MUスコア: judge live products with Gemini (5 axes, gemini.rs
 /// call_gemini_judge) and store the result in meta_json.score, which the
@@ -5233,28 +5562,43 @@ pub async fn admin_set_design(
     if !design.starts_with("https://") {
         return (StatusCode::BAD_REQUEST, "design_url must be https").into_response();
     }
-    let ids: Option<(i64, i64)> = {
+    let original = {
         let conn = db.lock().unwrap();
-        let updated = conn
-            .execute(
-                "UPDATE catalog_products SET design_file=?1, mockup_url_external=?1 WHERE sku=?2",
-                rusqlite::params![design, q.sku],
-            )
-            .unwrap_or(0);
-        if updated == 0 {
-            None
-        } else {
-            conn.query_row(
-                "SELECT printful_product_id, printful_variant_id FROM catalog_products WHERE sku=?1",
-                rusqlite::params![q.sku],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
-            )
-            .ok()
-        }
+        preview_snapshot(&conn, &q.sku)
     };
-    let Some((pp, pv)) = ids else {
+    let Ok(original) = original else {
         return (StatusCode::NOT_FOUND, "sku not found").into_response();
     };
+    let (pp, pv) = (original.product, original.variant);
+    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15)).build().unwrap_or_default();
+    let Some((dw, dh)) = design_dims(&client, design).await else {
+        return (StatusCode::BAD_GATEWAY, "cannot resolve design dimensions").into_response();
+    };
+    let saved: Result<(), String> = (|| {
+        let mut conn = db.lock().unwrap();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        if preview_snapshot(&tx, &q.sku)? != original { return Err("design changed during update".into()); }
+        let raw: String = tx.query_row("SELECT COALESCE(meta_json,'{}') FROM catalog_products WHERE sku=?",
+            rusqlite::params![&q.sku], |r| r.get(0)).map_err(|e| e.to_string())?;
+        let mut meta: serde_json::Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        if position_editable_product(pp) {
+            if let Some(p) = meta.get("print_position") {
+                let (side, left, top) = pct_print_box(p["w_pct"].as_f64().unwrap_or(70.0),
+                    p["x_pct"].as_f64().unwrap_or(50.0), p["y_pct"].as_f64().unwrap_or(33.333333));
+                let mut bx = aspect_fit_position(1800,2400,left,top,side,dw,dh);
+                bx["limit_to_print_area"] = serde_json::json!(true);
+                meta["print_position_box"] = bx;
+            } else if let Some(m) = meta.as_object_mut() { m.remove("print_position_box"); }
+        }
+        if let Some(m) = meta.as_object_mut() { m.remove("score"); }
+        tx.execute("UPDATE catalog_products SET design_file=?,mockup_main_file=?,meta_json=? WHERE sku=?",
+            rusqlite::params![design,design,meta.to_string(),&q.sku]).map_err(|e| e.to_string())?;
+        tx.execute("UPDATE catalog_product_extras SET image_url=? WHERE sku=? AND label IN ('design','print')",
+            rusqlite::params![design,&q.sku]).map_err(|e| e.to_string())?;
+        invalidate_preview(&tx, &q.sku).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())
+    })();
+    if let Err(e) = saved { return (StatusCode::CONFLICT, e).into_response(); }
     let regen = generate_onbody_mockup(db.clone(), q.sku.clone(), pp, pv, design.to_string()).await;
     axum::Json(serde_json::json!({
         "ok": regen.is_ok(),
@@ -5686,6 +6030,7 @@ pub async fn admin_nl_add(
         }
     };
     let kind = parsed["kind"].as_str().unwrap_or("tee");
+    if let Some(response) = make_kind_unavailable_response(kind) { return response; }
     let theme_brief = parsed["theme_brief"].as_str().unwrap_or(prompt_in);
     let display = parsed["display"].as_str().unwrap_or("Custom");
     let hook = parsed["hook"].as_str().unwrap_or("自然言語から自動生成");
@@ -6265,44 +6610,43 @@ pub struct MakePeekQuery {
 
 /// GET /api/make/peek?sku= — /make 直後の結果カードが着用イメージ
 /// (on-body mockup, バックグラウンド生成) の完成をポーリングする軽量API。
-/// 公開情報のみ・minna(=/make産)限定。mockup が design と別URLになった時だけ
-/// 「着用イメージ完成」として返す（心理的所有感: 着た姿を見せると評価が上がる）。
+/// Public minna products only. Ready requires a current, authoritative Printful
+/// render; legacy lifestyle photographs and local cards are not finished output.
 pub async fn make_peek(State(db): State<Db>, Query(q): Query<MakePeekQuery>) -> Response {
-    // 着画は「モデルが着ている写真(lifestyle)」を最優先 → 無ければ平置きmockup。
-    let row: Option<(String, Option<String>, Option<String>, String)> = {
+    let row: Option<(String, String, String, i64, i64)> = {
         let conn = db.lock().unwrap();
         conn.query_row(
-            &format!(
-                "SELECT COALESCE(p.design_file,''),
-                        (SELECT image_url FROM catalog_product_extras e
-                         WHERE e.sku=p.sku AND lower(e.label) LIKE 'lifestyle%'
-                           AND e.image_url IS NOT NULL AND e.image_url != ''
-                         ORDER BY e.id DESC LIMIT 1) AS lifestyle,
-                        {ext} AS flat,
-                        p.status
-                 FROM catalog_products p WHERE p.sku=? AND p.brand='minna'",
-                ext = MOCKUP_EXT_LIVE
-            ),
+            "SELECT COALESCE(design_file,''), COALESCE(meta_json,'{}'), status, printful_product_id, printful_variant_id
+             FROM catalog_products WHERE sku=? AND brand='minna'",
             rusqlite::params![&q.sku],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .ok()
     };
-    let Some((design, lifestyle, flat, status)) = row else {
+    let Some((design, meta, status, product, variant)) = row else {
         return (StatusCode::NOT_FOUND, axum::Json(serde_json::json!({"ok": false}))).into_response();
     };
-    // モデル着用写真(model)があればそれを着画に。無ければ平置きmockup(designと別物のとき)。
-    let model = lifestyle.filter(|m| !m.is_empty() && *m != design);
-    let mockup = model.clone().or_else(|| flat.filter(|m| !m.is_empty() && *m != design));
-    // max-age=5: 全作成者が6秒間隔でポーリングする → CDN/ブラウザに逃がして
-    // グローバルMutexのSQLiteをポーリング地獄から守る（鮮度は5秒で十分）。
+    let mut meta: serde_json::Value = serde_json::from_str(&meta).unwrap_or_default();
+    if meta["preview"]["product_id"].as_i64() != Some(product) || meta["preview"]["variant_id"].as_i64() != Some(variant) {
+        if let Some(m) = meta.as_object_mut() { m.remove("preview"); }
+    }
+    let payload = make_preview_payload(&q.sku, &design, &status, &meta);
+    // An edit must not receive the previous revision from an HTTP cache.
     let mut headers = axum::http::HeaderMap::new();
-    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("public, max-age=5"));
-    (headers, axum::Json(serde_json::json!({
-        "ok": true, "status": status, "mockup": mockup,
-        // is_model=true は「人が着ている写真」(平置きでなく)を意味する。
-        "is_model": model.is_some(),
-    }))).into_response()
+    headers.insert("Cache-Control", axum::http::HeaderValue::from_static("no-store"));
+    (headers, axum::Json(payload)).into_response()
+}
+
+fn make_preview_payload(sku: &str, design: &str, status: &str, meta: &serde_json::Value) -> serde_json::Value {
+    let revision = meta["preview_revision"].as_i64().unwrap_or(0);
+    let p = &meta["preview"];
+    let current = p["revision"].as_i64() == Some(revision) && p["design_url"].as_str() == Some(design)
+        && p.get("position") == Some(meta.get("print_position_box").unwrap_or(&serde_json::Value::Null));
+    let url = p["url"].as_str().filter(|u| !u.is_empty() && *u != design).filter(|_| current);
+    let kind = if url.is_some() { p["kind"].as_str().unwrap_or("card") } else { "design" };
+    serde_json::json!({"ok":true,"sku":sku,"status":status,"design_url":design,
+        "mockup":url,"preview_kind":kind,"preview_revision":revision,
+        "ready":kind == "printful", "is_model":false})
 }
 
 #[derive(serde::Deserialize)]
@@ -6998,7 +7342,7 @@ pub async fn makeable_all_page() -> Html<String> {
             // /make の言葉→画像→印刷フローで実際に作れる kind だけ作成リンクにする
             // (public_make の allowed と一致 = MAKE_KINDS_ALL)。それ以外は壊れた発注を
             // 避けて「近日」表示にする(歌/家など別ルートのものもここでは近日扱い)。
-            let creatable = MAKE_KINDS_ALL.iter().any(|(v, _)| v == kind);
+            let creatable = make_kind_can_make(kind);
             if creatable {
                 cards.push_str(&format!(
                     "<a class=\"mk-card\" href=\"/make?k={k}\" data-funnel=\"cta_click\" data-funnel-cta=\"makeable_pick\">\
@@ -7211,10 +7555,10 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("apron", "エプロン"),
     ("beanie", "ビーニー（刺繍）"),
     ("kids_tee", "キッズTシャツ（全面）"),
-    ("socks", "ソックス（全面）"),
+    ("socks", "ソックス（レッグ部分プリント）"),
     ("bucket_hat", "バケットハット（全面）"),
     // 持つ
-    ("tote", "トートバッグ"),
+    ("tote", "トートバッグ（黒・42×42cm）"),
     ("drawstring_bag", "ナップサック（全面）"),
     ("fanny_pack", "ウエストバッグ（全面）"),
     ("backpack", "バックパック（全面）"),
@@ -7250,7 +7594,7 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("duvet_cover", "掛け布団カバー（全面）"),
     ("hand_towel", "ハンドタオル（全面）"),
     ("coffee_tumbler", "コーヒータンブラー"),
-    ("weekly_planner", "ウィークリープランナー"),
+    ("weekly_planner", "罫線入りリングノート"),
     ("greeting_card", "グリーティングカード"),
     ("ornament", "オーナメント"),
     ("sweatpants", "スウェットパンツ"),
@@ -7266,7 +7610,7 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("latte_mug", "ラテマグ"),
     ("enamel_mug", "エナメルマグ"),
     ("can_cooler", "缶クーラー"),
-    ("christmas_stocking", "クリスマス靴下（犬用）"),
+    ("christmas_stocking", "クリスマスストッキング（吊り下げ飾り）"),
     ("pennant", "ペナント"),
     ("wine_tumbler", "ワインタンブラー"),
     // 第3弾 (2026-09-11)
@@ -7287,6 +7631,564 @@ pub const MAKE_KINDS_ALL: &[(&str, &str)] = &[
     ("gift_wrap", "ギフトラッピング紙"),
     ("die_cut_stickers", "ダイカットステッカー"),
 ];
+
+/// Shared by Web creation and the native picker. Auto is supplied by each UI;
+/// digital products have a separate creation flow and must never enter this list.
+fn make_physical_kinds() -> impl Iterator<Item = (&'static str, &'static str)> {
+    MAKE_KINDS_ALL.iter().copied()
+        .filter(|(kind, _)| !kind.is_empty() && route_for_kind(kind) != "digital")
+}
+
+/// Editorial labels, not title-cased internal IDs. Categories are the iOS keys.
+fn make_kind_metadata(kind: &str) -> Option<(&'static str, &'static str)> {
+    Some(match kind {
+        "tee" => ("T-shirt (black)", "wear"),
+        "tee_white" => ("T-shirt (white)", "wear"),
+        "hoodie" => ("Hoodie", "wear"),
+        "crewneck" => ("Crewneck sweatshirt", "wear"),
+        "long_sleeve_tee" => ("Long-sleeve T-shirt", "wear"),
+        "tank" => ("Tank top", "wear"),
+        "rashguard_ls" => ("Long-sleeve rashguard", "wear"),
+        "rashguard_black" => ("Rashguard (black)", "wear"),
+        "rashguard_contrado" => ("Premium full-print rashguard", "wear"),
+        "leggings" => ("Leggings", "wear"),
+        "shorts" => ("Mesh shorts", "wear"),
+        "joggers" => ("Joggers", "wear"),
+        "apron" => ("Apron", "wear"),
+        "beanie" => ("Embroidered beanie", "wear"),
+        "kids_tee" => ("Kids' all-over print T-shirt", "wear"),
+        "socks" => ("Leg-print socks (black foot)", "wear"),
+        "bucket_hat" => ("All-over print bucket hat", "wear"),
+        "sweatpants" => ("Sweatpants", "wear"),
+        "tote" => ("Tote bag (black, 42 x 42 cm)", "carry"),
+        "drawstring_bag" => ("All-over print drawstring bag", "carry"),
+        "fanny_pack" => ("All-over print waist bag", "carry"),
+        "backpack" => ("All-over print backpack", "carry"),
+        "sticker" => ("Sticker", "carry"),
+        "mug" => ("Mug (white)", "carry"),
+        "mug_black" => ("Mug (black)", "carry"),
+        "phone_case" => ("iPhone case", "carry"),
+        "laptop_sleeve" => ("Laptop sleeve", "carry"),
+        "mouse_pad" => ("Mouse pad", "carry"),
+        "bottle" => ("Water bottle", "carry"),
+        "wine_glass" => ("Wine glass", "carry"),
+        "journal" => ("Journal", "carry"),
+        "coffee_tumbler" => ("Coffee tumbler", "carry"),
+        "weekly_planner" => ("Ruled spiral notebook", "carry"),
+        "greeting_card" => ("Greeting card", "carry"),
+        "gym_bag" => ("All-over print pet travel bag", "carry"),
+        "standard_postcard" => ("Postcard", "carry"),
+        "hardcover_photo_book" => ("Hardcover photo book", "carry"),
+        "softcover_photo_book" => ("Softcover photo book", "carry"),
+        "latte_mug" => ("Latte mug", "carry"),
+        "enamel_mug" => ("Enamel mug", "carry"),
+        "can_cooler" => ("Can cooler", "carry"),
+        "wine_tumbler" => ("Wine tumbler", "carry"),
+        "luggage_tag" => ("Luggage tag", "carry"),
+        "notepad" => ("Notepad", "carry"),
+        "postit_notes" => ("Post-it notes", "carry"),
+        "pin_buttons" => ("Pin badges", "carry"),
+        "die_cut_stickers" => ("Die-cut stickers", "carry"),
+        "poster" => ("Poster", "home"),
+        "canvas" => ("Canvas art", "home"),
+        "metal_print" => ("Metal print", "home"),
+        "pillow" => ("Cushion", "home"),
+        "coaster" => ("Coaster", "home"),
+        "placemat" => ("Placemat", "home"),
+        "blanket" => ("Embroidered blanket", "home"),
+        "towel" => ("Embroidered Imabari towel", "home"),
+        "beach_towel" => ("All-over print beach towel", "home"),
+        "flag" => ("All-over print flag", "home"),
+        "duvet_cover" => ("All-over print duvet cover", "home"),
+        "hand_towel" => ("All-over print hand towel", "home"),
+        "ornament" => ("Ornament", "home"),
+        "bath_mat" => ("All-over print bath mat", "home"),
+        "shower_curtain" => ("All-over print shower curtain", "home"),
+        "desk_mat" => ("Desk mat", "home"),
+        "pillow_case" => ("All-over print pillowcase", "home"),
+        "pennant" => ("Pennant", "home"),
+        "soy_candle" => ("Soy candle", "home"),
+        "glass_cutting_board" => ("Glass cutting board", "home"),
+        "tablecloth" => ("Cotton tablecloth", "home"),
+        "wall_clock" => ("Wall clock", "home"),
+        "throw_blanket" => ("Throw blanket", "home"),
+        "framed_poster" => ("Framed poster", "home"),
+        "wall_tapestry" => ("Wall tapestry", "home"),
+        "garden_flag" => ("Garden flag", "home"),
+        "playing_cards" => ("Playing cards", "home"),
+        "gift_wrap" => ("Gift wrap", "home"),
+        "pet_bowl" => ("Pet bowl", "pet"),
+        "pet_feeding_mat" => ("Pet feeding mat", "pet"),
+        "pet_bandana" => ("All-over print pet bandana", "pet"),
+        "pet_collar" => ("Pet bandana collar", "pet"),
+        "pet_sweater" => ("Knitted dog sweater", "pet"),
+        "dog_tee" => ("All-over print T-shirt for small dogs", "pet"),
+        "pet_leash" => ("All-over print dog leash", "pet"),
+        "pet_collar_leash" => ("All-over print dog collar and leash set", "pet"),
+        "pet_collar_only" => ("Dog collar", "pet"),
+        "christmas_stocking" => ("Christmas stocking decoration", "home"),
+        _ => return None,
+    })
+}
+
+/// Measured catalog restrictions shared by MAKE and ordering EXISTING SKUs.
+/// Country lists are shipping restrictions from product descriptions, NOT the
+/// vendor's availability_regions (which describe production locations).
+#[derive(Debug, serde::Serialize)]
+pub struct KindAvailability {
+    pub available: bool,
+    pub unavailable_reason: Option<&'static str>,
+    pub unavailable_reason_ja: Option<&'static str>,
+    pub unavailable_reason_en: Option<&'static str>,
+    pub allowed_countries: &'static [&'static str],
+    pub excluded_countries: &'static [&'static str],
+    pub temporary: bool,
+    pub stock_checked_at: Option<&'static str>,
+    pub requires_vendor_preflight: bool,
+}
+
+/// Unknown/unrestricted kinds are not rejected here: this is a restriction
+/// helper, not a kind whitelist or a guarantee of vendor acceptance.
+/// Call with the actual ISO 3166-1 alpha-2 destination; None skips country checks.
+pub fn kind_availability(kind: &str, country: Option<&str>) -> KindAvailability {
+    kind_availability_with_stock(kind, country, None)
+}
+
+/// A fresh check of the SELECTED variant overrides the historical stock hold.
+/// Some(true) releases the hold; Some(false) blocks even formerly stocked kinds.
+/// None is not evidence of restocking: retain the two dated snapshot holds until
+/// vendor preflight succeeds. Never use this bool to bypass mapping/country rules.
+pub fn kind_availability_with_stock(
+    kind: &str, country: Option<&str>, in_stock: Option<bool>,
+) -> KindAvailability {
+    let (allowed_countries, excluded_countries): (&[&str], &[&str]) = match kind {
+        "tank" => (&["AU", "NZ"], &[]),
+        "pet_bowl" => (&[], &["KR", "HK", "TW", "JP", "SG"]),
+        "notepad" => (&["US"], &[]),
+        "towel" => (&["JP", "HK", "ID", "KR", "MY", "PH", "SG", "TH", "TW", "VN"], &[]),
+        _ => (&[], &[]),
+    };
+    let snapshot_out_of_stock = matches!(kind, "pet_collar" | "christmas_stocking");
+    let country_blocked = country.filter(|c| !c.trim().is_empty()).is_some_and(|country| {
+        let country = country.trim();
+        (!allowed_countries.is_empty()
+            && !allowed_countries.iter().any(|c| c.eq_ignore_ascii_case(country)))
+            || excluded_countries.iter().any(|c| c.eq_ignore_ascii_case(country))
+    });
+    let reason = match kind {
+        "dog_tee" => Some(("vendor_product_mismatch",
+            "登録された製造元商品は人間用キッズTシャツです。犬用商品の作成・注文は停止しています。",
+            "The mapped vendor product is a human kids' T-shirt, not dog clothing.")),
+        "hardcover_photo_book" | "softcover_photo_book" => Some(("multipage_design_required",
+            "表紙と各ページのデザインが必要です。1枚画像のMAKEでは写真集を作成・注文できません。",
+            "Photo books require a cover and individual page designs; one-image MAKE is unsupported.")),
+        "rashguard_contrado" => Some(("vendor_mapping_unavailable",
+            "製造元の商品仕様・発注経路を準備中です。",
+            "The vendor product mapping and ordering integration are not ready.")),
+        _ if country_blocked => Some(("shipping_country_unavailable",
+            "この商品は指定された国・地域へ配送できません。配送可能国をご確認ください。",
+            "This product cannot ship to the selected country. Check the shipping country lists.")),
+        _ if !in_stock.unwrap_or(!snapshot_out_of_stock) => Some(("variant_out_of_stock",
+            "選択された製造元バリエーションは在庫切れです。在庫の再確認が必要です。",
+            "The selected vendor variant is out of stock; availability must be checked again.")),
+        _ => None,
+    };
+    KindAvailability {
+        available: reason.is_none(),
+        unavailable_reason: reason.map(|r| r.0),
+        unavailable_reason_ja: reason.map(|r| r.1),
+        unavailable_reason_en: reason.map(|r| r.2),
+        allowed_countries, excluded_countries,
+        temporary: reason.is_some_and(|r| r.0 == "variant_out_of_stock"),
+        stock_checked_at: if snapshot_out_of_stock && in_stock.is_none() {
+            Some("2026-09-13T15:13:47Z")
+        } else { None },
+        requires_vendor_preflight: true,
+    }
+}
+
+fn make_kind_unavailable_response(kind: &str) -> Option<Response> {
+    let availability = kind_availability(kind, Some("JP"));
+    if availability.available { return None; }
+    Some((StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({
+        "ok": false, "error": availability.unavailable_reason_ja,
+        "kind": kind, "availability": availability,
+    }))).into_response())
+}
+
+/// JP is the current MAKE destination. The shared restriction helper accepts
+/// other countries and live stock overrides for destination-aware checkout.
+fn make_kind_can_make(kind: &str) -> bool {
+    kind_availability(kind, Some("JP")).available
+        && make_physical_kinds().any(|(allowed, _)| allowed == kind)
+        && matches!(route_for_kind(kind), "printful_dtg" | "printful_aop" | "printful_embroidery")
+        && PRODUCT_SPECS.iter().any(|spec| {
+            spec.kind == kind && spec.printful_product_id > 0
+                && spec.printful_variant_id > 0 && !spec.placement.is_empty()
+                && spec.retail_jpy > 0
+        })
+}
+
+/// Kind default for a live product with a design URL. Per-item eligibility is
+/// still enforced by design_variant_base_row (including the AOP socks exception).
+fn make_kind_can_remix(kind: &str) -> bool {
+    // public_make assigns Contrado explicitly, overriding route_for_kind's DTG
+    // fallback. It also currently lacks a ProductSpec: do not advertise remix.
+    kind_availability(kind, Some("JP")).available
+        && PRODUCT_SPECS.iter().any(|spec| spec.kind == kind)
+        && (route_for_kind(kind) == "printful_dtg" || kind == "socks")
+}
+
+/// GET /api/make/kinds — full physical Web catalog, without DB or vendor calls.
+pub async fn make_kinds() -> Response {
+    let items: Vec<serde_json::Value> = make_physical_kinds().map(|(kind, label_ja)| {
+        let (label_en, category) = make_kind_metadata(kind).unwrap_or((label_ja, "common"));
+        let retail_jpy = PRODUCT_SPECS.iter().find(|spec| spec.kind == kind)
+            .map(|spec| spec.retail_jpy);
+        let availability = kind_availability(kind, Some("JP"));
+        serde_json::json!({
+            "kind": kind, "label_ja": label_ja, "label_en": label_en,
+            "retail_jpy": retail_jpy, "category": category,
+            "can_make": make_kind_can_make(kind),
+            "can_remix": make_kind_can_remix(kind),
+            "unavailable_reason": availability.unavailable_reason,
+            "unavailable_reason_ja": availability.unavailable_reason_ja,
+            "unavailable_reason_en": availability.unavailable_reason_en,
+            "allowed_countries": availability.allowed_countries,
+            "excluded_countries": availability.excluded_countries,
+            "temporary": availability.temporary,
+            "stock_checked_at": availability.stock_checked_at,
+            "requires_vendor_preflight": availability.requires_vendor_preflight,
+            "country": "JP",
+        })
+    }).collect();
+    axum::Json(serde_json::json!({"ok": true, "items": items})).into_response()
+}
+
+#[cfg(test)]
+mod make_kinds_tests {
+    use super::*;
+
+    fn vendor_fixture() -> serde_json::Value {
+        serde_json::from_str(include_str!("../tests/printful_catalog_20260914.json")).unwrap()
+    }
+
+    #[test]
+    fn measured_catalog_placements_and_ids() {
+        let fixture = vendor_fixture();
+        let products = fixture["products"].as_array().unwrap();
+        assert_eq!(products.len(), 80);
+        let mut kinds = std::collections::HashSet::new();
+        for product in products {
+            let id = product[0].as_i64().unwrap();
+            let files: Vec<_> = product[1].as_array().unwrap().iter()
+                .map(|v| v.as_str().unwrap()).collect();
+            let placements = placements_for_product(id);
+            for placement in placements {
+                assert!(files.contains(placement), "{id}: unsupported {placement}");
+                assert!(!placement.starts_with("label_"), "optional branding: {id}");
+            }
+            for default in product[2].as_array().unwrap() {
+                let kind = default[0].as_str().unwrap();
+                assert!(kinds.insert(kind));
+                let spec = PRODUCT_SPECS.iter().find(|s| s.kind == kind).unwrap();
+                assert_eq!(spec.printful_product_id, id, "{kind}: do not invent replacement products");
+                assert_eq!(spec.printful_variant_id, default[1].as_i64().unwrap(), "{kind}");
+                assert!(files.contains(&spec.placement), "stored placement {kind}");
+                if placements.is_empty() {
+                    assert_eq!(kind_availability(kind, None).unavailable_reason, Some("multipage_design_required"));
+                }
+            }
+        }
+        assert_eq!(kinds.len(), 84);
+        for entry in fixture["paid_optional_files"].as_array().unwrap() {
+            assert!(!placements_for_product(entry[0].as_i64().unwrap())
+                .contains(&entry[1].as_str().unwrap()));
+        }
+        // AOP full coverage and all components of sets, without free optional
+        // inside pockets, labels or greeting-card message pages.
+        for (id, expected) in [
+            (594, vec!["front", "back", "bottom", "side_right", "side_left", "pocket"]),
+            (279, vec!["front", "top", "bottom"]),
+            (350, vec!["front", "top", "back"]),
+            (654, vec!["outside_front", "outside_back", "inside_front", "inside_back"]),
+            (750, vec!["front", "back", "default"]),
+            (709, vec!["first", "second", "third", "fourth"]),
+            (660, vec!["front", "first", "second", "third", "fourth"]),
+            (568, vec!["front"]),
+            (539, vec!["front"]),
+        ] { assert_eq!(placements_for_product(id), expected, "{id}"); }
+        for id in [214, 215, 693, 745, 746, 764, 964] {
+            assert_eq!(placements_for_product(id), &["front", "back"]);
+        }
+    }
+
+    #[test]
+    fn measured_country_rules_and_temporary_stock_overrides() {
+        let fixture = vendor_fixture();
+        for (kind, rule) in fixture["shipping"].as_object().unwrap() {
+            let availability = kind_availability(kind, None);
+            assert_eq!(serde_json::json!(availability.allowed_countries), rule["allowed"]);
+            assert_eq!(serde_json::json!(availability.excluded_countries), rule["excluded"]);
+            assert!(availability.available);
+        }
+        for (kind, country, available) in [
+            ("tank", "JP", false), ("tank", " au ", true), ("tank", "NZ", true),
+            ("pet_bowl", "jp", false), ("pet_bowl", "US", true),
+            ("notepad", "JP", false), ("notepad", "us", true),
+            ("towel", "JP", true), ("towel", "VN", true), ("towel", "US", false),
+            // AU production availability is NOT a Japan shipping exclusion.
+            ("tote", "JP", true), ("tote", "US", true),
+        ] {
+            let availability = kind_availability(kind, Some(country));
+            assert_eq!(availability.available, available, "{kind} -> {country}");
+            assert_eq!(availability.unavailable_reason,
+                if available { None } else { Some("shipping_country_unavailable") });
+        }
+        for hold in fixture["stock_holds"].as_array().unwrap() {
+            let kind = hold[0].as_str().unwrap();
+            let held = kind_availability(kind, Some("JP"));
+            assert_eq!(held.unavailable_reason, Some("variant_out_of_stock"));
+            assert!(held.temporary && held.stock_checked_at.is_some());
+            assert!(kind_availability_with_stock(kind, Some("JP"), Some(true)).available);
+            assert!(!kind_availability_with_stock(kind, Some("JP"), Some(false)).available);
+        }
+        assert!(!kind_availability_with_stock("tee", Some("JP"), Some(false)).available);
+        for kind in ["dog_tee", "hardcover_photo_book", "softcover_photo_book", "rashguard_contrado"] {
+            assert!(!kind_availability_with_stock(kind, Some("US"), Some(true)).available);
+        }
+        assert!(!kind_availability_with_stock("tank", Some("JP"), Some(true)).available);
+        assert!(kind_availability("kids_tee", Some("JP")).available);
+    }
+
+    #[tokio::test]
+    async fn unavailable_explicit_make_fails_before_db_or_vendor_calls() {
+        // Empty DB + no credentials: only the early kind gate can produce the
+        // expected reason without touching authentication/schema/network.
+        let db = std::sync::Arc::new(std::sync::Mutex::new(
+            rusqlite::Connection::open_in_memory().unwrap()));
+        for kind in ["dog_tee", "hardcover_photo_book", "softcover_photo_book", "tank",
+            "pet_bowl", "notepad", "pet_collar", "christmas_stocking", "rashguard_contrado"] {
+            let q: MakeQuery = serde_json::from_value(serde_json::json!({
+                "prompt": "test design", "kind": kind,
+            })).unwrap();
+            let response = public_make(State(db.clone()), axum::http::HeaderMap::new(), Query(q)).await;
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{kind}");
+            let bytes = axum::body::to_bytes(response.into_body(), 8192).await.unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["availability"]["unavailable_reason"],
+                kind_availability(kind, Some("JP")).unavailable_reason.unwrap());
+        }
+        assert!(generate_one(db, "unused", "dog_tee", "test").await.unwrap_err().contains("犬用"));
+    }
+
+    #[test]
+    fn measured_descriptions_do_not_reintroduce_false_claims() {
+        let spec = |kind| PRODUCT_SPECS.iter().find(|s| s.kind == kind).unwrap().spec_html;
+        assert!(spec("tote").contains("Black") && spec("tote").contains("W42×H42cm"));
+        assert!(!spec("tote").contains("無染"));
+        for kind in ["tee", "tee_white"] {
+            assert!(spec(kind).contains("Nicaragua, Mexico, Honduras or US"));
+            assert!(!spec(kind).contains("printed in EU"));
+        }
+        for kind in ["rashguard_ls", "rashguard_black"] {
+            assert!(spec(kind).contains("75% recycled polyester / 25% elastane"));
+            assert!(spec(kind).contains("Latvia: 82% polyester / 18% elastane"));
+        }
+        assert!(spec("socks").contains("ナイロン60%・コットン22%・スパンデックス18%"));
+        assert!(!spec("socks").contains("足裏まで"));
+        assert!(!spec("bottle").contains("保冷"));
+        assert!(spec("weekly_planner").contains("118ページ"));
+        assert!(spec("christmas_stocking").contains("吊り下げ飾り"));
+    }
+
+    #[tokio::test]
+    async fn make_kinds_matches_ios_contract_fixture() {
+        // Calls the real handler, without a listener, DB, vendor API or background tasks.
+        let response = make_kinds().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let body = axum::body::to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let actual: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        if let Some(output) = std::env::var_os("MU_CONTRACT_FIXTURE_OUTPUT") {
+            let output = std::path::PathBuf::from(output);
+            let approved = std::path::Path::new("/var/folders/5h/3zhkzzk12_1g06p6w2vxc45r0000gn/T/sente").canonicalize().unwrap();
+            let parent = output.parent().unwrap().canonicalize().unwrap();
+            assert!(parent.starts_with(approved), "fixture export must stay in the approved temp directory");
+            // Explicit one-off export never overwrites a pre-existing file.
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(output).unwrap();
+            // One unchanged handler item per line keeps the shared fixture reviewable.
+            writeln!(file, "{{\"ok\":true,\"items\":[").unwrap();
+            let items = actual["items"].as_array().unwrap();
+            for (index, item) in items.iter().enumerate() {
+                writeln!(file, "{}{}", if index == 0 { "" } else { "," }, item).unwrap();
+            }
+            writeln!(file, "]}}").unwrap();
+            return;
+        }
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../ios/MUTests/Fixtures/make-kinds.json");
+        let expected: serde_json::Value = serde_json::from_slice(&std::fs::read(fixture).unwrap()).unwrap();
+        assert_eq!(actual, expected, "update the shared iOS fixture from this handler when the contract changes");
+    }
+
+    async fn catalog_items() -> Vec<serde_json::Value> {
+        let response = make_kinds().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], "application/json");
+        let body = axum::body::to_bytes(response.into_body(), 128 * 1024).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], true);
+        assert_eq!(json.as_object().unwrap().len(), 2);
+        json["items"].as_array().unwrap().clone()
+    }
+
+    #[tokio::test]
+    async fn all_physical_web_kinds_exactly_once_with_complete_metadata() {
+        let items = catalog_items().await;
+        let expected: Vec<_> = MAKE_KINDS_ALL.iter().filter(|(kind, _)| !kind.is_empty()).collect();
+        assert_eq!(items.len(), 85); // 86 Web choices including the client-supplied Auto.
+        assert_eq!(items.len(), expected.len());
+        let mut seen = std::collections::HashSet::new();
+        for (item, (kind, label_ja)) in items.iter().zip(expected) {
+            assert_eq!(item["kind"], *kind);
+            assert!(seen.insert(*kind), "duplicate {kind}");
+            assert_eq!(item["label_ja"], *label_ja);
+            assert!(make_kind_metadata(kind).is_some(), "missing translation: {kind}");
+            let en = item["label_en"].as_str().unwrap();
+            assert!(!en.is_empty() && en.is_ascii() && !en.contains('_'), "{kind}: {en}");
+            assert!(matches!(item["category"].as_str(), Some("wear" | "carry" | "home" | "pet")));
+            assert!(item["can_remix"].is_boolean());
+            assert!(item["can_make"].is_boolean());
+            assert!(item["allowed_countries"].is_array());
+            assert!(item["excluded_countries"].is_array());
+            assert_ne!(route_for_kind(kind), "digital");
+        }
+        for excluded in ["", "song", "zine", "video", "event_ticket", "karaoke_ticket",
+                         "nfc_coin", "device", "house", "printful_custom", "cap"] {
+            assert!(!seen.contains(excluded), "not a physical Web choice: {excluded}");
+        }
+        eprintln!("make kinds: {} physical, {} priced, {} remixable, {} makeable, 0 digital",
+            items.len(), items.iter().filter(|item| item["retail_jpy"].is_i64()).count(),
+            items.iter().filter(|item| item["can_remix"] == true).count(),
+            items.iter().filter(|item| item["can_make"] == true).count());
+    }
+
+    #[tokio::test]
+    async fn can_make_requires_valid_spec_and_public_make_whitelist_parity() {
+        let items = catalog_items().await;
+        // This is the shared iterator consumed by public_make's allowed list.
+        let allowed: std::collections::HashSet<_> = make_physical_kinds()
+            .map(|(kind, _)| kind).collect();
+        let listed: std::collections::HashSet<_> = items.iter()
+            .map(|item| item["kind"].as_str().unwrap()).collect();
+        assert_eq!(listed, allowed);
+        let mut enabled = std::collections::HashSet::new();
+        let mut disabled = Vec::new();
+        for item in &items {
+            let kind = item["kind"].as_str().unwrap();
+            if item["can_make"] == true {
+                assert!(allowed.contains(kind), "public_make rejects {kind}");
+                let spec = PRODUCT_SPECS.iter().find(|spec| spec.kind == kind).unwrap();
+                assert!(spec.printful_product_id > 0 && spec.printful_variant_id > 0, "{kind}");
+                assert!(!spec.placement.is_empty() && spec.retail_jpy > 0, "{kind}");
+                assert!(matches!(route_for_kind(kind), "printful_dtg" | "printful_aop" | "printful_embroidery"));
+                enabled.insert(kind);
+            } else {
+                disabled.push(kind);
+                assert!(item["unavailable_reason"].is_string());
+                assert!(item["unavailable_reason_ja"].is_string());
+                assert!(item["unavailable_reason_en"].is_string());
+                assert_eq!(item["can_remix"], false);
+            }
+        }
+        assert_eq!(enabled.len(), 76);
+        assert_eq!(disabled, ["tank", "rashguard_contrado", "pet_bowl", "pet_collar", "dog_tee",
+            "hardcover_photo_book", "softcover_photo_book", "christmas_stocking", "notepad"]);
+        for excluded in ["", "unknown", "cap", "song", "zine", "video", "event_ticket",
+                         "karaoke_ticket", "device", "house", "nfc_coin", "printful_custom"] {
+            assert!(!make_kind_can_make(excluded), "{excluded}");
+        }
+    }
+
+    #[tokio::test]
+    async fn exact_spec_prices_and_known_royalty_estimates() {
+        let items = catalog_items().await;
+        let mut missing_specs = Vec::new();
+        for item in &items {
+            let kind = item["kind"].as_str().unwrap();
+            match PRODUCT_SPECS.iter().find(|spec| spec.kind == kind) {
+                Some(spec) => assert_eq!(item["retail_jpy"], spec.retail_jpy, "{kind}"),
+                None => {
+                    assert!(item["retail_jpy"].is_null());
+                    assert_eq!(item["can_make"], false);
+                    assert_eq!(item["can_remix"], false);
+                    missing_specs.push(kind);
+                }
+            }
+        }
+        // Existing Web option, but no verified ProductSpec: never invent a price/ID.
+        assert_eq!(missing_specs, ["rashguard_contrado"]);
+        for (kind, base, at_30, at_50) in [
+            ("tee", 4900, 6300, 8800), ("hoodie", 8800, 11300, 15800),
+            ("tote", 3800, 4900, 6800), ("sticker", 800, 1000, 1400),
+            ("mug", 2200, 2800, 4000), ("rashguard_ls", 9800, 12600, 17600),
+            ("pet_bowl", 3800, 4900, 6800), ("die_cut_stickers", 900, 1200, 1600),
+        ] {
+            let item = items.iter().find(|item| item["kind"] == kind).unwrap();
+            assert_eq!(item["retail_jpy"], base);
+            assert_eq!(royalty_adjusted_price(base, 10), base);
+            assert_eq!(royalty_adjusted_price(base, 30), at_30);
+            assert_eq!(royalty_adjusted_price(base, 50), at_50);
+            assert_eq!(royalty_adjusted_price(base, 0), base);
+            assert_eq!(royalty_adjusted_price(base, 100), at_50);
+        }
+    }
+
+    #[tokio::test]
+    async fn remix_defaults_match_actual_base_row_eligibility() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        ensure_schema(&conn);
+        for item in catalog_items().await {
+            let kind = item["kind"].as_str().unwrap();
+            let Some(spec) = PRODUCT_SPECS.iter().find(|spec| spec.kind == kind) else {
+                assert_eq!(kind, "rashguard_contrado");
+                assert_eq!(item["can_remix"], false);
+                continue; // No vendor IDs exist for this option; do not fabricate a fixture.
+            };
+            let sku = format!("TEST-AGENT-{}-1", kind.replace('_', "-").to_uppercase());
+            let route = route_for_kind(kind);
+            conn.execute(
+                "INSERT INTO catalog_products
+                 (sku, brand, label, description_ja, retail_price_jpy, design_file,
+                  fulfillment_route, status, is_active, printful_product_id, printful_variant_id)
+                 VALUES (?1, 'test', 'Test', 'Test', ?3, 'https://example.test/design.png', ?2, 'live', 1, ?4, ?5)",
+                rusqlite::params![sku, route, spec.retail_jpy, spec.printful_product_id, spec.printful_variant_id],
+            ).unwrap();
+            assert_eq!(item["can_remix"], kind_availability(kind, Some("JP")).available
+                && design_variant_base_row(&conn, &sku).is_some(), "{kind} ({route})");
+        }
+        assert!(make_kind_can_remix("socks"));
+        assert!(make_kind_can_remix("mug"));
+        for kind in ["rashguard_ls", "rashguard_contrado", "beanie", "towel", "pet_bandana", "song"] {
+            assert!(!make_kind_can_remix(kind), "{kind}");
+        }
+        // Kind capability is not a promise for review/retired/inactive/no-design items.
+        let sku = "TEST-AGENT-TEE-1";
+        conn.execute("UPDATE catalog_products SET fulfillment_route='contrado_uk' WHERE sku=?1", [sku]).unwrap();
+        assert!(design_variant_base_row(&conn, sku).is_none());
+        conn.execute("UPDATE catalog_products SET fulfillment_route='printful_dtg' WHERE sku=?1", [sku]).unwrap();
+        for status in ["review", "retired"] {
+            conn.execute("UPDATE catalog_products SET status=?1 WHERE sku=?2", rusqlite::params![status, sku]).unwrap();
+            assert!(design_variant_base_row(&conn, sku).is_none());
+        }
+        conn.execute("UPDATE catalog_products SET status='live', is_active=0 WHERE sku=?1", [sku]).unwrap();
+        assert!(design_variant_base_row(&conn, sku).is_none());
+        conn.execute("UPDATE catalog_products SET is_active=1, design_file='' WHERE sku=?1", [sku]).unwrap();
+        assert!(design_variant_base_row(&conn, sku).is_none());
+    }
+}
 
 pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakePageQuery>) -> Response {
     // 表示言語: 既定は日本語(日本先行)。英語は明示的な ?lang=en のときだけ。
@@ -7326,7 +8228,11 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
     for (v, label) in MAKE_KINDS_ALL {
         if !use_all && !DEFAULT_KINDS.contains(v) { continue; }
         let s = if *v == sel { " selected" } else { "" };
-        kind_options.push_str(&format!("      <option value=\"{}\"{}>{}</option>\n", v, s, label));
+        let availability = kind_availability(v, Some("JP"));
+        let disabled = if availability.available { "" } else { " disabled" };
+        let reason = availability.unavailable_reason_ja.map(|r| format!(" — {r}")).unwrap_or_default();
+        kind_options.push_str(&format!("      <option value=\"{}\"{}{}>{}{}</option>\n",
+            v, s, disabled, html_text(label), html_text(&reason)));
     }
     let price_hint = if use_all {
         "作れる物理グッズ：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ラッシュガード ¥9,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
@@ -7826,18 +8732,24 @@ function muEvent(ev,extra){try{
 // ポーリングして完成したらカード画像を差し替え（着た姿=心理的所有感）。
 // 6秒×20回のあと15秒×10回（計約4.5分）。タブ非表示中はfetchしない。
 function pollFit(sku,design,kind){
-  var n=0;
+  var n=0, session=RUNSEQ, image=$('#mkImg'), revision=-1;
+  function current(){return session===RUNSEQ && image===$('#mkImg');}
   function schedule(){setTimeout(tick,n<20?6000:15000);}
   function tick(){
+    if(!current())return;
     n++;
     if(n>30){var f0=$('#mkFit');if(f0)f0.textContent='';return;}
     if(document.hidden){schedule();return;}
     fetch('/api/make/peek?sku='+encodeURIComponent(sku)).then(function(r){return r.json();}).then(function(j){
+      if(!current())return;
+      if(!j || (j.sku && j.sku!==sku) || (j.design_url && j.design_url!==design))return;
+      if(typeof j.preview_revision==='number' && j.preview_revision<revision){schedule();return;}
+      revision=typeof j.preview_revision==='number'?j.preview_revision:revision;
       if(j&&j.mockup&&j.mockup!==design){
         var im=$('#mkImg'),f=$('#mkFit');
-        if(im){im.style.opacity=0;setTimeout(function(){im.src=j.mockup;im.style.opacity=1;},450);}
-        if(f)f.textContent=mkVerb(kind);
-        return;
+        if(im){im.style.opacity=0;setTimeout(function(){if(!current())return;im.src=j.mockup;im.style.opacity=1;},450);}
+        if(f)f.textContent=j.preview_kind==='printful'?'メーカーの仕上がりプレビュー':(j.is_model?mkVerb(kind):'参考プレビュー · 仕上がりを確認中…');
+        if(j.ready===true || (j.ready===undefined && j.is_model))return;
       }
       schedule();
     }).catch(schedule);
@@ -7915,28 +8827,33 @@ var MKV=(SV==='a'||SV==='b'||SV==='c')?SV:hash3(VIS||'a');
 document.querySelectorAll('.ex b').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;});
 // ── 添付 ───────────────────────────────────────────────────
 // 画像→そのままプリント(AI生成スキップ) / 曲→デジタル販売 or グッズで試聴。
-var ATT=null; // {url, media:'image'|'audio'}
+var ATT=null, ATTSEQ=0, UPLOADING=false, MAKING=false; // latest upload owns ATT
+function syncMakeButton(){var b=$('#go');b.disabled=UPLOADING||MAKING;b.textContent=UPLOADING?'アップロード中…':(MAKING?'つくっています…':'つくる');}
 var attF=document.getElementById('attF'),attChip=document.getElementById('attChip'),audioMode=document.getElementById('audioMode');
 function attRender(name){
   if(!ATT){attChip.style.display='none';attChip.innerHTML='';audioMode.style.display='none';return;}
   attChip.style.display='flex';
   attChip.innerHTML=(ATT.media==='audio'?'🎵':'🖼')+' <b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px">'+escHtml(name||'')+'</b> <button type=button id=attX style="flex:none;min-width:0;background:none;border:0;color:rgba(245,245,240,.55);font-size:14px;cursor:pointer;padding:2px 6px">✕</button>';
-  document.getElementById('attX').onclick=function(){ATT=null;attF.value='';attRender();};
+  document.getElementById('attX').onclick=function(){++ATTSEQ;UPLOADING=false;ATT=null;attF.value='';attRender();syncMakeButton();};
   audioMode.style.display=(ATT.media==='audio')?'':'none';
 }
 if(attF)attF.onchange=function(){
   var f=attF.files&&attF.files[0]; if(!f)return;
+  var upload=++ATTSEQ;ATT=null;UPLOADING=false;attRender();syncMakeButton();
   var isAudio=/^audio\//.test(f.type)||/\.(mp3|m4a|wav|ogg)$/i.test(f.name);
   var max=isAudio?25*1024*1024:8*1024*1024;
   if(f.size>max){alert((isAudio?'音声は25MB':'画像は8MB')+'までです');attF.value='';return;}
   attChip.style.display='flex';attChip.textContent='アップロード中…';
+  UPLOADING=true;syncMakeButton();
   var fd=new FormData();fd.append('file',f);
   fetch('/api/make/upload',{method:'POST',body:fd}).then(function(r){return r.json();}).then(function(j){
+    if(upload!==ATTSEQ)return;
+    UPLOADING=false;syncMakeButton();
     if(!j.ok){ATT=null;attRender();alert(j.error||'アップロードできませんでした');attF.value='';return;}
     ATT={url:j.url,media:j.media};attRender(f.name);
     muEvent('cta_click',{cta:'make_attach',media:j.media});
     var p=$('#p'); if(p&&!p.value.trim())p.placeholder=(j.media==='audio')?'例：この曲のタイトルと、ひとこと（雰囲気・誰の曲か）':'例：この画像のタイトルや、のせたい気持ちをひとこと';
-  }).catch(function(){ATT=null;attRender();alert('通信エラー。もう一度どうぞ。');attF.value='';});
+  }).catch(function(){if(upload!==ATTSEQ)return;UPLOADING=false;ATT=null;attRender();syncMakeButton();alert('通信エラー。もう一度どうぞ。');attF.value='';});
 };
 // 例文クイックボタン（B案）: タップで充填して即生成。
 document.querySelectorAll('#mkQuick .q').forEach(b=>b.onclick=()=>{$('#p').value=b.dataset.x;runMake();});
@@ -7960,6 +8877,7 @@ function genTheater(p){
 var MK_HIST=[]; // このセッションで作った案(sku/サムネ/PDP)。「もう1案」で前の案に戻れる。
 var RUNSEQ=0; // 連打/連続生成の古いレスポンスが新しい結果を上書きしないためのガード
 async function runMake(){
+  if(UPLOADING)return;
   const p=$('#p').value.trim(); if(!p){$('#p').focus();return;}
   // 添付があるとき: 画像→design_url / 曲→audio_url。曲を「曲として販売」なら kind=song。
   var k=$('#k').value, att='';
@@ -7970,6 +8888,8 @@ async function runMake(){
     if(am&&am.value==='song')k='song';
   }
   const myRun=++RUNSEQ;
+  const attachment=ATT, attachmentSeq=ATTSEQ;
+  MAKING=true;
   muEvent('cta_click',{cta:'make_create',variant:MKV,engine:muEngine(),att:ATT?ATT.media:''});
   $('#go').disabled=true; $('#go').innerHTML='<span class=spin></span>つくっています…';
   const genDone=genTheater(p);
@@ -7982,8 +8902,8 @@ async function runMake(){
       +'&v='+encodeURIComponent(MKV)+(VIS?'&visitor='+encodeURIComponent(VIS):'')
       +(eng==='local'?'&engine=local':'')+(window.MU_REQ?'&req='+encodeURIComponent(window.MU_REQ):'')+att,{method:'POST'});
     const j=await r.json();
-    if(myRun!==RUNSEQ) return; // より新しい生成が走っている → この結果は捨てる
     genDone();
+    if(myRun!==RUNSEQ) return; // stop this run's timers even when superseded
     if(r.status===401&&j.need_register){
       // 2026-08-28: 作るには登録必須。ここでメール認証を済ませたら自動で再送する。
       $('#out').innerHTML=registerGateHtml();
@@ -7992,13 +8912,13 @@ async function runMake(){
     else if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
       // 添付は1作品で消費(次の作成に紛れ込まない)。
-      ATT=null;attF.value='';attRender();
+      if(ATT===attachment && ATTSEQ===attachmentSeq){ATT=null;attF.value='';attRender();}
       // 2026-08-28: 作るには登録必須になった → maker_email は生成時点で常に確定済み。
       // 旧mu_make_okクッキー判定(生成後にメール認証を求める名義化ゲート)は不要になった。
       renderResult(j,p,true);
     }
-  }catch(e){ if(myRun!==RUNSEQ) return; genDone(); $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
-  $('#go').disabled=false; $('#go').textContent='つくる';
+  }catch(e){ genDone(); if(myRun!==RUNSEQ) return; $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
+  MAKING=false;syncMakeButton();
 }
 // 生成済みの結果カードを描画。ok は旧仕様(生成後メール認証)の名残り —
 // 2026-08-28 以降は登録済みでないと生成自体ができないため常に true で呼ばれる。
@@ -8075,11 +8995,15 @@ async function muRemix(e,sku){
   e.preventDefault();
   var f=e.target, inp=f.querySelector('input[name=words]'), w=(inp.value||'').trim();
   if(!w){inp.focus();return false;}
+  if(UPLOADING)return false;
+  var myRun=++RUNSEQ;
+  MAKING=true;syncMakeButton();
   var btn=f.querySelector('button'), old=btn.textContent; btn.disabled=true; btn.textContent='作り直しています… 10〜30秒';
   muEvent('cta_click',{cta:'make_remix',sku:sku});
   try{
     var r=await fetch('/api/design-remix',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'sku='+encodeURIComponent(sku)+'&words='+encodeURIComponent(w)});
     var j=await r.json();
+    if(myRun!==RUNSEQ)return false;
     if(r.status===401&&j.need_register){
       // 2026-08-28: セッション切れ等で未登録扱いに戻った場合、登録ゲートを出して再送させる。
       btn.disabled=false;btn.textContent=old;
@@ -8090,7 +9014,8 @@ async function muRemix(e,sku){
     if(!j.ok){btn.disabled=false;btn.textContent=old;alert(j.error||'作り直せませんでした。少し時間をおいて試してください。');return false;}
     // 2026-08-28: 作るには登録必須になった → maker_email は生成時点で常に確定済み。
     renderResult(j,w,true);
-  }catch(err){btn.disabled=false;btn.textContent=old;alert('通信エラー。もう一度お試しください。');}
+  }catch(err){if(myRun!==RUNSEQ)return false;btn.disabled=false;btn.textContent=old;alert('通信エラー。もう一度お試しください。');}
+  finally{if(myRun===RUNSEQ){MAKING=false;syncMakeButton();}}
   return false;
 }
 // 登録ゲート(2026-08-28): 作るには先にメール登録が必要(著作権丸投げ/濫用防止・1日5点まで)。
@@ -8610,6 +9535,7 @@ pub struct MakeEditTokenQuery {
 struct MakeEditRow {
     label: String,
     price_jpy: i64,
+    maker_pct: i64,
     status: String,
     design: String,
     mockup: String,
@@ -8617,6 +9543,33 @@ struct MakeEditRow {
     pp: i64,
     pv: i64,
     meta: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Same rate for item/edit estimates and the actual maker credit: product wins,
+/// then brand, then 10%. Invalid/non-integer values retain the legacy fallback.
+fn maker_commission_pct(conn: &rusqlite::Connection, sku: &str) -> i64 {
+    let product_pct = conn.query_row(
+        "SELECT json_extract(meta_json,'$.maker_pct') FROM catalog_products WHERE sku=?",
+        rusqlite::params![sku], |r| r.get::<_, Option<i64>>(0),
+    ).ok().flatten();
+    product_pct.or_else(|| conn.query_row(
+        "SELECT json_extract(b.config_json,'$.maker_pct') FROM catalog_products p
+         JOIN catalog_brands b ON b.slug=p.brand WHERE p.sku=?",
+        rusqlite::params![sku], |r| r.get::<_, Option<i64>>(0),
+    ).ok().flatten()).unwrap_or(10).clamp(0, 50)
+}
+
+fn maker_commission_amount(amount: i64, pct: i64) -> i64 {
+    // i128 keeps the same integer-yen rounding without overflowing large amounts.
+    ((amount.max(0) as i128 * pct.clamp(0, 50) as i128) / 100) as i64
+}
+
+// Background preview/score completion is not a competing author edit.
+fn authored_meta(meta: &serde_json::Map<String, serde_json::Value>) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = meta.clone();
+    m.remove("preview");
+    m.remove("score");
+    m
 }
 
 fn make_edit_load(
@@ -8630,7 +9583,7 @@ fn make_edit_load(
     let row = conn
         .query_row(
             "SELECT COALESCE(label,''), retail_price_jpy, COALESCE(status,''),
-                    COALESCE(design_file,''), COALESCE(mockup_main_file,''),
+                    COALESCE(design_file,''), COALESCE(mockup_url_external,design_file,''),
                     COALESCE(fulfillment_route,'printful_dtg'),
                     printful_product_id, printful_variant_id, COALESCE(meta_json,'{}')
              FROM catalog_products WHERE sku=? AND legacy_source='public_make'",
@@ -8654,6 +9607,7 @@ fn make_edit_load(
     }
     Ok(MakeEditRow {
         label: row.0, price_jpy: row.1, status: row.2, design: row.3,
+        maker_pct: maker_commission_pct(conn, sku),
         mockup: row.4, route: row.5, pp: row.6, pv: row.7, meta,
     })
 }
@@ -8679,7 +9633,7 @@ pub async fn make_item(
     let floor = PRODUCT_SPECS.iter().find(|s| s.kind == kind).map(|s| s.retail_jpy).unwrap_or(500);
     axum::Json(serde_json::json!({
         "ok": true, "sku": sku, "title": title, "hook": hook,
-        "price_jpy": row.price_jpy, "price_floor_jpy": floor,
+        "price_jpy": row.price_jpy, "price_floor_jpy": floor, "maker_earn_jpy": maker_commission_amount(row.price_jpy, row.maker_pct),
         "kind": kind, "status": row.status,
         "design_url": row.design, "mockup_url": row.mockup,
         "audio_url": row.meta.get("audio_url").cloned().unwrap_or(serde_json::Value::Null),
@@ -8729,7 +9683,7 @@ pub async fn make_edit_apply(
             "UPDATE catalog_products SET status='retired', is_active=0, updated_at=datetime('now') WHERE sku=?",
             rusqlite::params![&sku],
         );
-        return axum::Json(serde_json::json!({"ok":true,"retired":true})).into_response();
+        return axum::Json(serde_json::json!({"ok":true,"retired":true,"price_jpy":row.price_jpy,"maker_earn_jpy":maker_commission_amount(row.price_jpy, row.maker_pct)})).into_response();
     }
     let kind = kind_from_sku(&sku);
     let mut updated: Vec<&str> = Vec::new();
@@ -8776,46 +9730,75 @@ pub async fn make_edit_apply(
     // デザインの実寸 aspect で fit するため await が要る(lock の外)。
     let mut regen = false;
     if let Some(pos) = &body.position {
+        if !pos.w_pct.is_finite() || !pos.x_pct.is_finite() || !pos.y_pct.is_finite() {
+            return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"位置は有限の数値で指定してください"}))).into_response();
+        }
         if !(row.route == "printful_dtg" && MAKE_POS_EDITABLE.contains(&row.pp)) {
             return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"この商品は位置調整に対応していません"}))).into_response();
         }
         let w = pos.w_pct.clamp(20.0, 100.0);
         let x = pos.x_pct.clamp(0.0, 100.0);
         let y = pos.y_pct.clamp(0.0, 100.0);
-        let bx = resolve_print_position_box(&row.design, w, x, y).await;
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15))
+            .build().unwrap_or_default();
+        let Some((dw, dh)) = design_dims(&client, &row.design).await else {
+            return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":"画像の寸法を確認できませんでした。もう一度お試しください"}))).into_response();
+        };
+        let (side, left, top) = pct_print_box(w, x, y);
+        let mut bx = aspect_fit_position(1800, 2400, left, top, side, dw, dh);
+        bx["limit_to_print_area"] = serde_json::json!(true);
         meta.insert("print_position".into(), serde_json::json!({"w_pct": w, "x_pct": x, "y_pct": y}));
         meta.insert("print_position_box".into(), bx);
         updated.push("position");
         regen = true;
     }
     if updated.is_empty() {
-        return axum::Json(serde_json::json!({"ok":true,"updated":[],"note":"変更はありません"})).into_response();
+        return axum::Json(serde_json::json!({"ok":true,"updated":[],"price_jpy":row.price_jpy,"maker_earn_jpy":maker_commission_amount(row.price_jpy, row.maker_pct),"note":"変更はありません"})).into_response();
     }
-    {
-        let conn = db.lock().unwrap();
+    let save: Result<i64, String> = (|| {
+        let mut conn = db.lock().unwrap();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let current = make_edit_load(&tx, &sku, token.trim()).map_err(|(_, e)| e.to_string())?;
+        if current.design != row.design || authored_meta(&current.meta) != authored_meta(&row.meta) || current.label != row.label
+            || current.price_jpy != row.price_jpy || current.status != row.status {
+            return Err("別の編集が保存されました。再読込してやり直してください".into());
+        }
+        for key in ["preview", "score"] {
+            if let Some(v) = current.meta.get(key) { meta.insert(key.into(), v.clone()); }
+        }
         if let Some(l) = &new_label {
-            let _ = conn.execute(
+            tx.execute(
                 "UPDATE catalog_products SET label=?, description_ja=?, updated_at=datetime('now') WHERE sku=?",
                 rusqlite::params![l, l, &sku],
-            );
+            ).map_err(|e| e.to_string())?;
         }
         if let Some(p) = new_price {
-            let _ = conn.execute(
+            tx.execute(
                 "UPDATE catalog_products SET retail_price_jpy=?, updated_at=datetime('now') WHERE sku=?",
                 rusqlite::params![p, &sku],
-            );
+            ).map_err(|e| e.to_string())?;
         }
-        let _ = conn.execute(
+        tx.execute(
             "UPDATE catalog_products SET meta_json=?, updated_at=datetime('now') WHERE sku=?",
             rusqlite::params![serde_json::Value::Object(meta).to_string(), &sku],
-        );
-    }
+        ).map_err(|e| e.to_string())?;
+        if regen { invalidate_preview(&tx, &sku).map_err(|e| e.to_string())?; }
+        let revision = preview_snapshot(&tx, &sku)?.revision;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(revision)
+    })();
+    let revision = match save {
+        Ok(r) => r,
+        Err(e) => return (StatusCode::CONFLICT, axum::Json(serde_json::json!({"ok":false,"error":e}))).into_response(),
+    };
     if regen {
         let (db_c, sku_c, pp, pv, design) = (db.clone(), sku.clone(), row.pp, row.pv, row.design.clone());
         tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, design).await; });
     }
     axum::Json(serde_json::json!({
         "ok": true, "updated": updated, "mockup_regen": regen,
+        "price_jpy": new_price.unwrap_or(row.price_jpy), "maker_earn_jpy": maker_commission_amount(new_price.unwrap_or(row.price_jpy), row.maker_pct),
+        "sku": sku, "design_url": row.design, "preview_revision": revision,
         "pdp_url": format!("https://wearmu.com/shop/{}", sku),
         "note": if regen { "保存しました。着用イメージを作り直しています(数十秒)。" } else { "保存しました。" },
     })).into_response()
@@ -8943,35 +9926,63 @@ pub async fn make_polish(
             // CDN キャッシュ衝突を避けるため必ず新キー(seed 付き)に置く。
             let key = format!("catalog/{}-{}.png", sku_c, seed);
             let url = crate::store_r2_bytes(&key, &bytes, &mime).await?;
+            let decoded = image::load_from_memory(&bytes).ok()?;
+            let dims = (decoded.width(), decoded.height());
             let score = crate::gemini::call_gemini_judge(&url, &title_c, &hook_c).await.ok()?;
-            Some((url, score))
+            Some((url, score, dims))
         }));
     }
-    let mut candidates: Vec<(String, crate::gemini::DesignScore)> = Vec::new();
+    let mut candidates: Vec<(String, crate::gemini::DesignScore, (u32, u32))> = Vec::new();
     for t in tasks {
         if let Ok(Some(c)) = t.await { candidates.push(c); }
     }
     if candidates.is_empty() {
-        return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({
-            "ok": true, "improved": false,
-            "before": score_json(&before),
-            "note": "今回はうまく磨けませんでした。もう一度お試しください。",
-        }))).into_response();
+        return axum::Json(unchanged_polish_payload(&row.design, &before, None,
+            "今回はうまく磨けませんでした。もう一度お試しください。")).into_response();
     }
     // 3) 最高得点の候補を選ぶ。
-    candidates.sort_by_key(|(_, s)| -s.total);
-    let (best_url, best_score) = candidates.into_iter().next().unwrap();
+    candidates.sort_by_key(|(_, s, _)| -s.total);
+    let (best_url, best_score, best_dims) = candidates.into_iter().next().unwrap();
 
     // 4) if-better: 元の total を上回ったときだけ差し替える。
     if best_score.total > before.total {
-        {
-            let conn = db.lock().unwrap();
-            let _ = conn.execute(
-                "UPDATE catalog_products SET design_file=?, mockup_main_file=?, mockup_url_external=?, updated_at=datetime('now') WHERE sku=?",
-                rusqlite::params![&best_url, &best_url, &best_url, &sku],
-            );
+        let mut meta = row.meta.clone();
+        if position_editable_product(row.pp) {
+            if let Some(p) = row.meta.get("print_position") {
+                let (side, left, top) = pct_print_box(p["w_pct"].as_f64().unwrap_or(70.0),
+                    p["x_pct"].as_f64().unwrap_or(50.0), p["y_pct"].as_f64().unwrap_or(33.333333));
+                let mut bx = aspect_fit_position(1800, 2400, left, top, side, best_dims.0, best_dims.1);
+                bx["limit_to_print_area"] = serde_json::json!(true);
+                meta.insert("print_position_box".into(), bx);
+            } else {
+                // Default is re-resolved from the new artwork's real aspect.
+                meta.remove("print_position_box");
+            }
         }
-        store_score(&db, &sku, &best_score);
+        meta.insert("score".into(), score_json(&best_score));
+        let save: Result<i64, String> = (|| {
+            let mut conn = db.lock().unwrap();
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            let current = make_edit_load(&tx, &sku, token.trim()).map_err(|(_, e)| e.to_string())?;
+            if current.design != row.design || authored_meta(&current.meta) != authored_meta(&row.meta) || current.label != row.label
+                || current.price_jpy != row.price_jpy || current.status != row.status {
+                return Err("磨いている間に作品が更新されました。再読込してください".into());
+            }
+            tx.execute(
+                "UPDATE catalog_products SET design_file=?, mockup_main_file=?, meta_json=?, updated_at=datetime('now') WHERE sku=?",
+                rusqlite::params![&best_url, &best_url, serde_json::Value::Object(meta).to_string(), &sku],
+            ).map_err(|e| e.to_string())?;
+            tx.execute("UPDATE catalog_product_extras SET image_url=? WHERE sku=? AND label IN ('design','print')",
+                rusqlite::params![&best_url,&sku]).map_err(|e| e.to_string())?;
+            invalidate_preview(&tx, &sku).map_err(|e| e.to_string())?;
+            let revision = preview_snapshot(&tx, &sku)?.revision;
+            tx.commit().map_err(|e| e.to_string())?;
+            Ok(revision)
+        })();
+        let revision = match save {
+            Ok(r) => r,
+            Err(e) => return (StatusCode::CONFLICT, axum::Json(serde_json::json!({"ok":false,"error":e}))).into_response(),
+        };
         // 着用イメージを新デザインで作り直す(数十秒・非同期)。
         let (db_c, sku_c, pp, pv, url_c) = (db.clone(), sku.clone(), row.pp, row.pv, best_url.clone());
         if pp > 0 {
@@ -8982,17 +9993,20 @@ pub async fn make_polish(
             "before": score_json(&before),
             "after": score_json(&best_score),
             "design_url": best_url,
+            "sku": sku, "preview_revision": revision, "preview_kind":"design", "ready":false,
             "pdp_url": format!("https://wearmu.com/shop/{}", sku),
             "note": format!("磨きました。MUスコアが {} → {} に上がりました。着用イメージは数十秒で反映されます。", before.total, best_score.total),
         })).into_response()
     } else {
-        axum::Json(serde_json::json!({
-            "ok": true, "improved": false,
-            "before": score_json(&before),
-            "after": score_json(&best_score),
-            "note": format!("今回は元のデザイン(MUスコア {})を超えられませんでした。元のまま据え置きます。", before.total),
-        })).into_response()
+        axum::Json(unchanged_polish_payload(&row.design, &before, Some(&best_score),
+            &format!("今回は元のデザイン(MUスコア {})を超えられませんでした。元のまま据え置きます。", before.total))).into_response()
     }
+}
+
+fn unchanged_polish_payload(design: &str, before: &crate::gemini::DesignScore,
+    candidate: Option<&crate::gemini::DesignScore>, note: &str) -> serde_json::Value {
+    serde_json::json!({"ok":true,"improved":false,"before":score_json(before),"after":score_json(before),
+        "candidate_score":candidate.map(score_json),"design_url":design,"note":note})
 }
 
 /// DesignScore → JSON(iOS/Web 共通の before/after 表示用)。
@@ -9003,6 +10017,254 @@ fn score_json(s: &crate::gemini::DesignScore) -> serde_json::Value {
 }
 
 // ───────────────────────── iOS アプリ: Push 登録 + 計測 ─────────────────────────
+
+#[cfg(test)]
+mod make_preview_regression_tests {
+    use super::*;
+
+    fn edit_fixture(product_pct: Option<i64>, brand_pct: Option<i64>) -> Db {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE catalog_brands(slug TEXT PRIMARY KEY,config_json TEXT);
+            CREATE TABLE catalog_products(sku TEXT PRIMARY KEY,brand TEXT,label TEXT,description_ja TEXT,
+                retail_price_jpy INTEGER,status TEXT,design_file TEXT,mockup_url_external TEXT,
+                fulfillment_route TEXT,printful_product_id INTEGER,printful_variant_id INTEGER,
+                meta_json TEXT,legacy_source TEXT,is_active INTEGER,updated_at TEXT);
+            INSERT INTO catalog_products VALUES ('MAKE-MAKE-TEE-test','minna','Test','Test',10003,'live',
+                'https://example.test/design-v1.png',NULL,'printful_dtg',71,4012,'{}','public_make',1,NULL);").unwrap();
+        conn.execute("INSERT INTO catalog_brands VALUES ('minna',?)",
+            [serde_json::json!({"maker_pct":brand_pct}).to_string()]).unwrap();
+        conn.execute("UPDATE catalog_products SET meta_json=?",
+            [serde_json::json!({"edit_token":"test-token","maker_pct":product_pct}).to_string()]).unwrap();
+        std::sync::Arc::new(std::sync::Mutex::new(conn))
+    }
+
+    async fn response_json(response: Response) -> serde_json::Value {
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1_000_000).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn item_and_edit_report_actual_maker_rate_including_unchanged_price() {
+        let sku = "MAKE-MAKE-TEE-test";
+        for (product_pct, brand_pct, pct) in [
+            (Some(30),Some(20),30), (Some(80),Some(20),50),
+            (Some(-5),Some(30),0), (Some(0),Some(30),0),
+            (None,Some(30),30), (None,Some(90),50), (None,Some(-1),0), (None,None,10),
+        ] {
+            let db = edit_fixture(product_pct,brand_pct);
+            let query = || Query(MakeEditTokenQuery { t:Some("test-token".into()) });
+            let item = response_json(make_item(State(db.clone()),Path(sku.into()),query()).await).await;
+            assert_eq!(item["price_jpy"],10003);
+            assert_eq!(item["maker_earn_jpy"],10003*pct/100);
+            for body in [serde_json::json!({}),serde_json::json!({"price_jpy":10003})] {
+                let j = response_json(make_edit_apply(State(db.clone()),Path(sku.into()),query(),
+                    axum::Json(serde_json::from_value(body).unwrap())).await).await;
+                assert_eq!(j["updated"],serde_json::json!([]));
+                assert_eq!(j["price_jpy"],10003);
+                assert_eq!(j["maker_earn_jpy"],10003*pct/100);
+            }
+            let changed = response_json(make_edit_apply(State(db.clone()),Path(sku.into()),query(),
+                axum::Json(serde_json::from_value(serde_json::json!({"price_jpy":12003})).unwrap())).await).await;
+            assert_eq!(changed["price_jpy"],12003);
+            assert_eq!(changed["maker_earn_jpy"],12003*pct/100);
+            let retired = response_json(make_edit_apply(State(db.clone()),Path(sku.into()),query(),
+                axum::Json(serde_json::from_value(serde_json::json!({"retire":true})).unwrap())).await).await;
+            assert_eq!(retired["maker_earn_jpy"],12003*pct/100);
+            let conn = db.lock().unwrap();
+            assert_eq!(maker_commission_pct(&conn,sku),pct);
+            assert_eq!(maker_commission_amount(12003,maker_commission_pct(&conn,sku)),12003*pct/100);
+        }
+    }
+
+    #[test]
+    fn maker_commission_defaults_and_integer_rounding() {
+        let db = edit_fixture(None,None);
+        let conn = db.lock().unwrap();
+        conn.execute("DELETE FROM catalog_brands",[]).unwrap();
+        assert_eq!(maker_commission_pct(&conn,"MAKE-MAKE-TEE-test"),10);
+        assert_eq!(maker_commission_amount(999,30),299);
+        assert_eq!(maker_commission_amount(-1,30),0);
+        assert_eq!(maker_commission_amount(i64::MAX,50),i64::MAX/2);
+    }
+
+    #[test]
+    fn preview_rejects_each_stale_identity_and_preserves_exact_design_choice() {
+        let db = edit_fixture(None,None);
+        db.lock().unwrap().execute_batch("CREATE TABLE catalog_product_extras(sku TEXT,label TEXT,image_url TEXT,sort_order INTEGER);").unwrap();
+        let sku = "MAKE-MAKE-TEE-test";
+        for change in [
+            "design_file='https://example.test/design-v2.png'",
+            "meta_json=json_set(meta_json,'$.preview_revision',1)",
+            "meta_json=json_set(meta_json,'$.print_position_box',json('{\"width\":200}'))",
+            "printful_product_id=146", "printful_variant_id=4013",
+        ] {
+            let old = preview_snapshot(&db.lock().unwrap(),sku).unwrap();
+            db.lock().unwrap().execute(&format!("UPDATE catalog_products SET {change}"),[]).unwrap();
+            assert!(publish_preview(&db,sku,&old,"https://example.test/stale-preview.png","printful").is_err(),"{change}");
+        }
+        let exact = preview_snapshot(&db.lock().unwrap(),sku).unwrap();
+        publish_preview(&db,sku,&exact,"https://example.test/preview-unique-v2.png","printful").unwrap();
+        let conn = db.lock().unwrap();
+        let design: String = conn.query_row("SELECT design_file FROM catalog_products",[],|r|r.get(0)).unwrap();
+        assert_eq!(design,"https://example.test/design-v2.png");
+        let raw: String = conn.query_row("SELECT meta_json FROM catalog_products",[],|r|r.get(0)).unwrap();
+        let meta: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let p = make_preview_payload(sku,&design,"live",&meta);
+        assert_eq!(p["preview_kind"],"printful");
+        assert_eq!(p["ready"],true);
+        assert_eq!(p["preview_revision"],1);
+    }
+
+    #[test]
+    fn nonimproved_polish_reports_the_retained_design_score() {
+        let before = crate::gemini::DesignScore { total:80,axes:vec![("craft".into(),16)],verdict:"good".into() };
+        let candidate = crate::gemini::DesignScore { total:60,axes:vec![("craft".into(),12)],verdict:"worse".into() };
+        for score in [None, Some(&candidate)] {
+            let p = unchanged_polish_payload("original",&before,score,"unchanged");
+            assert_eq!(p["improved"],false);
+            assert_eq!(p["after"]["total"],80);
+            assert_eq!(p["design_url"],"original");
+            assert_eq!(p["candidate_score"].is_null(),score.is_none());
+        }
+    }
+
+    #[test]
+    fn product_geometry_preserves_aspect_and_never_guesses_unknown_products() {
+        for pp in [71, 146, 145, 539, 356, 19, 1, 358] {
+            let p = default_print_position(pp, (1408, 768), None).unwrap();
+            let n = |k: &str| p[k].as_i64().unwrap();
+            assert!((n("width") as f64 / n("height") as f64 - 1408.0 / 768.0).abs() < 0.01);
+            assert!(n("left") >= 0 && n("top") >= 0);
+            assert!(n("left") + n("width") <= n("area_width"));
+            assert!(n("top") + n("height") <= n("area_height"));
+        }
+        for pp in [301, 302, 368, 369, 836, 0, 99999] {
+            assert!(default_print_position(pp, (1408, 768), None).is_none());
+        }
+        let custom = aspect_fit_position(1800, 2400, 90, 100, 900, 600, 1200);
+        let actual = default_print_position(71, (600, 1200), Some(custom.clone())).unwrap();
+        for k in ["width", "height", "left", "top"] { assert_eq!(actual[k], custom[k]); }
+    }
+
+    #[test]
+    fn aop_uses_purchased_variant_and_each_panel_cover_geometry() {
+        let data = serde_json::json!({"variant_printfiles":[
+            {"variant_id":1,"placements":{"front":10}},
+            {"variant_id":2,"placements":{"front":20,"sleeve_left":30}}],
+            "printfiles":[{"printfile_id":10,"width":50,"height":100},
+                {"printfile_id":20,"width":1000,"height":2000},
+                {"printfile_id":30,"width":500,"height":1200}]});
+        for (placement, width, height) in [("front",1000,2000),("sleeve_left",500,1200)] {
+            let p = print_position_from_printfiles(&data, 301, 2, placement, (1600,800)).unwrap();
+            assert_eq!(p["area_width"], width);
+            assert_eq!(p["area_height"], height);
+            assert!(p["width"].as_i64().unwrap() >= width);
+            assert!(p["height"].as_i64().unwrap() >= height);
+            assert_eq!(p["width"].as_i64().unwrap(), p["height"].as_i64().unwrap()*2);
+        }
+        assert!(print_position_from_printfiles(&data,301,99,"front",(10,10)).is_none());
+        assert!(print_position_from_printfiles(&data,301,2,"back",(10,10)).is_none());
+    }
+
+    #[test]
+    fn old_preview_jobs_cannot_resurrect_invalidated_images_or_downgrade_printful() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE catalog_products(sku TEXT PRIMARY KEY,design_file TEXT,
+            meta_json TEXT,printful_product_id INTEGER,printful_variant_id INTEGER,mockup_url_external TEXT);
+            CREATE TABLE catalog_product_extras(sku TEXT,label TEXT,image_url TEXT,sort_order INTEGER);
+            INSERT INTO catalog_products VALUES ('test','design-v1','{}',71,4012,NULL);
+            INSERT INTO catalog_product_extras VALUES ('test','lifestyle_v1','stale',1);").unwrap();
+        let db: Db = std::sync::Arc::new(std::sync::Mutex::new(conn));
+        let old = preview_snapshot(&db.lock().unwrap(), "test").unwrap();
+        publish_preview(&db,"test",&old,"flat-v1","card").unwrap();
+        {
+            let conn = db.lock().unwrap();
+            conn.execute("UPDATE catalog_products SET design_file='design-v2',meta_json=json_set(meta_json,'$.print_position_box',json('{\"width\":123}')) WHERE sku='test'", []).unwrap();
+            invalidate_preview(&conn,"test").unwrap();
+            let count: i64 = conn.query_row("SELECT count(*) FROM catalog_product_extras",[],|r|r.get(0)).unwrap();
+            assert_eq!(count,0);
+        }
+        assert!(publish_preview(&db,"test",&old,"late-v1","printful").is_err());
+        let current = preview_snapshot(&db.lock().unwrap(),"test").unwrap();
+        assert_eq!(current.revision,1);
+        publish_preview(&db,"test",&current,"real-v2","printful").unwrap();
+        publish_preview(&db,"test",&current,"late-flat-v2","card").unwrap();
+        let conn = db.lock().unwrap();
+        let (url, meta): (String,String) = conn.query_row("SELECT mockup_url_external,meta_json FROM catalog_products",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(url,"real-v2");
+        let mut meta: serde_json::Value = serde_json::from_str(&meta).unwrap();
+        let peek = make_preview_payload("test","design-v2","live",&meta);
+        assert_eq!(peek["ready"],true);
+        assert_eq!(peek["preview_revision"],1);
+        assert_eq!(peek["design_url"],"design-v2");
+        meta["preview_revision"] = serde_json::json!(2);
+        let stale = make_preview_payload("test","design-v2","live",&meta);
+        assert_eq!(stale["ready"],false);
+        assert!(stale["mockup"].is_null());
+        assert_eq!(make_preview_payload("test","other-design","live",&meta)["ready"],false);
+    }
+
+    // Execute the shipped JS functions, with deterministic timers/network; no paid APIs.
+    #[test]
+    fn browser_async_sessions_and_upload_regressions() {
+        let script = r###"
+const assert=require('node:assert/strict'), vm=require('node:vm'), fs=require('node:fs');
+const src=fs.readFileSync(process.argv[1],'utf8');
+function between(a,b){return src.slice(src.indexOf(a),src.indexOf(b,src.indexOf(a)));}
+function env(){
+  const els={}, pending=[], timers=[], rendered=[];let stopped=0;
+  function el(s){return els[s]||(els[s]={value:'',style:{},textContent:'',innerHTML:'',focus(){},querySelector(){}});}
+  el('#p').value='cat';el('#k').value='tee';
+  const c={console,encodeURIComponent,alert(){},FormData:class{append(){}},
+    $:el,document:{hidden:false,getElementById(id){return el('#'+id)},querySelector:el},
+    RUNSEQ:0,MKV:'a',VIS:'v',window:{},muEvent(){},muEngine(){return 'gemini'},
+    mkVerb(){return 'model'},escHtml(s){return s},registerGateHtml(){return 'register'},wireRegisterGate(){},
+    genTheater(){return ()=>stopped++},renderResult(j){rendered.push(j.sku)},
+    setTimeout(fn,ms){timers.push({fn,ms})},fetch(url,opts){return new Promise(resolve=>pending.push({url,opts,resolve}));}};
+  vm.createContext(c);
+  vm.runInContext(between('var ATT=null,','// 例文クイックボタン'),c);
+  vm.runInContext(between('function pollFit(','// ── A/B/C 割当'),c);
+  vm.runInContext(between('async function runMake(){','// 生成済みの結果カード'),c);
+  vm.runInContext(between('async function muRemix(e,sku){','// 登録ゲート(2026-08-28)'),c);
+  return {c,el,pending,timers,rendered,stopped:()=>stopped,
+    reply(i,j,status=200){pending[i].resolve({status,json:async()=>j})},
+    timer(ms){let i=timers.findIndex(t=>t.ms===ms);assert.ok(i>=0,'timer '+ms);timers.splice(i,1)[0].fn();},
+    upload(name){el('#attF').files=[{name,type:'image/png',size:10}];c.attF.onchange();}};
+}
+const flush=()=>new Promise(resolve=>setImmediate(resolve));
+(async()=>{
+  {const e=env();e.c.pollFit('A','design-A','tee');e.timer(6000);e.c.RUNSEQ++;e.el('#mkImg').src='B';
+    e.reply(0,{sku:'A',design_url:'design-A',mockup:'old',ready:true});await flush();
+    assert.equal(e.el('#mkImg').src,'B');assert.equal(e.timers.length,0);}
+  {const e=env();e.c.pollFit('A','design-A','tee');e.timer(6000);
+    e.reply(0,{sku:'A',design_url:'design-A',mockup:'flat',preview_kind:'card',preview_revision:1,ready:false});await flush();
+    e.timer(450);assert.equal(e.el('#mkImg').src,'flat');e.timer(6000);
+    e.reply(1,{sku:'A',design_url:'design-A',mockup:'real',preview_kind:'printful',preview_revision:1,ready:true});await flush();
+    e.timer(450);assert.equal(e.el('#mkImg').src,'real');assert.equal(e.timers.length,0);}
+  {const e=env();e.c.pollFit('A','d','tee');e.timer(6000);e.reply(0,{mockup:'old',ready:true});await flush();
+    e.c.RUNSEQ++;e.el('#mkImg').src='new';e.timer(450);assert.equal(e.el('#mkImg').src,'new');}
+  {const e=env();e.upload('A');await e.c.runMake();assert.equal(e.pending.length,1,'submit blocked during upload');
+    e.upload('B');e.reply(1,{ok:true,url:'B',media:'image'});await flush();
+    e.reply(0,{ok:true,url:'A',media:'image'});await flush();assert.equal(e.c.ATT.url,'B');assert.equal(e.c.UPLOADING,false);}
+  {const e=env();e.c.ATT={url:'A',media:'image'};const run=e.c.runMake();e.upload('B');
+    e.reply(1,{ok:true,url:'B',media:'image'});await flush();e.reply(0,{ok:true,sku:'A'});await run;
+    assert.equal(e.c.ATT.url,'B','new upload survives old generation');}
+  {const e=env();const a=e.c.runMake(),b=e.c.runMake();e.reply(1,{ok:true,sku:'B'});await b;
+    e.reply(0,{ok:true,sku:'A'});await a;assert.deepEqual(e.rendered,['B']);assert.equal(e.stopped(),2);}
+  {const e=env(),btn={textContent:'remix'},inp={value:'for mom'},f={querySelector(s){return s==='button'?btn:inp}};
+    const remix=e.c.muRemix({preventDefault(){},target:f},'A'),make=e.c.runMake();
+    e.reply(1,{ok:true,sku:'B'});await make;e.reply(0,{ok:true,sku:'old-remix'});await remix;
+    assert.deepEqual(e.rendered,['B']);assert.equal(e.c.MAKING,false);}
+  console.log('7 browser race regressions passed');
+})().catch(e=>{console.error(e);process.exitCode=1});
+"###;
+        let output = std::process::Command::new("node").arg("-e").arg(script)
+            .arg(concat!(env!("CARGO_MANIFEST_DIR"), "/src/catalog.rs"))
+            .output().expect("node is required for the shipped browser JS regression tests");
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    }
+}
 
 #[derive(serde::Deserialize)]
 pub struct PushRegisterBody {
@@ -9637,6 +10899,10 @@ mod sound_tee_tests {
 }
 
 pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Query(q): Query<MakeQuery>) -> Response {
+    // Explicit unavailable choices fail before authentication/DB/paid parsing.
+    if let Some(kind) = q.kind.as_deref() {
+        if let Some(response) = make_kind_unavailable_response(kind) { return response; }
+    }
     let prompt_in = q.prompt.trim().to_string();
     if prompt_in.is_empty() || prompt_in.chars().count() > 300 {
         return (StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({"ok":false,"error":"作りたいものを入力してください（300文字以内）"}))).into_response();
@@ -9760,27 +11026,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         }
     };
     let kind_parsed = parsed["kind"].as_str().unwrap_or("tee");
-    // DTG apparel + the AOP rashguard (Printful) + the premium full-coverage
-    // rashguard (Contrado UK) are offered publicly. rashguard_ls → printful_aop;
-    // rashguard_contrado → contrado_uk (review-gated, manual fulfillment).
-    // 刷れる物理グッズ（PRODUCT_SPECS + Printful mockup placement を実APIで検証済み
-    // のみ）。刺繍系(cap/beanie/blanket/towel)・特殊placement(shorts/joggers/placemat)・
-    // digital/受注(song/zine/video/各ticket/nfc/device/house) は別経路なので含めない。
-    let allowed = [
-        // 着る
-        "tee", "tee_white", "hoodie", "crewneck", "long_sleeve_tee", "tank",
-        "rashguard_ls", "rashguard_black", "rashguard_contrado", "leggings", "apron",
-        "shorts", "joggers", "kids_tee", "socks", "bucket_hat",
-        // 持つ
-        "tote", "sticker", "mug", "mug_black", "phone_case", "laptop_sleeve",
-        "mouse_pad", "bottle", "wine_glass", "journal",
-        "drawstring_bag", "fanny_pack", "backpack",
-        // 家・暮らし
-        "poster", "canvas", "metal_print", "pillow", "coaster", "placemat",
-        "beach_towel", "flag",
-        // 刺繍
-        "beanie", "blanket", "towel",
-    ];
+    // Same physical choices as Web and GET /api/make/kinds; do not let newly
+    // listed kinds silently fall back to tee through a stale second whitelist.
+    let allowed: Vec<&str> = make_physical_kinds().map(|(kind, _)| kind).collect();
     // 音源添付があるときだけ kind=song（デジタル販売・issue_digital 配信）を解放。
     // 音源なしの song 指定は配信物が無いので物販既定（tee）に落とす。
     let kind: &str = match q.kind.as_deref() {
@@ -9793,6 +11041,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         _ if allowed.contains(&kind_parsed) => kind_parsed,
         _ => "tee",
     };
+    // Inferred kinds must pass the same restriction gate as explicit picks.
+    if let Some(response) = make_kind_unavailable_response(kind) { return response; }
     let theme_brief = parsed["theme_brief"].as_str().unwrap_or(&prompt_in).to_string();
     let display = parsed["display"].as_str().unwrap_or("MU").to_string();
     let hook = parsed["hook"].as_str().unwrap_or("自然言語から自動生成").to_string();
@@ -10145,10 +11395,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     if spec.printful_product_id > 0 {
         let (pp, pv, url_c, sku_c, db_c) = (spec.printful_product_id, spec.printful_variant_id, url.clone(), sku.clone(), db.clone());
         tokio::spawn(async move { let _ = generate_onbody_mockup(db_c, sku_c, pp, pv, url_c).await; });
-        // 着画(モデルが着ている写真)。デザインを参照に Gemini が人物着用の
-        // エディトリアル写真を生成し、catalog_product_extras(label 'lifestyle')に保存。
-        // make_peek がこれを優先して返す → アプリは"人が着てる着画"を見せる。+¥6/枚。
-        if !flagged && !is_full_bleed && kind != "song" {
+        // Non-MAKE editorial imagery only; minna uses the actual vendor render.
+        if brand_slug != "minna" && !flagged && !is_full_bleed && kind != "song" {
             let (db_l, sku_l, kind_l, brief_l, slug_l) =
                 (db.clone(), sku.clone(), kind.to_string(), theme_brief.clone(), brand_slug.clone());
             tokio::spawn(async move {
@@ -10165,7 +11413,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
             match crate::gemini::call_gemini_judge(&url_s, &title_s, &hook_s).await {
                 Ok(score) => {
                     tracing::info!("[catalog/score] make {} = {}", sku_s, score.total);
-                    store_score(&db_s, &sku_s, &score);
+                    store_score_for_design(&db_s, &sku_s, &url_s, &score);
                 }
                 Err(e) => tracing::warn!("[catalog/score] make {} judge failed: {}", sku_s, e),
             }
@@ -11176,9 +12424,8 @@ pub struct ReplayQuery {
 
 /// GET /admin/catalog/orders/:id/replay?token= — retry fulfillment for
 /// a catalog_orders row that failed. Looks up the stripe session_id,
-/// re-pulls the Stripe Session, deletes the catalog_orders row (so the
-/// idempotency check inside fulfill_catalog_order doesn't skip), then
-/// re-runs fulfillment. Token-gated.
+/// re-pulls the paid Stripe Session and atomically queues a bounded retry on
+/// the same row. Terminal orders and historical rows without a snapshot are held.
 pub async fn admin_orders_replay(
     State(db): State<Db>,
     Path(order_id): Path<i64>,
@@ -11204,38 +12451,23 @@ pub async fn admin_orders_replay(
     if stripe_key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "STRIPE_SECRET_KEY unset").into_response();
     }
-    let url = format!(
-        "https://api.stripe.com/v1/checkout/sessions/{}",
-        sid
-    );
-    let session = match reqwest::Client::new().get(&url).basic_auth(&stripe_key, None::<&str>).send().await {
-        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
-        Ok(r) => {
-            let s = r.status();
-            return (StatusCode::BAD_GATEWAY,
-                format!("stripe {}: {}", s, r.text().await.unwrap_or_default()))
-                .into_response();
-        }
-        Err(e) => return (StatusCode::BAD_GATEWAY, format!("stripe: {}", e)).into_response(),
+    let session = match crate::order_contract::verified_session(&db,&serde_json::json!({"id":sid})).await {
+        Ok(s)=>s,
+        Err(e)=>return (StatusCode::CONFLICT,e).into_response(),
     };
-    let Some(session) = session else {
-        return (StatusCode::BAD_GATEWAY, "no session JSON").into_response();
-    };
-    // Clear the old failed row so the idempotency guard inside
-    // fulfill_catalog_order doesn't short-circuit.
-    {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "DELETE FROM catalog_orders WHERE id=?",
-            rusqlite::params![order_id],
-        );
+    if !crate::order_contract::paid(&session) {
+        return (StatusCode::CONFLICT, "session is not paid").into_response();
+    }
+    match crate::order_contract::queue_retry(&db.lock().unwrap(),order_id) {
+        Ok(true) => {},
+        _ => return (StatusCode::CONFLICT, "order is terminal, busy, lacks a snapshot, or exhausted retries").into_response(),
     }
     // Re-run fulfillment (in the foreground so the operator sees the result).
-    fulfill_catalog_order(db, session).await;
+    crate::resume_checkout_order(db, session).await;
     axum::Json(serde_json::json!({
         "ok": true,
         "replayed_session": sid,
-        "note": "Check /admin/catalog/orders for the new row's status",
+        "note": "Check /admin/catalog/orders for the same row's status",
     })).into_response()
 }
 
@@ -14624,7 +15856,7 @@ pub async fn shop_checkout(
                     COALESCE(printful_product_id, 0),
                     COALESCE(printful_variant_id, 0),
                     COALESCE(printful_sync_variant_id, 0)
-             FROM catalog_products WHERE sku=?", ext = MOCKUP_EXT_LIVE)
+             FROM catalog_products WHERE sku=? AND status='live'", ext = MOCKUP_EXT_LIVE)
         } else {
             format!(
             "SELECT stripe_price_id, retail_price_jpy, description_ja, brand,
@@ -14633,7 +15865,7 @@ pub async fn shop_checkout(
                     COALESCE(printful_product_id, 0),
                     COALESCE(printful_variant_id, 0),
                     COALESCE(printful_sync_variant_id, 0)
-             FROM catalog_products WHERE sku=? AND is_active=1", ext = MOCKUP_EXT_LIVE)
+             FROM catalog_products WHERE sku=? AND status='live'", ext = MOCKUP_EXT_LIVE)
         };
         conn.query_row(
             &sql,
@@ -14767,7 +15999,7 @@ pub async fn shop_checkout(
                 "SELECT retail_price_jpy, description_ja,
                         COALESCE(mockup_url_external, mockup_main_file, ''),
                         COALESCE(fulfillment_route, 'printful_dtg')
-                 FROM catalog_products WHERE sku=? AND is_active=1",
+                 FROM catalog_products WHERE sku=? AND status='live'",
                 rusqlite::params![asku],
                 |r| {
                     Ok((
@@ -14915,11 +16147,6 @@ pub async fn shop_checkout(
         ("metadata[kind]", "catalog".into()),
         ("metadata[catalog_sku]", sku.clone()),
     ];
-    if is_bulk_brand {
-        form.push(("line_items[0][adjustable_quantity][enabled]", "true".into()));
-        form.push(("line_items[0][adjustable_quantity][minimum]", "1".into()));
-        form.push(("line_items[0][adjustable_quantity][maximum]", "50".into()));
-    }
     // Size picker inside Stripe Checkout for made-to-order apparel (tee /
     // hoodie / crewneck / rashguard / long-sleeve). Previously this dropdown
     // was gated on `is_bulk_brand` (nouns only), so every other apparel SKU
@@ -14930,9 +16157,18 @@ pub async fn shop_checkout(
     // Gated off when the SKU rides a pre-synced Printful variant
     // (printful_sync_variant_id): build_printful_item ignores the variant
     // override for those, so we must not offer a size we can't actually ship.
-    let show_size = pf_sync_variant_id == 0
-        && resolve_apparel_size_variant(pf_product_id, pf_variant_id, "M").is_some();
-    if show_size {
+    let checkout_meta: serde_json::Value = match meta_json.as_deref().map(serde_json::from_str).transpose() {
+        Ok(m) => m.unwrap_or(serde_json::json!({})),
+        Err(_) => return (StatusCode::FAILED_DEPENDENCY,"invalid product metadata").into_response(),
+    };
+    let persisted = match crate::order_contract::print_spec_for_route(&route,&checkout_meta) {
+        Ok(p) => p,
+        Err(e) => return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+    };
+    let persisted_sizes = persisted.as_ref().map(|p| crate::order_contract::size_choices(&p["variant_map"]).unwrap());
+    let show_size = persisted_sizes.as_ref().map(|s| s.len()>1).unwrap_or(pf_sync_variant_id == 0
+        && resolve_apparel_size_variant(pf_product_id, pf_variant_id, "M").is_some());
+    if show_size && persisted.is_none() {
         // fulfill_catalog_order reads custom_fields[key=size] and swaps the
         // Printful variant via resolve_apparel_size_variant(), preserving the
         // garment's colour by offsetting from THIS SKU's own M variant.
@@ -14971,8 +16207,11 @@ pub async fn shop_checkout(
     // index, so the phone-model dropdown and the gift fields never collide.
     // (the apparel size picker above already claimed custom_fields[0].)
     let mut phone_model_field: Vec<(String, String)> = Vec::new();
+    if let Some(sizes) = persisted_sizes.as_ref().filter(|s| s.len()>1) {
+        phone_model_field.extend(persisted_size_form(sizes));
+    }
     let mut cf_n: usize = if show_size { 1 } else { 0 };
-    if pf_product_id == 601 {
+    if pf_product_id == 601 && persisted.is_none() {
         let picked = q.model.as_deref().map(|m| m.to_uppercase()).filter(|m| {
             PHONE_CASE_MODELS.iter().any(|(v, _, _)| *v == m)
         });
@@ -15111,7 +16350,8 @@ pub async fn shop_checkout(
             ));
         }
     }
-    match price_id.filter(|s| s.starts_with("price_")) {
+    // Price is frozen from this checkout, never from an independently edited Stripe Price.
+    match price_id.filter(|_| false) {
         Some(pid) => {
             form.push(("line_items[0][price]", pid));
             // Pre-created prices carry images on the Stripe Product side;
@@ -15156,25 +16396,57 @@ pub async fn shop_checkout(
         }
     }
 
+    let mut snapshot_lines = Vec::new();
+    let main_line = checkout_catalog_line(&db, &sku, initial_qty as i64, price_jpy,
+        show_size, q.model.as_deref()).await;
+    match main_line {
+        Ok(line) if line["route"].as_str() == Some(&route)
+            && (line["product_id"].as_i64() == Some(pf_product_id)
+                || (pf_product_id==0 && line["sync_source_id"].as_i64()==Some(pf_sync_variant_id))) => snapshot_lines.push(line),
+        Ok(_) => return (StatusCode::CONFLICT,"product changed during checkout; retry").into_response(),
+        Err(e) => return (StatusCode::FAILED_DEPENDENCY, e).into_response(),
+    }
+    if let Some(a) = &addon {
+        if !route.starts_with("printful_") || is_gift {
+            return (StatusCode::BAD_REQUEST, "add-on not supported for this route/gift").into_response();
+        }
+        match checkout_catalog_line(&db, &a.sku, 1, a.price_jpy, false, None).await {
+            Ok(line) => snapshot_lines.push(line),
+            Err(e) => return (StatusCode::FAILED_DEPENDENCY, e).into_response(),
+        }
+    }
+    let snapshot = serde_json::json!({"version":1,"kind":"catalog","route":route,"lines":snapshot_lines});
+    let snapshot=match crate::order_contract::prepare_checkout(&snapshot,"JP").await {
+        Ok(s)=>s,Err(e)=>return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+    };
+    let draft = match crate::order_contract::draft(&db.lock().unwrap(), &sku, &snapshot) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    };
+    form.push(("metadata[order_draft]", draft.clone()));
     let req = reqwest::Client::new()
         .post("https://api.stripe.com/v1/checkout/sessions")
         .basic_auth(&stripe_key, None::<&str>);
     // Merge the phone-model custom field (owned Strings) with the base form
     // only when present, so every other checkout keeps the &str fast path.
-    let req = if phone_model_field.is_empty() {
-        req.form(&form)
-    } else {
+    let req = {
         let mut all: Vec<(String, String)> = form
             .iter()
             .map(|(k, v)| ((*k).to_string(), v.clone()))
             .collect();
         all.extend(phone_model_field);
+        if let Err(e)=filtered_checkout_size_form(&mut all,&snapshot["lines"][0]) {
+            return (StatusCode::FAILED_DEPENDENCY,e).into_response();
+        }
         req.form(&all)
     };
     let resp = req.send().await;
     match resp {
         Ok(r) if r.status().is_success() => {
             let j: serde_json::Value = r.json().await.unwrap_or_default();
+            if let Err(e) = crate::order_contract::attach(&db.lock().unwrap(), &draft, &j) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response();
+            }
             let url = j["url"].as_str().unwrap_or("/").to_string();
             // checkout_start はサーバ側の真実源(/api/v1/event のALLOWED外)。
             // legacy /buy 経路(main.rs)では発火していたが、クリエイターループの
@@ -15312,6 +16584,97 @@ color:#f4f1ea;text-decoration:none;font-family:'Hiragino Sans',sans-serif;font-s
 
 // ─── Webhook fulfillment (called from main.rs stripe_webhook) ─────────
 
+pub(crate) async fn checkout_catalog_line(db: &Db, sku: &str, qty: i64, unit: i64,
+    sizes: bool, phone_model: Option<&str>) -> Result<serde_json::Value, String> {
+    let (product, variant, route, description, label, meta, price): (i64,i64,String,String,String,Option<String>,i64) = {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT COALESCE(printful_product_id,0),COALESCE(printful_variant_id,0),fulfillment_route,description_ja,label,meta_json,retail_price_jpy FROM catalog_products WHERE sku=? AND status='live'", [sku],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).map_err(|e| e.to_string())?
+    };
+    if price != unit { return Err("price changed during checkout; retry".into()); }
+    let mut line = serde_json::json!({"sku":sku,"product_id":product,"route":route,"description":description,"label":label,"meta_json":meta,"qty":qty,"unit_amount":unit,"size":"FIXED"});
+    crate::order_contract::line_availability(&line,None,Some(true))?;
+    if matches!(route.as_str(), "manual" | "digital") { return Ok(line); }
+    if !route.starts_with("printful_") { return Err(format!("unsupported automatic fulfillment route: {route}")); }
+    let (sync_id,design):(i64,Option<String>)=db.lock().unwrap().query_row(
+        "SELECT COALESCE(printful_sync_variant_id,0),design_file FROM catalog_products WHERE sku=?",[sku],
+        |r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
+    let meta_value: serde_json::Value = serde_json::from_str(meta.as_deref().unwrap_or("{}")).map_err(|e|e.to_string())?;
+    if sync_id>0 && design.as_deref().unwrap_or("").trim().is_empty()
+        && meta_value.get("printful_files").is_none() {
+        let resolved=crate::order_contract::resolve_sync_line(line,sync_id,variant).await?;
+        if let Some(selected)=phone_model {
+            if !resolved["sync_size"].as_str().is_some_and(|s|s.trim().eq_ignore_ascii_case(selected.trim())) {
+                return Err("sync-only item is fixed to its configured size; size override unsupported".into());
+            }
+        }
+        return Ok(resolved);
+    }
+    if let Some(spec) = crate::order_contract::persisted_print_spec(&meta_value)? {
+        let choices = crate::order_contract::size_choices(&spec["variant_map"])?;
+        if choices.len()>1 {
+            if !sizes { return Err("this item requires an explicit size selection".into()); }
+            line["size_field"] = serde_json::json!("size");
+        } else { line["size"] = serde_json::json!(choices[0]); }
+        let mut variants = serde_json::Map::new();
+        for size in choices {
+            variants.insert(size.clone(), persisted_print_item(&spec,
+                crate::order_contract::size_variant(&spec["variant_map"],&size)?,qty,&format!("{:.2}",unit as f64))?);
+        }
+        line["variants"] = serde_json::Value::Object(variants);
+        line["variant_map"] = spec["variant_map"].clone();
+        return Ok(line);
+    }
+    let choices: Vec<(String,i64)> = if sizes {
+        line["size_field"] = serde_json::json!("size");
+        ["S","M","L","XL","2XL"].iter().map(|s| resolve_apparel_size_variant(product,variant,s)
+            .map(|v| (s.to_string(),v)).ok_or_else(|| format!("unverified size {s}"))).collect::<Result<_,_>>()?
+    } else if product == 601 {
+        if let Some(model) = phone_model.map(str::to_uppercase).filter(|m| PHONE_CASE_MODELS.iter().any(|(v,_,_)| *v == m)) {
+            line["size"] = serde_json::json!(model);
+            vec![(model.clone(),resolve_size_variant(product,&model).ok_or("unsupported phone model")?)]
+        } else {
+            line["size_field"] = serde_json::json!("iphone_model");
+            PHONE_CASE_MODELS.iter().map(|(v,_,id)| (v.to_string(),*id)).collect()
+        }
+    } else { vec![("FIXED".into(),variant)] };
+    let client = reqwest::Client::new();
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    // Capture all choices before asynchronous geometry lookups can interleave an edit.
+    let prepared = {
+        let conn = db.lock().unwrap();
+        let mut prepared = Vec::new();
+        for (size,vid) in choices {
+            let item =
+            build_printful_item(&conn,sku,&format!("{unit:.2}"),Some(vid),true,qty)
+                .ok_or("print-ready artwork and explicit variant required")?;
+            prepared.push((size,vid,item));
+        }
+        prepared
+    };
+    let mut variants = serde_json::Map::new();
+    let mut dimensions = std::collections::HashMap::new();
+    for (size,vid,mut item) in prepared {
+        let url = item["files"][0]["url"].as_str().ok_or("print file missing")?.to_string();
+        let dims = if let Some(d) = dimensions.get(&url) { *d } else {
+            let d = design_dims(&client,&url).await.ok_or("cannot verify print artwork dimensions")?;
+            dimensions.insert(url,d); d
+        };
+        let custom = item["files"][0].get("position").cloned();
+        let positions = resolve_printful_positions(&client,&key,product,vid,dims,custom).await?;
+        let fs = item["files"].as_array_mut().ok_or("print files missing")?;
+        if fs.len() != positions.len() { return Err("print placement mismatch".into()); }
+        for (f,(placement,pos)) in fs.iter_mut().zip(positions) {
+            if f["type"].as_str()!=Some(&placement) { return Err("print placement type mismatch".into()); }
+            f["position"] = pos;
+        }
+        crate::order_contract::files(&item["files"])?;
+        variants.insert(size,item);
+    }
+    line["variants"] = serde_json::Value::Object(variants);
+    Ok(line)
+}
+
 /// Build the per-SKU Printful order `item` JSON for a single catalog SKU.
 ///
 /// This is the reusable core of the fulfillment item construction (the
@@ -15331,6 +16694,43 @@ color:#f4f1ea;text-decoration:none;font-family:'Hiragino Sans',sans-serif;font-s
 /// not a Printful route (e.g. contrado_uk / manual / digital). The
 /// caller decides whether a `None` for the main SKU aborts the order or
 /// whether a `None` addon is simply skipped.
+fn persisted_size_form(sizes: &[String]) -> Vec<(String,String)> {
+    let mut form = vec![("custom_fields[0][key]".into(),"size".into()),
+        ("custom_fields[0][label][type]".into(),"custom".into()),
+        ("custom_fields[0][label][custom]".into(),"Size".into()),
+        ("custom_fields[0][type]".into(),"dropdown".into())];
+    for (i,size) in sizes.iter().enumerate() {
+        for key in ["label","value"] { form.push((format!("custom_fields[0][dropdown][options][{i}][{key}]"),size.clone())); }
+    }
+    form
+}
+
+/// Rebuild the existing size/model field from the SAME filtered snapshot that
+/// will be saved. Other custom fields (gift text etc.) keep their indices.
+fn filtered_checkout_size_form(form: &mut Vec<(String,String)>, line: &serde_json::Value) -> Result<(),String> {
+    let Some(field)=line["size_field"].as_str() else { return Ok(()); };
+    let key=form.iter().find(|(k,v)|k.starts_with("custom_fields[") && k.ends_with("][key]") && v==field)
+        .map(|(k,_)|k.trim_end_matches("[key]").to_string()).ok_or("selected size field missing from Stripe form")?;
+    let sizes=crate::order_contract::size_choices(&line["variant_map"])?;
+    let prefix=format!("{key}[dropdown]");
+    form.retain(|(k,_)|!k.starts_with(&prefix));
+    for (i,size) in sizes.iter().enumerate() {
+        for part in ["label","value"] {form.push((format!("{prefix}[options][{i}][{part}]"),size.clone()));}
+    }
+    let default=line["size"].as_str().filter(|s|sizes.iter().any(|v|v==s)).ok_or("available default size missing")?;
+    form.push((format!("{prefix}[default_value]"),default.into()));
+    Ok(())
+}
+
+fn persisted_print_item(spec: &serde_json::Value, vid: i64, qty: i64, retail: &str) -> Result<serde_json::Value,String> {
+    if !spec["variant_map"].as_object().ok_or("size map missing")?.values().any(|v| v.as_i64()==Some(vid)) {
+        return Err("variant not in persisted size map".into());
+    }
+    crate::order_contract::files(&spec["files"])?;
+    Ok(serde_json::json!({"variant_id":vid,"quantity":qty,"retail_price":retail,
+        "files":spec["files"],"options":spec["options"]}))
+}
+
 fn build_printful_item(
     conn: &rusqlite::Connection,
     sku: &str,
@@ -15339,6 +16739,19 @@ fn build_printful_item(
     require_printful: bool,
     quantity: i64,
 ) -> Option<serde_json::Value> {
+    let (raw_meta, stored_route): (Option<String>,String) = conn.query_row(
+        "SELECT meta_json,fulfillment_route FROM catalog_products WHERE sku=?",[sku],|r|Ok((r.get(0)?,r.get(1)?))).ok()?;
+    let meta: serde_json::Value = serde_json::from_str(raw_meta.as_deref().unwrap_or("{}")).ok()?;
+    if let Some(spec) = crate::order_contract::persisted_print_spec(&meta).ok()? {
+        if !stored_route.starts_with("printful_") { return None; }
+        let choices = crate::order_contract::size_choices(&spec["variant_map"]).ok()?;
+        let vid = match variant_override {
+            Some(v) => v,
+            None if choices.len()==1 => crate::order_contract::size_variant(&spec["variant_map"],&choices[0]).ok()?,
+            None => return None,
+        };
+        return persisted_print_item(&spec,vid,quantity,retail_price).ok();
+    }
     let quantity = quantity.clamp(1, 50);
     let (pp_id, mut pf_variant_id, sync_variant_id, design_file, placement, route, pos_box_s): (
         i64,
@@ -15378,9 +16791,10 @@ fn build_printful_item(
     // The ADDON path passes `require_printful=true` because mixing a
     // non-Printful add-on into this single Printful order makes no sense —
     // such an add-on is skipped by the caller instead.
-    if require_printful && !route.starts_with("printful_") {
+    if !route.starts_with("printful_") {
         return None;
     }
+    let _ = require_printful;
 
     if let Some(v) = variant_override {
         pf_variant_id = v;
@@ -15396,18 +16810,9 @@ fn build_printful_item(
         Vec::new()
     };
 
-    // Three fulfillment shapes Printful accepts:
-    //   (a) pre-synced product (sync_variant_id) — merch-bridge import path
-    //   (b) base variant + inline files (design_file URL + placement) —
-    //       the autonomous generator path; no sync_product round-trip needed
-    //   (c) base variant only (no design) — fallback, mainly for testing
+    // Explicit variant + print files only. A mutable sync product cannot override
+    // the selected size or silently replace the checkout artwork.
     let item: serde_json::Value = match (sync_variant_id, design_file.as_deref()) {
-        (Some(svid), _) if svid > 0 => serde_json::json!({
-            "sync_variant_id": svid,
-            "quantity": quantity,
-            "retail_price": retail_price,
-            "options": options_block,
-        }),
         (_, Some(df)) if !df.is_empty() => {
             let file_url = if df.starts_with("http") {
                 df.to_string()
@@ -15460,13 +16865,10 @@ fn build_printful_item(
                 "options": options_block,
             })
         }
-        _ => serde_json::json!({
-            "variant_id": pf_variant_id,
-            "quantity": quantity,
-            "retail_price": retail_price,
-            "options": options_block,
-        }),
+        _ => return None,
     };
+    if pf_variant_id <= 0 { return None; }
+    crate::order_contract::files(&item["files"]).ok()?;
     Some(item)
 }
 
@@ -15476,68 +16878,43 @@ fn build_printful_item(
 /// to catalog_orders for audit / replay.
 pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     let session_id = session["id"].as_str().unwrap_or("").to_string();
-    let sku = session["metadata"]["catalog_sku"]
+    if !crate::order_contract::paid(&session) { return; }
+    let snapshot = match crate::order_contract::claim(&db.lock().unwrap(), &session) {
+        Ok(Some(s)) => s,
+        Ok(None) => return,
+        Err(e) => { tracing::error!("[catalog/fulfill] {session_id}: {e}"); return; }
+    };
+    let session = match crate::order_contract::verified_session(&db,&session).await {
+        Ok(s) if crate::order_contract::paid(&s) => s,
+        _ => { crate::order_contract::mark(&db.lock().unwrap(), &session_id, "failed_line_items", "paid session/line_items unavailable"); return; }
+    };
+    let snapshot_items = match crate::order_contract::purchased_items(&snapshot,&session)
+        .and_then(|items| crate::order_contract::freeze_items(&db.lock().unwrap(),&session_id,&items)) {
+        Ok(items) => items,
+        Err(e) => { crate::order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification",&e); return; }
+    };
+    if let Err(e)=crate::order_contract::preflight_paid(&db,&snapshot,&session,&snapshot_items).await {
+        tracing::error!("catalog vendor preflight: {e}"); return;
+    }
+    let sku = snapshot["lines"][0]["sku"]
         .as_str()
         .unwrap_or("")
         .to_string();
     if sku.is_empty() {
         tracing::warn!("[catalog/fulfill] no catalog_sku in metadata, session={}", session_id);
+        crate::order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification","snapshot SKU missing");
         return;
     }
     let amount_total = session["amount_total"].as_i64().unwrap_or(0);
     let currency = session["currency"].as_str().unwrap_or("jpy").to_lowercase();
 
-    // Idempotency: ATOMICALLY reserve this session before doing anything that
-    // costs money. The old code did a read-then-act (SELECT, later INSERT),
-    // which has a TOCTOU race: Stripe delivers webhooks at-least-once, and the
-    // /replay + retry-cron paths can re-enter, so two invocations for the same
-    // session could both pass the SELECT (no row yet) and both POST to Printful
-    // → 2 garments shipped for 1 payment. INSERT OR IGNORE against the
-    // UNIQUE(stripe_session_id) constraint is race-free: exactly one caller
-    // inserts the 'submitting' row (changes()==1), everyone else gets 0 and
-    // bails. record_order_full later REPLACEs this row with the final status.
-    {
-        let conn = db.lock().unwrap();
-        let reserved = conn
-            .execute(
-                "INSERT OR IGNORE INTO catalog_orders
-                   (stripe_session_id, sku, amount_jpy, status)
-                 VALUES (?, ?, ?, 'submitting')",
-                rusqlite::params![&session_id, &sku, amount_total],
-            )
-            .unwrap_or(0);
-        if reserved == 0 {
-            tracing::info!("[catalog/fulfill] session {} already reserved/fulfilled, skip", session_id);
-            return;
-        }
-    }
-
-    // Read fulfillment_route + printful_product_id for the main SKU. The
-    // remaining Printful identifiers are looked up inside
-    // build_printful_item(); here we only need pp_id (for the size-variant
-    // override) and route (for the contrado early-return). Existing rows
-    // default to 'printful_dtg' so the legacy path is unaffected.
-    let product = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT printful_product_id,
-                    COALESCE(fulfillment_route, 'printful_dtg'),
-                    COALESCE(printful_variant_id, 0)
-             FROM catalog_products WHERE sku=?",
-            rusqlite::params![&sku],
-            |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, i64>(2)?,
-                ))
-            },
-        )
-        .ok()
-    };
+    // The claim above is durable. Product edits/deletion never change its route.
+    let product = snapshot["lines"][0]["product_id"].as_i64().map(|id|
+        (id,snapshot["route"].as_str().unwrap_or("").to_string(),0i64));
     let Some((_pp_id, route, _pf_default_variant)) = product
     else {
         tracing::warn!("[catalog/fulfill] sku {} not in catalog_products", sku);
+        crate::order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification","missing product in checkout snapshot");
         return;
     };
 
@@ -15545,20 +16922,20 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // applies to every product type (apparel / ticket / song). Idempotent and
     // safe to call for orders with no referrer (no-ops). Stamps the order's
     // audit columns BEFORE any record_order_full REPLACE (which preserves them).
-    apply_affiliate(&db, &session_id, &session, &sku, amount_total).await;
-
-    // 作者コミッション — アフィリと独立・route 非依存・冪等。「売れたら作者に
-    // 10%」がクリエイターループの心臓部 (creators.rs / /studio で可視化)。
-    apply_maker_commission(&db, &session_id, &session, &sku, amount_total).await;
-
-    // リミックス印税 — design_remix 生まれの商品は元デザインの作者にも 5%。
-    apply_remix_royalty(&db, &session_id, &session, &sku, amount_total).await;
+    let first_effects = match crate::order_contract::effects_once(&db.lock().unwrap(),&session_id) {
+        Ok(v) => v,
+        Err(e) => { tracing::error!("catalog effects fence: {e}"); return; }
+    };
+    if let Err(e)=apply_order_rewards(&db,&session_id,&session,&sku,amount_total).await {
+        tracing::error!("order rewards deferred to durable worker: {e}");
+    }
 
     // AI合宿『行く。』T を買った人にカレンダー招待 — route 非依存・冪等
     // (このフローは session ごとに INSERT OR IGNORE で 1 回だけ到達する)。
     // 該当 SKU のときだけ .ics を添付した追加メールを購入者へ送る。物理発送
     // (printful_*) は下流でそのまま走る。
-    maybe_send_ai_camp_invite(&db, &session, &sku).await;
+    if first_effects { maybe_send_ai_camp_invite(&db, &session, &sku).await;
+    }
 
     // Auto-subscribe the buyer to the newsletter — route-agnostic, runs once per
     // paid order (INSERT OR IGNORE reservation above guarantees a single pass).
@@ -15697,62 +17074,6 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         }
     }
 
-    // Pull selected size from Stripe custom_fields (if any). When the
-    // SKU's print_id supports per-size variants we swap pf_variant_id
-    // to the matching one. Without this, every order ships size M
-    // regardless of what the customer picked.
-    let mut variant_override: Option<i64> = None;
-    // phone_case: the model can arrive pinned on metadata[phone_model] (PDP
-    // selected it) — honour that first.
-    if let Some(m) = session["metadata"]["phone_model"].as_str() {
-        variant_override = resolve_size_variant(_pp_id, m);
-    }
-    // Otherwise read the Stripe custom-field. "size" = tee/garment size rail;
-    // "iphone_model" = phone_case model dropdown (decoupled keys).
-    if variant_override.is_none() {
-        if let Some(custom_fields) = session["custom_fields"].as_array() {
-            for cf in custom_fields {
-                let k = cf["key"].as_str();
-                if k == Some("size") || k == Some("iphone_model") {
-                    let chosen = cf["dropdown"]["value"].as_str().unwrap_or("M");
-                    // Color-aware apparel size first (offsets from THIS SKU's own
-                    // M variant so the garment colour is preserved); fall back to
-                    // the per-product table (phone-case models under
-                    // "iphone_model", and any legacy black-only tee rows).
-                    variant_override =
-                        resolve_apparel_size_variant(_pp_id, _pf_default_variant, chosen)
-                            .or_else(|| resolve_size_variant(_pp_id, chosen));
-                    break;
-                }
-            }
-        }
-    }
-
-    // Bulk buy (まとめ買い): nouns checkouts enable adjustable_quantity, and
-    // the chosen quantity lives ONLY on the session's line_items — which the
-    // webhook payload never includes. Retrieve them for NOUNS- SKUs so a
-    // 10-unit payment ships 10 garments, not 1. Fail-open to 1 (the
-    // historic behaviour) on any retrieval hiccup; the order row keeps the
-    // full amount_total either way, so a mismatch is visible in audit.
-    let mut purchased_qty: i64 = 1;
-    if sku.starts_with("NOUNS-") {
-        if let Ok(stripe_key) = std::env::var("STRIPE_SECRET_KEY") {
-            let url = format!(
-                "https://api.stripe.com/v1/checkout/sessions/{}?expand[]=line_items",
-                session_id
-            );
-            if let Ok(r) = reqwest::Client::new()
-                .get(&url).basic_auth(&stripe_key, None::<&str>).send().await
-            {
-                if let Ok(v) = r.json::<serde_json::Value>().await {
-                    if let Some(q) = v["line_items"]["data"][0]["quantity"].as_i64() {
-                        purchased_qty = q.clamp(1, 50);
-                    }
-                }
-            }
-        }
-    }
-
     // Stripe Checkout webhooks sometimes omit shipping_details from
     // data.object even when shipping_address_collection was enabled —
     // we have to retrieve the session with expand=['shipping_details'].
@@ -15821,15 +17142,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // encode payload (the song URL, derived from the sound-tee "oto.html?s=KEY"
     // convention in the description) plus the ship-to address.
     if route == "manual" {
-        let desc = {
-            let conn = db.lock().unwrap();
-            conn.query_row(
-                "SELECT description_ja FROM catalog_products WHERE sku=?",
-                rusqlite::params![&sku],
-                |r| r.get::<_, String>(0),
-            )
-            .unwrap_or_default()
-        };
+        let desc = snapshot["lines"][0]["description"].as_str().unwrap_or("").to_string();
         // catalog_products に kind 列は無い — SKU は `{BRAND}-{KIND}-{seed}` 形式
         // (insert_catalog_product) なので SKU で self-fulfilled hardware を判定。
         let is_device = sku.contains("-DEVICE-");
@@ -15905,39 +17218,6 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         return;
     }
 
-    // When a cross-sell add-on is present, `amount_total` is the WHOLE
-    // session (main SKU + add-on). The add-on ships as its own Printful
-    // item declaring its own retail_price (see the addon block below), so
-    // the MAIN item must declare only the main SKU's price. Charging
-    // `amount_total` here would make Printful's declared/customs value
-    // double-count the add-on (main+addon on the main line, addon again on
-    // its own line) — inflating the customer's import duty + packing slip.
-    // JPY only: non-JPY add-on pricing is not used (see addon block), and
-    // amount_total is in minor units for non-JPY, so we leave it untouched
-    // there. Single-SKU orders deduct 0 → byte-identical to the old code.
-    let addon_price_jpy_for_main: i64 = if currency == "jpy" {
-        let addon_sku = session["metadata"]["catalog_addon_sku"].as_str().unwrap_or("");
-        if addon_sku.is_empty() {
-            0
-        } else {
-            let conn = db.lock().unwrap();
-            conn.query_row(
-                "SELECT retail_price_jpy FROM catalog_products WHERE sku=? AND is_active=1",
-                rusqlite::params![addon_sku],
-                |r| r.get::<_, i64>(0),
-            )
-            .unwrap_or(0)
-        }
-    } else {
-        0
-    };
-
-    let retail_price = if currency == "jpy" {
-        format!("{:.2}", (amount_total - addon_price_jpy_for_main).max(0) as f64)
-    } else {
-        format!("{:.2}", (amount_total as f64) / 100.0)
-    };
-
     // Printful caps external_id at 32 chars; Stripe session id is ~66.
     // Last-32 keeps the unique tail intact for back-reference.
     let ext_id = if session_id.len() > 32 {
@@ -15950,11 +17230,8 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
     // single-SKU order this produces byte-identical JSON to the previous
     // inline code: same session-derived retail_price, same size override,
     // same stitch_color / placement logic.
-    let main_item = {
-        let conn = db.lock().unwrap();
-        build_printful_item(&conn, &sku, &retail_price, variant_override, false, purchased_qty)
-    };
-    let Some(main_item) = main_item else {
+    let main_item = snapshot_items.first().cloned();
+    let Some(_main_item) = main_item else {
         // Should not happen — we already confirmed the SKU exists and the
         // route is not contrado_uk. A None here means the route is not a
         // printful_* route (e.g. manual/digital/gelato/suzuri), which this
@@ -15983,74 +17260,13 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         .await;
         return;
     };
-    let mut items: Vec<serde_json::Value> = vec![main_item];
-
-    // Optional cross-sell add-on. Inert until a future UI passes
-    // `?addon=<sku>` at checkout (which sets metadata.catalog_addon_sku).
-    // The add-on is charged its OWN retail_price_jpy (Printful wants a
-    // per-item retail_price, not the session total), single size, no size
-    // override. If it is missing / inactive / non-printful route we skip
-    // the item rather than fail the whole order (the main item is the
-    // committed purchase). 2nd-item failures still surface in Printful's
-    // response which is logged + recorded below.
+    // Add-on accounting uses the same frozen, fully validated line list.
     let addon_sku = session["metadata"]["catalog_addon_sku"]
         .as_str()
         .unwrap_or("")
         .to_string();
-    if !addon_sku.is_empty() {
-        let addon_item = {
-            let conn = db.lock().unwrap();
-            // Format the add-on price the same way the main retail_price is
-            // formatted for JPY (yen amount with two decimals).
-            let addon_price_jpy: i64 = conn
-                .query_row(
-                    "SELECT retail_price_jpy FROM catalog_products WHERE sku=? AND is_active=1",
-                    rusqlite::params![&addon_sku],
-                    |r| r.get::<_, i64>(0),
-                )
-                .unwrap_or(0);
-            if addon_price_jpy > 0 {
-                let addon_retail = if currency == "jpy" {
-                    format!("{:.2}", addon_price_jpy as f64)
-                } else {
-                    // Non-JPY add-on pricing is not currently used; fall back
-                    // to the same JPY-style format to stay defined.
-                    format!("{:.2}", addon_price_jpy as f64)
-                };
-                build_printful_item(&conn, &addon_sku, &addon_retail, None, true, 1)
-            } else {
-                None
-            }
-        };
-        match addon_item {
-            Some(it) => items.push(it),
-            None => {
-                // Customer-harm path: the add-on was a paid Stripe line_item
-                // at checkout, so the customer was ALREADY charged for it. If
-                // we skip it here (sticker went inactive / non-printful route
-                // between checkout and webhook) they paid for something that
-                // will never ship. A tracing::warn nobody watches is not
-                // enough — fire the same operator alert we use for failed
-                // fulfillment so a human can refund or hand-fulfill.
-                tracing::warn!(
-                    "[catalog/fulfill] addon sku {} skipped (missing/inactive/non-printful), session={}",
-                    addon_sku, session_id
-                );
-                let _ = crate::send_telegram_message(&format!(
-                    "⚠️ *add-on charged but NOT fulfilled*\n\
-                     main sku=`{}`\nadd-on sku=`{}`\nsession=`{}…`\n\
-                     The customer paid for this add-on at checkout but it was \
-                     skipped at fulfillment (missing / inactive / non-Printful \
-                     route). Action: refund the add-on amount OR hand-fulfill it.",
-                    sku,
-                    addon_sku,
-                    session_id.chars().take(24).collect::<String>()
-                ))
-                .await;
-            }
-        }
-    }
-
+    // All paid lines are validated and frozen together; no partial add-on submission.
+    let items = snapshot_items;
     // Gift flow: metadata[gift]=1 → ship to the recipient (already the
     // collected shipping address) with a price-free gift packing slip that
     // carries the buyer's message. We deliberately send NO retail_costs so
@@ -16120,24 +17336,18 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
         return;
     }
 
-    let resp = reqwest::Client::new()
-        .post("https://api.printful.com/orders?confirm=true")
-        .bearer_auth(&pf_key)
-        .json(&body)
-        .send()
-        .await;
+    let resp = crate::order_contract::submit(&db,&session_id,&body,&pf_key,
+        "https://api.printful.com/orders?confirm=true").await;
 
     match resp {
-        Ok(r) => {
-            let status = r.status();
-            let text = r.text().await.unwrap_or_default();
+        Ok((status,text)) => {
             let pf_json: serde_json::Value =
                 serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
             let pf_id = pf_json["result"]["id"]
                 .as_i64()
                 .map(|i| i.to_string())
                 .or_else(|| pf_json["result"]["id"].as_str().map(String::from));
-            let ok = status.is_success();
+            let ok = status.is_success() && pf_id.is_some();
             tracing::info!(
                 "[catalog/fulfill] printful {} sku={} session={} pf_id={:?}",
                 status, sku, session_id, pf_id
@@ -16267,48 +17477,8 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 }
             }
             if !ok {
-                // 再発防止 (2026-06-04): 入金済みなのに発送できない注文を「失敗のまま放置」
-                // しない。Printful の 4xx(住所空欄・バリアント不正など)は再試行しても直らない
-                // = 顧客の金だけ取った状態。これを検知したら **自動で Stripe 返金** し、
-                // status='refunded' に落とす。5xx/ネットワーク等の一過性のみ /replay 待ちにする。
-                let non_retryable = status.is_client_error(); // 4xx
-                let mut refunded = false;
-                if non_retryable {
-                    if let Ok(skey) = std::env::var("STRIPE_SECRET_KEY") {
-                        // checkout session → payment_intent
-                        let pi_id: Option<String> = match reqwest::Client::new()
-                            .get(format!("https://api.stripe.com/v1/checkout/sessions/{}", session_id))
-                            .basic_auth(&skey, None::<&str>).send().await {
-                            Ok(r) if r.status().is_success() => {
-                                let j: serde_json::Value = r.json().await.unwrap_or_default();
-                                j["payment_intent"].as_str().map(String::from)
-                            }
-                            _ => None,
-                        };
-                        if let Some(pi) = pi_id {
-                            let rf = reqwest::Client::new()
-                                .post("https://api.stripe.com/v1/refunds")
-                                .basic_auth(&skey, None::<&str>)
-                                .form(&[("payment_intent", pi.as_str()), ("reason", "requested_by_customer")])
-                                .send().await;
-                            refunded = matches!(rf, Ok(ref r) if r.status().is_success());
-                            if refunded {
-                                let conn = db.lock().unwrap();
-                                let _ = conn.execute(
-                                    "UPDATE catalog_orders SET status='refunded' WHERE stripe_session_id=?",
-                                    rusqlite::params![&session_id],
-                                );
-                            }
-                        }
-                    }
-                }
-                let head = if refunded {
-                    "✅ *fulfillment 4xx → AUTO-REFUNDED* (顧客に全額返金済・発送不可のため)"
-                } else if non_retryable {
-                    "🚨 *fulfillment FAILED (4xx) — 自動返金できず* 手動で返金してください"
-                } else {
-                    "🚨 *fulfillment FAILED (一過性)* — GET /admin/catalog/orders/<id>/replay?token= で再送"
-                };
+                // A 4xx can be rate limiting or a duplicate external_id. Never infer a refund.
+                let head = "🚨 *fulfillment requires review/recovery* — external_id を照合してから再試行。自動返金なし。";
                 let _ = crate::send_telegram_message(&format!(
                     "{}\nsku=`{}`\nsession=`{}…`\namount=¥{}\nprintful body (first 500):\n```\n{}\n```",
                     head,
@@ -16335,7 +17505,7 @@ pub async fn fulfill_catalog_order(db: Db, session: serde_json::Value) {
                 cust,
                 shipping,
                 None,
-                "failed_network",
+                 "submission_uncertain",
             );
         }
     }
@@ -16614,11 +17784,18 @@ fn record_order_full(
         )
         .unwrap_or((None, 0, None, None));
     let _ = conn.execute(
-        "INSERT OR REPLACE INTO catalog_orders
+        "INSERT INTO catalog_orders
          (stripe_session_id, sku, amount_jpy, customer_email, customer_name,
           shipping_address_json, printful_order_id, printful_response_json, status,
           addon_sku, referrer_code, commission_jpy, ticket_code, gift_json)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(stripe_session_id) DO UPDATE SET
+           customer_email=excluded.customer_email,customer_name=excluded.customer_name,
+           shipping_address_json=excluded.shipping_address_json,
+           printful_order_id=COALESCE(excluded.printful_order_id,catalog_orders.printful_order_id),
+           printful_response_json=excluded.printful_response_json,status=excluded.status,
+           addon_sku=COALESCE(excluded.addon_sku,catalog_orders.addon_sku),order_updated_at=datetime('now')
+          WHERE catalog_orders.status NOT IN ('submitted','refunded','partially_refunded','voided','ticket_delivered','collab_complete','blocked_vendor_preflight')",
         rusqlite::params![
             session_id,
             sku,
@@ -16669,20 +17846,23 @@ async fn ship_gift(
     recipient_email: &str,
     gift_json: &str,
 ) {
-    let retail_price = if currency == "jpy" {
-        format!("{:.2}", amount_total.max(0) as f64)
-    } else {
-        format!("{:.2}", (amount_total as f64) / 100.0)
-    };
+    let _ = currency;
     let ext_id = if session_id.len() > 32 {
         session_id[session_id.len() - 32..].to_string()
     } else {
         session_id.to_string()
     };
-    let main_item = {
+    let main_item = crate::order_contract::saved_items(&db.lock().unwrap(),session_id)
+        .ok().and_then(|items| if items.len() == 1 { items.into_iter().next() } else { None });
+    {
         let conn = db.lock().unwrap();
-        build_printful_item(&conn, sku, &retail_price, None, false, 1)
-    };
+        match conn.execute("UPDATE catalog_orders SET status='gift_building',order_updated_at=datetime('now')
+            WHERE stripe_session_id=? AND status IN ('gift_pending_address','submitting') AND paid_items_json IS NOT NULL", [session_id]) {
+            Ok(1) => {},
+            Ok(_) => return,
+            Err(e) => { tracing::error!("gift claim state: {e}"); return; }
+        }
+    }
     // Stamp gift_json + buyer up-front on the reserved row so the
     // INSERT OR REPLACE in record_order_full preserves them whatever happens.
     {
@@ -16730,20 +17910,14 @@ async fn ship_gift(
         record_order(&db, session_id, sku, amount_total, &cust, &shipping, None, "failed_no_key");
         return;
     }
-    match reqwest::Client::new()
-        .post("https://api.printful.com/orders?confirm=true")
-        .bearer_auth(&pf_key)
-        .json(&body)
-        .send()
-        .await
+    match crate::order_contract::submit(&db,session_id,&body,&pf_key,
+        "https://api.printful.com/orders?confirm=true").await
     {
-        Ok(r) => {
-            let status = r.status();
-            let text = r.text().await.unwrap_or_default();
+        Ok((status,text)) => {
             let pf_json: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
             let pf_id = pf_json["result"]["id"].as_i64().map(|i| i.to_string())
                 .or_else(|| pf_json["result"]["id"].as_str().map(String::from));
-            let ok = status.is_success();
+            let ok = status.is_success() && pf_id.is_some();
             record_order_full(&db, session_id, sku, amount_total, &cust, &shipping,
                 pf_id.as_deref(), if ok { "submitted" } else { "failed" }, Some(&text), None);
             let _ = crate::send_telegram_message(&if ok {
@@ -17956,7 +19130,12 @@ async fn issue_digital(
 
     // Product name / blurb / song audio for the delivery email. kind decides
     // whether this is a ticket (QR) or a song (listen+download link).
-    let (label, desc, meta_json) = {
+    let frozen = crate::order_contract::load(&db.lock().unwrap(),session_id).ok();
+    let (label, desc, meta_json) = if let Some(s) = frozen {
+        (s["lines"][0]["label"].as_str().unwrap_or(sku).to_string(),
+         s["lines"][0]["description"].as_str().unwrap_or("").to_string(),
+         s["lines"][0]["meta_json"].as_str().map(str::to_string))
+    } else {
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT label, description_ja, meta_json FROM catalog_products WHERE sku=?",
@@ -18393,13 +19572,25 @@ pub async fn ticket_verify(
 /// is `catalog_brands.config_json.affiliate_pct` (default 10, capped 50).
 /// No-ops on: missing/unregistered code, self-referral, non-JPY, or a
 /// commission already booked for this session (idempotent on session_id).
-async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) {
+async fn apply_order_rewards(db: &Db, sid: &str, session: &serde_json::Value, sku: &str, amount: i64) -> Result<(),String> {
+    let blocked: bool=db.lock().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM catalog_orders WHERE stripe_session_id=?
+        AND payment_status IN ('refunded','partially_refunded','voided'))",[sid],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if blocked { return Err("payment blocked; rewards held".into()); }
+    apply_affiliate(db,sid,session,sku,amount).await?;
+    apply_maker_commission(db,sid,session,sku,amount).await?;
+    apply_remix_royalty(db,sid,session,sku,amount).await?;
+    db.lock().unwrap().execute("UPDATE catalog_orders SET rewards_completed=1 WHERE stripe_session_id=?",[sid]).map_err(|e|e.to_string())?;
+    Ok(())
+}
+
+async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) -> Result<(),String> {
+    use rusqlite::OptionalExtension;
     let code = match session["metadata"]["referrer_code"].as_str().map(|c| c.trim().to_uppercase()) {
         Some(c) if c.len() >= 4 => c,
-        _ => return,
+        _ => return Ok(()),
     };
     if amount <= 0 || session["currency"].as_str().unwrap_or("jpy").to_lowercase() != "jpy" {
-        return;
+        return Ok(());
     }
     let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_lowercase();
     let conn = db.lock().unwrap();
@@ -18413,12 +19604,11 @@ async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value,
 
     let owner: Option<String> = conn
         .query_row("SELECT owner_email FROM mu_referrals WHERE code=?", rusqlite::params![&code], |r| r.get(0))
-        .ok()
-        .flatten()
+        .optional().map_err(|e|e.to_string())?.flatten()
         .filter(|o: &String| !o.is_empty());
-    let Some(owner) = owner else { return };          // unregistered code → no commission
+    let Some(owner) = owner else { return Ok(()) };          // unregistered code → no commission
     if !buyer_email.is_empty() && buyer_email == owner.to_lowercase() {
-        return; // self-referral
+        return Ok(()); // self-referral
     }
 
     // Idempotency: a commission already booked for this session?
@@ -18428,39 +19618,42 @@ async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value,
             rusqlite::params![session_id],
             |r| r.get(0),
         )
-        .unwrap_or(0);
+        .map_err(|e|e.to_string())?;
     if already > 0 {
-        return;
+        return Ok(());
     }
 
     let brand: String = conn
         .query_row("SELECT brand FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0))
-        .unwrap_or_default();
+        .optional().map_err(|e|e.to_string())?.unwrap_or_default();
     let pct = conn
         .query_row(
             "SELECT json_extract(config_json,'$.affiliate_pct') FROM catalog_brands WHERE slug=?",
             rusqlite::params![&brand],
             |r| r.get::<_, Option<i64>>(0),
         )
-        .ok()
-        .flatten()
+        .optional().map_err(|e|e.to_string())?.flatten()
         .unwrap_or(10)
         .clamp(0, 50);
     let commission = (amount * pct / 100).max(0);
     if commission <= 0 {
-        return;
+        return Ok(());
     }
     let reason = format!("affiliate:{}:{}", code, sku);
-    crate::mu_credit_apply(&conn, &owner, commission, &reason, Some(session_id));
-    let _ = conn.execute(
+    let result=crate::order_contract::credit_once(&conn,session_id,&owner,commission,&reason,|tx| {
+    tx.execute(
         "UPDATE mu_referrals SET uses = uses + 1, credit_jpy = credit_jpy + ? WHERE code=?",
         rusqlite::params![commission, &code],
-    );
-    let _ = conn.execute(
+    )?;
+    tx.execute(
         "UPDATE catalog_orders SET commission_jpy=? WHERE stripe_session_id=?",
         rusqlite::params![commission, session_id],
-    );
+    )?;
+    Ok(())
+    });
+    result?;
     tracing::info!("[catalog/affiliate] {} earned ¥{} ({}%) on {} via {}", owner, commission, pct, sku, code);
+    Ok(())
 }
 
 /// Credit the product's *maker* (作者) for a paid order. The maker is the
@@ -18471,9 +19664,10 @@ async fn apply_affiliate(db: &Db, session_id: &str, session: &serde_json::Value,
 /// credit via [[mu_credit_ledger]] (reason `creator:<sku>`), independent of
 /// — and stackable with — the affiliate commission. Idempotent per session.
 /// 自分で自分の作品を買った場合は対象外。
-async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) {
+async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) -> Result<(),String> {
+    use rusqlite::OptionalExtension;
     if amount <= 0 || session["currency"].as_str().unwrap_or("jpy").to_lowercase() != "jpy" {
-        return;
+        return Ok(());
     }
     let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_lowercase();
     let conn = db.lock().unwrap();
@@ -18484,12 +19678,12 @@ async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json:
             rusqlite::params![sku],
             |r| r.get(0),
         )
-        .unwrap_or_default();
+        .optional().map_err(|e|e.to_string())?.unwrap_or_default();
     if !maker.contains('@') {
-        return; // 無帰属(自律生成 'auto' / 'minna' の未認証作品など) → 報酬なし
+        return Ok(()); // 無帰属(自律生成 'auto' / 'minna' の未認証作品など) → 報酬なし
     }
     if !buyer_email.is_empty() && buyer_email == maker {
-        return; // self-purchase
+        return Ok(()); // self-purchase
     }
 
     // Idempotency: one maker commission per checkout session.
@@ -18499,42 +19693,20 @@ async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json:
             rusqlite::params![session_id],
             |r| r.get(0),
         )
-        .unwrap_or(0);
+        .map_err(|e|e.to_string())?;
     if already > 0 {
-        return;
+        return Ok(());
     }
 
-    // 印税率: 商品単位の meta_json.maker_pct を最優先 (作り手が /make で 10〜50% を選択)。
-    // 無ければブランド既定 config_json.maker_pct、それも無ければ 10%。
-    let product_pct: Option<i64> = conn
-        .query_row(
-            "SELECT json_extract(meta_json,'$.maker_pct') FROM catalog_products WHERE sku=?",
-            rusqlite::params![sku],
-            |r| r.get::<_, Option<i64>>(0),
-        )
-        .ok()
-        .flatten();
-    let brand: String = conn
-        .query_row("SELECT brand FROM catalog_products WHERE sku=?", rusqlite::params![sku], |r| r.get(0))
-        .unwrap_or_default();
-    let pct = product_pct
-        .or_else(|| conn
-            .query_row(
-                "SELECT json_extract(config_json,'$.maker_pct') FROM catalog_brands WHERE slug=?",
-                rusqlite::params![&brand],
-                |r| r.get::<_, Option<i64>>(0),
-            )
-            .ok()
-            .flatten())
-        .unwrap_or(10)
-        .clamp(0, 50);
-    let commission = (amount * pct / 100).max(0);
+    let pct = maker_commission_pct(&conn, sku);
+    let commission = maker_commission_amount(amount, pct);
     if commission <= 0 {
-        return;
+        return Ok(());
     }
     let reason = format!("creator:{}", sku);
-    crate::mu_credit_apply(&conn, &maker, commission, &reason, Some(session_id));
+    crate::order_contract::credit_once(&conn,session_id,&maker,commission,&reason,|_|Ok(()))?;
     tracing::info!("[catalog/maker] {} earned ¥{} ({}%) as maker of {} (order {})", maker, commission, pct, sku, session_id);
+    Ok(())
 }
 
 /// リミックス印税 — 「一言足して、変える」(design_remix) 生まれの商品が売れたら、
@@ -18543,9 +19715,10 @@ async fn apply_maker_commission(db: &Db, session_id: &str, session: &serde_json:
 /// コピーが脅威でなく資産になる側 — リミックスされるほど元作者が潤う。
 const REMIX_ROYALTY_PCT: i64 = 5;
 
-pub(crate) async fn apply_remix_royalty(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) {
+pub(crate) async fn apply_remix_royalty(db: &Db, session_id: &str, session: &serde_json::Value, sku: &str, amount: i64) -> Result<(),String> {
+    use rusqlite::OptionalExtension;
     if amount <= 0 || session["currency"].as_str().unwrap_or("jpy").to_lowercase() != "jpy" {
-        return;
+        return Ok(());
     }
     let buyer_email = session["customer_details"]["email"].as_str().unwrap_or("").to_lowercase();
     let conn = db.lock().unwrap();
@@ -18557,15 +19730,15 @@ pub(crate) async fn apply_remix_royalty(db: &Db, session_id: &str, session: &ser
             rusqlite::params![sku],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
-        .unwrap_or_default();
+        .optional().map_err(|e|e.to_string())?.unwrap_or_default();
     if !original.contains('@') {
-        return; // リミックス品でない or 元デザインが無帰属
+        return Ok(()); // リミックス品でない or 元デザインが無帰属
     }
     if original == maker {
-        return; // 自分のデザインを自分でリミックス → 10%側で受け取り済み
+        return Ok(()); // 自分のデザインを自分でリミックス → 10%側で受け取り済み
     }
     if !buyer_email.is_empty() && buyer_email == original {
-        return; // 元作者本人の購入
+        return Ok(()); // 元作者本人の購入
     }
     // Idempotency: one royalty per checkout session.
     let already: i64 = conn
@@ -18574,20 +19747,21 @@ pub(crate) async fn apply_remix_royalty(db: &Db, session_id: &str, session: &ser
             rusqlite::params![session_id],
             |r| r.get(0),
         )
-        .unwrap_or(0);
+        .map_err(|e|e.to_string())?;
     if already > 0 {
-        return;
+        return Ok(());
     }
     let royalty = (amount * REMIX_ROYALTY_PCT / 100).max(0);
     if royalty <= 0 {
-        return;
+        return Ok(());
     }
     let reason = format!("remix_royalty:{}", sku);
-    crate::mu_credit_apply(&conn, &original, royalty, &reason, Some(session_id));
+    crate::order_contract::credit_once(&conn,session_id,&original,royalty,&reason,|_|Ok(()))?;
     tracing::info!(
         "[catalog/remix] {} earned ¥{} ({}%) as original maker of {} (order {})",
         original, royalty, REMIX_ROYALTY_PCT, sku, session_id
     );
+    Ok(())
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -19196,9 +20370,6 @@ pub async fn run_optimizer_cron(db: Db) {
         if let Err(e) = stale_sku_killer_step(db.clone()).await {
             tracing::warn!("[catalog/cron] stale sku killer failed: {}", e);
         }
-        if let Err(e) = retry_failed_fulfillments_step(db.clone()).await {
-            tracing::warn!("[catalog/cron] retry failed orders: {}", e);
-        }
         // 再発防止 (2026-06-04): ~1日に1回、リトライ尽き or 長期滞留の
         // 「入金済みなのに未発送/未返金」注文を点検して Telegram に上げる。
         // 4xx は fulfill 側で自動返金されるが、ここは取りこぼし(retry上限超過の
@@ -19319,42 +20490,53 @@ async fn transparent_backfill_step(db: Db) -> Result<(), String> {
     Ok(())
 }
 
-/// Self-improvement: retry catalog_orders rows that previously failed
-/// (status='failed' or 'failed_network'). Re-pulls the Stripe Session
-/// via expand to get the full address, deletes the failed row, then
-/// re-runs fulfill_catalog_order. Caps retries via a retry_count column
-/// (added idempotently here) so we don't spin forever on a permanently
-/// broken row.
-///
-/// Triggered every 30-min cron tick; with the fulfillment fixes from
-/// 2f4eb9c (shipping expand + stitch_color), the order #1 self-buy
-/// should recover automatically on the next deploy + tick.
-async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
-    // Add retry_count column lazily (SQLite has no IF NOT EXISTS for ALTER).
-    {
-        let conn = db.lock().unwrap();
-        let _ = conn.execute(
-            "ALTER TABLE catalog_orders ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0",
-            [],
-        );
+/// Durable checkout/reward worker, independent of the SKU optimizer.
+/// Active claims are never stolen on a wall-clock timeout. Crashed active
+/// workers require operator reconciliation before an explicit failed-state retry.
+pub async fn run_order_worker(db: Db) {
+    loop {
+        if let Err(e)=retry_failed_fulfillments_step(db.clone()).await { tracing::error!("order queue: {e}"); }
+        if let Err(e)=retry_order_rewards(&db).await { tracing::error!("order rewards queue: {e}"); }
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
     }
-    let candidates: Vec<(i64, String)> = {
+}
+
+async fn retry_order_rewards(db: &Db) -> Result<(),String> {
+    let rows: Vec<(String,String,String,i64)>={
+        let conn=db.lock().unwrap();
+        let mut stmt=conn.prepare("SELECT stripe_session_id,sku,session_json,amount_jpy FROM catalog_orders
+            WHERE rewards_completed=0 AND session_json IS NOT NULL AND paid_items_json IS NOT NULL AND payment_status='paid'
+            AND status NOT IN ('checkout_pending','payment_pending','payment_ready','blocked_specification','blocked_legacy_snapshot','blocked_vendor_preflight')
+            AND json_extract(checkout_spec_json,'$.kind')='catalog' ORDER BY id LIMIT 20").map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|e|e.to_string())?;
+        rows.collect::<Result<_,_>>().map_err(|e|e.to_string())?
+    };
+    for (sid,sku,raw,amount) in rows {
+        let session: serde_json::Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+        // Includes captured/refund checks; only a verified session is persisted by the worker.
+        if crate::order_contract::payment_clear(&session) {
+            apply_order_rewards(db,&sid,&session,&sku,amount).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
+    let candidates: Vec<(i64, String, String)> = {
         let conn = db.lock().unwrap();
-        conn.prepare(
-            "SELECT id, stripe_session_id FROM catalog_orders
-             WHERE status IN ('failed','failed_network','failed_no_key')
-               AND COALESCE(retry_count, 0) < 3
-               AND created_at > datetime('now','-7 days')
+        let mut stmt=conn.prepare(
+            "SELECT id, stripe_session_id,status FROM catalog_orders
+             WHERE status IN ('payment_ready','retry_ready','failed','failed_network','failed_no_key','failed_line_items','submission_uncertain')
+               AND stripe_session_id LIKE 'cs_%'
+               AND COALESCE(payment_status,'') NOT IN ('refunded','partially_refunded','voided')
+               AND checkout_spec_json IS NOT NULL
+               AND (status IN ('payment_ready','retry_ready') OR COALESCE(retry_count, 0) < 3)
+                AND (status IN ('payment_ready','retry_ready') OR created_at > datetime('now','-7 days'))
              ORDER BY id ASC
              LIMIT 2",
-        )
-        .ok()
-        .and_then(|mut s| {
-            s.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
-                .ok()
-                .map(|it| it.filter_map(|r| r.ok()).collect())
-        })
-        .unwrap_or_default()
+        ).map_err(|e|e.to_string())?;
+        let rows=stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?,r.get::<_,String>(2)?))).map_err(|e|e.to_string())?;
+        rows.collect::<Result<_,_>>().map_err(|e|e.to_string())?
     };
     if candidates.is_empty() {
         return Ok(());
@@ -19363,44 +20545,20 @@ async fn retry_failed_fulfillments_step(db: Db) -> Result<(), String> {
     if stripe_key.is_empty() {
         return Err("STRIPE_SECRET_KEY unset".into());
     }
-    for (id, sid) in candidates {
-        // Increment retry counter up-front so concurrent ticks don't
-        // both pick the same row + we cap at 3.
-        {
-            let conn = db.lock().unwrap();
-            let _ = conn.execute(
-                "UPDATE catalog_orders SET retry_count = COALESCE(retry_count,0) + 1 WHERE id=?",
-                rusqlite::params![id],
-            );
-        }
-        let url = format!(
-            "https://api.stripe.com/v1/checkout/sessions/{}",
-            sid
-        );
-        let session = match reqwest::Client::new()
-            .get(&url).basic_auth(&stripe_key, None::<&str>).send().await
-        {
-            Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
-            _ => None,
-        };
-        let Some(session) = session else {
+    for (id, sid, status) in candidates {
+        let session = crate::order_contract::verified_session(&db,&serde_json::json!({"id":sid})).await;
+        let Ok(session) = session else {
             tracing::warn!("[catalog/retry] stripe lookup failed for id={} session={}", id, sid);
             continue;
         };
-        // Remove the failed row so fulfill_catalog_order's idempotency
-        // check doesn't short-circuit it.
-        {
-            let conn = db.lock().unwrap();
-            let _ = conn.execute(
-                "DELETE FROM catalog_orders WHERE id=?",
-                rusqlite::params![id],
-            );
-        }
+        if !crate::order_contract::paid(&session) { continue; }
+        if !matches!(status.as_str(),"payment_ready"|"retry_ready")
+            && !crate::order_contract::queue_retry(&db.lock().unwrap(),id)? { continue; }
         let db_c = db.clone();
         let sid_log = sid.clone();
         tokio::spawn(async move {
             tracing::info!("[catalog/retry] re-running fulfill for session={}", sid_log);
-            fulfill_catalog_order(db_c, session).await;
+            crate::resume_checkout_order(db_c, session).await;
         });
     }
     Ok(())
@@ -19470,7 +20628,8 @@ async fn stuck_orders_alert_step(db: Db) -> Result<(), String> {
         conn.prepare(
             "SELECT id, COALESCE(sku,'?'), status, COALESCE(amount_jpy,0), COALESCE(created_at,'')
              FROM catalog_orders
-             WHERE (status LIKE 'failed%' AND COALESCE(retry_count,0) >= 3)
+             WHERE ((status LIKE 'failed%' OR status IN ('submission_uncertain','sending','submitting','retry_ready','gift_building')) AND COALESCE(retry_count,0) >= 3)
+                OR status LIKE 'blocked_%'
                 OR (status = 'manual_pending' AND created_at < datetime('now','-2 days'))
              ORDER BY id ASC LIMIT 30",
         )
@@ -19497,7 +20656,7 @@ async fn stuck_orders_alert_step(db: Db) -> Result<(), String> {
     let _ = crate::send_telegram_message(&format!(
         "🟠 *滞留注文 {}件* (入金済・未発送のまま取りこぼし)\n\
          failed=retry尽き / manual_pending=発送忘れ。合計¥{}。{}\n\
-         → 発送するか、返金: GET /admin/catalog/orders/<id>/replay (4xxなら自動返金) か Stripe手動返金。",
+         → 仕様と供給先 external_id を確認。再試行可能なら /admin/catalog/orders/<id>/replay。返金は Stripe で手動判断。",
         rows.len(), total, lines
     ))
     .await;
@@ -19901,6 +21060,106 @@ mod apparel_size_variant_tests {
 mod printful_item_files_tests {
     use super::*;
 
+    #[test]
+    fn stripe_size_field_uses_filtered_snapshot_only() {
+        let line=serde_json::json!({"size_field":"size","size":"XL","variant_map":{"XL":124}});
+        let mut form=persisted_size_form(&["M".into(),"XL".into()]);
+        form.push(("custom_fields[1][key]".into(),"gift_message".into()));
+        filtered_checkout_size_form(&mut form,&line).unwrap();
+        assert!(!form.iter().any(|(_,v)|v=="M"));
+        assert!(form.contains(&("custom_fields[0][dropdown][options][0][value]".into(),"XL".into())));
+        assert!(form.contains(&("custom_fields[0][dropdown][default_value]".into(),"XL".into())));
+        assert!(form.contains(&("custom_fields[1][key]".into(),"gift_message".into())));
+    }
+
+    #[tokio::test]
+    async fn historical_disabled_kind_cannot_checkout_with_valid_vendor_ids() {
+        for sku in ["MAKE-DOG-TEE-old","AUTO-HARDCOVER-PHOTO-BOOK-old","MU-AGENT-SOFTCOVER-PHOTO-BOOK-old"] {
+            let conn=test_conn();
+            insert_product(&conn,sku,384,10821,"front","printful_aop",None);
+            let db=std::sync::Arc::new(std::sync::Mutex::new(conn));
+            let error=checkout_catalog_line(&db,sku,1,9800,false,None).await.unwrap_err();
+            assert!(error.contains("vendor_product_mismatch") || error.contains("multipage_design_required"),"{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn migrated_manual_checkout_does_not_require_printful_spec() {
+        let conn=test_conn();
+        insert_product(&conn,"COLLAB-MANUAL",0,0,"front","manual",None);
+        let meta=serde_json::json!({"collab_migration_version":2,"printful_files":null,"printful_variant_map":null});
+        conn.execute("UPDATE catalog_products SET meta_json=?",[meta.to_string()]).unwrap();
+        assert!(crate::order_contract::print_spec_for_route("manual",&meta).unwrap().is_none());
+        assert!(crate::order_contract::print_spec_for_route("printful_dtg",&meta).is_err());
+        let db=std::sync::Arc::new(std::sync::Mutex::new(conn));
+        let line=checkout_catalog_line(&db,"COLLAB-MANUAL",1,9800,false,None).await.unwrap();
+        assert_eq!(line["route"],"manual"); assert!(line.get("variants").is_none());
+    }
+
+    #[tokio::test]
+    async fn commissions_resume_after_partial_failure_even_when_effects_started() {
+        let conn=test_conn();
+        insert_product(&conn,"REWARD",71,4017,"front","printful_dtg",None);
+        conn.execute("UPDATE catalog_products SET meta_json=?",[r#"{"maker_email":"maker@test","original_maker_email":"original@test"}"#]).unwrap();
+        conn.execute_batch("CREATE TABLE IF NOT EXISTS mu_credits(email TEXT PRIMARY KEY,balance_jpy INTEGER,total_earned_jpy INTEGER,total_spent_jpy INTEGER,updated_at TEXT);
+            CREATE TABLE IF NOT EXISTS mu_credit_ledger(email TEXT,delta_jpy INTEGER,reason TEXT,ref_id TEXT,created_at TEXT);
+            INSERT INTO catalog_orders(stripe_session_id,sku,effects_started) VALUES ('cs_rewards','REWARD',1);
+            CREATE TRIGGER fail_remix BEFORE INSERT ON mu_credit_ledger WHEN NEW.reason LIKE 'remix_royalty:%'
+            BEGIN SELECT RAISE(ABORT,'simulated crash'); END;").unwrap();
+        let db=std::sync::Arc::new(std::sync::Mutex::new(conn));
+        let s=serde_json::json!({"currency":"jpy","customer_details":{"email":"buyer@test"}});
+        assert!(apply_order_rewards(&db,"cs_rewards",&s,"REWARD",10000).await.is_err());
+        {
+            let c=db.lock().unwrap();
+            assert_eq!(c.query_row("SELECT rewards_completed FROM catalog_orders",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+            assert_eq!(c.query_row("SELECT balance_jpy FROM mu_credits WHERE email='maker@test'",[],|r|r.get::<_,i64>(0)).unwrap(),1000);
+            assert_eq!(c.query_row("SELECT COUNT(*) FROM mu_credits WHERE email='original@test'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+            c.execute_batch("DROP TRIGGER fail_remix").unwrap();
+        }
+        apply_order_rewards(&db,"cs_rewards",&s,"REWARD",10000).await.unwrap();
+        apply_order_rewards(&db,"cs_rewards",&s,"REWARD",10000).await.unwrap();
+        let c=db.lock().unwrap();
+        assert_eq!(c.query_row("SELECT SUM(balance_jpy) FROM mu_credits",[],|r|r.get::<_,i64>(0)).unwrap(),1500);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM mu_credit_ledger",[],|r|r.get::<_,i64>(0)).unwrap(),2);
+        assert_eq!(c.query_row("SELECT rewards_completed FROM catalog_orders",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
+
+    #[tokio::test]
+    async fn canonical_shop_uses_complete_migrated_spec_without_geometry_or_design_fallback() {
+        for multi in [false,true] {
+            let conn=test_conn();
+            let sku="COLLAB-SWEEP-PRINT";
+            insert_product(&conn,sku,71,4017,"front","printful_dtg",None);
+            let mut files=serde_json::json!([{"url":"https://example.test/front.png","type":"embroidery_chest_left",
+                "position":{"left":10,"top":20,"width":300},"options":[{"id":"thread","value":"red"}]}]);
+            if multi { files.as_array_mut().unwrap().push(serde_json::json!({"url":"https://example.test/back.png","type":"back","position":{"left":90}})); }
+            let options=serde_json::json!([{"id":"stitch_color","value":"white"}]);
+            let meta=serde_json::json!({"collab_migration_version":2,"printful_files":files,"printful_options":options,"printful_variant_map":{"M":4017,"L":4018}});
+            conn.execute("UPDATE catalog_products SET meta_json=?,legacy_source='collab_products' WHERE sku=?",rusqlite::params![meta.to_string(),sku]).unwrap();
+            let direct=build_printful_item(&conn,sku,"9800.00",Some(4018),true,2).unwrap();
+            assert_eq!(direct["files"],files); assert_eq!(direct["options"],options);
+            assert!(build_printful_item(&conn,sku,"9800.00",Some(9999),true,2).is_none());
+            assert!(build_printful_item(&conn,sku,"9800.00",None,true,2).is_none());
+            let db=std::sync::Arc::new(std::sync::Mutex::new(conn));
+            let line=checkout_catalog_line(&db,sku,2,9800,true,None).await.unwrap();
+            assert_eq!(line["size_field"],"size");
+            assert_eq!(line["variants"]["L"],direct);
+            assert_eq!(line["variant_map"],meta["printful_variant_map"]);
+            assert!(checkout_catalog_line(&db,sku,1,9800,false,None).await.is_err());
+            let choices=crate::order_contract::size_choices(&line["variant_map"]).unwrap();
+            let form=persisted_size_form(&choices);
+            assert!(form.contains(&("custom_fields[0][dropdown][options][1][value]".into(),"L".into())));
+            assert!(!form.iter().any(|(_,v)|v=="XL"));
+            let mut single=meta.clone(); single["printful_variant_map"]=serde_json::json!({"OS":4017});
+            db.lock().unwrap().execute("UPDATE catalog_products SET meta_json=?",[single.to_string()]).unwrap();
+            let os=checkout_catalog_line(&db,sku,1,9800,false,None).await.unwrap();
+            assert_eq!(os["size"],"OS"); assert!(os.get("size_field").is_none());
+            single["printful_files"]=serde_json::json!([]);
+            db.lock().unwrap().execute("UPDATE catalog_products SET meta_json=?,design_file='https://example.test/fallback.png'",[single.to_string()]).unwrap();
+            assert!(checkout_catalog_line(&db,sku,1,9800,true,None).await.is_err());
+        }
+    }
+
     fn test_conn() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
         ensure_schema(&conn);
@@ -19996,6 +21255,37 @@ mod printful_item_files_tests {
         let files = item["files"].as_array().expect("files array");
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["type"].as_str(), Some("embroidery_front"));
+    }
+
+    #[test]
+    fn sync_variant_cannot_swallow_size_override_or_supply_missing_artwork() {
+        let conn = test_conn();
+        insert_product(&conn,"TEST-SYNC",71,4017,"front","printful_dtg",Some("https://example.test/print.png"));
+        conn.execute("UPDATE catalog_products SET printful_sync_variant_id=999 WHERE sku='TEST-SYNC'",[]).unwrap();
+        let item = build_printful_item(&conn,"TEST-SYNC","4900.00",Some(4018),true,2).unwrap();
+        assert_eq!(item["variant_id"],4018);
+        assert!(item.get("sync_variant_id").is_none());
+        assert_eq!(item["quantity"],2);
+        conn.execute("UPDATE catalog_products SET design_file=NULL WHERE sku='TEST-SYNC'",[]).unwrap();
+        assert!(build_printful_item(&conn,"TEST-SYNC","4900.00",Some(4018),true,2).is_none());
+    }
+
+    #[test]
+    fn record_order_update_keeps_snapshot_retry_and_terminal_state() {
+        let conn = test_conn();
+        let snapshot = serde_json::json!({"version":1,"lines":[]});
+        let draft = crate::order_contract::draft(&conn,"A",&snapshot).unwrap();
+        let session = serde_json::json!({"id":"test-record","payment_status":"paid"});
+        crate::order_contract::attach(&conn,&draft,&session).unwrap();
+        conn.execute("UPDATE catalog_orders SET retry_count=2,gift_json='keep',status='sending'",[]).unwrap();
+        let old: (i64,String) = conn.query_row("SELECT id,created_at FROM catalog_orders",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        let db = std::sync::Arc::new(std::sync::Mutex::new(conn));
+        record_order_full(&db,"test-record","A",100,&serde_json::json!({}),&serde_json::json!({}),Some("42"),"submitted",Some("ok"),None);
+        record_order_full(&db,"test-record","A",100,&serde_json::json!({}),&serde_json::json!({}),None,"failed",Some("late error"),None);
+        let c=db.lock().unwrap();
+        let row: (i64,String,i64,String,String) = c.query_row("SELECT id,created_at,retry_count,gift_json,status FROM catalog_orders",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();
+        assert_eq!(row,(old.0,old.1,2,"keep".into(),"submitted".into()));
+        assert_eq!(crate::order_contract::load(&c,"test-record").unwrap(),snapshot);
     }
 }
 

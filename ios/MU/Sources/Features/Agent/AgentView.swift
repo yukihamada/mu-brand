@@ -173,8 +173,17 @@ struct AgentView: View {
         case "make":
             let prompt = res.args?.prompt ?? ""
             guard !prompt.isEmpty else { break }
-            let kind = MakeKind(rawValue: res.args?.kind ?? "") ?? .auto
+            let kind = res.args?.kind ?? ""
             let royalty = res.args?.royalty ?? 10
+            let kinds = (try? await MUAPI.makeKinds()) ?? MakeKindOption.fallback
+            // Never silently turn an unsupported explicit kind into an auto-picked product.
+            guard MakeKindOption.isAvailable(kind, in: kinds) else {
+                await MainActor.run {
+                    let reason = kinds.first { $0.kind == kind }?.unavailableMessage()
+                    messages.append(ChatMessage(role: .assistant, text: reason ?? String(localized: "make.kind.unavailableHint")))
+                }
+                break
+            }
             if let r = try? await MUAPI.make(prompt: prompt, kind: kind, royalty: royalty, apiKey: session.apiKey) {
                 await MainActor.run { messages.append(ChatMessage(role: .assistant, text: "", product: r)) }
             } else {

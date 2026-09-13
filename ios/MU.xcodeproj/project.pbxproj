@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -21,9 +21,11 @@
 		64F738F6F2E4860BD7910617 /* Session.swift in Sources */ = {isa = PBXBuildFile; fileRef = A63CABCD1C5C82345D918B01 /* Session.swift */; };
 		714DE96383F152E399DC9BB3 /* ScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37FB043CBEA23D3AEC2ED545 /* ScanView.swift */; };
 		72C1F86E0777B2ED87AB917E /* ShopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDD3AA78E083DAD93A222113 /* ShopView.swift */; };
+		8C8AE289A377AA6D33E675E5 /* ProductionSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 801990125FA41A30B8ADE5E7 /* ProductionSmokeTests.swift */; };
 		9028964DABB2120FBC9E50A0 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 3A31AE585B3F93176512B196 /* Localizable.strings */; };
 		AEB216DA4B7A3841DB82154A /* MUApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFC239613BD23A83EA3EEE15 /* MUApp.swift */; };
 		C3A13A39199892744181EE91 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 397EDA480FA0F17B7918F918 /* AppState.swift */; };
+		C5D17A871EF23BA3CBEA7E36 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = E129F74E5AA215BFB6E82704 /* Fixtures */; };
 		C9BEA58145EFC10A50732C0B /* ClosetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25D52C74AD48EE37849F85FC /* ClosetView.swift */; };
 		D0785758C1A192FFDB0D358B /* MakeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98732D3C633998735A148781 /* MakeView.swift */; };
 		D8E43B02251C49EA2575B936 /* AgentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65896010E833D11F55EF9973 /* AgentView.swift */; };
@@ -47,6 +49,13 @@
 			remoteGlobalIDString = D9A97F977A0E3121EEA9AA57;
 			remoteInfo = MUWidget;
 		};
+		E5DB96CAF5E0D469C2951C6D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 7EC7F451EABA89639ABE0F4F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E937BB375474AE3346DFC265;
+			remoteInfo = MU;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -67,6 +76,7 @@
 		0BE856D05330A3D80DC87ADF /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/Localizable.strings; sourceTree = "<group>"; };
 		1D2F7D33C233A7979CE2339B /* Push.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Push.swift; sourceTree = "<group>"; };
 		25D52C74AD48EE37849F85FC /* ClosetView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClosetView.swift; sourceTree = "<group>"; };
+		2BA3D3824FDF78106D0C5B5B /* MUUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MUUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C5E91CDFCCD90545D126CC5 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
 		3310C08546283F364B25E1C0 /* LiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveView.swift; sourceTree = "<group>"; };
 		37FB043CBEA23D3AEC2ED545 /* ScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScanView.swift; sourceTree = "<group>"; };
@@ -80,6 +90,7 @@
 		65896010E833D11F55EF9973 /* AgentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentView.swift; sourceTree = "<group>"; };
 		6C4140B36BFB33F4D3CBCCE1 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		7E2B7DB07260B973FB2EDA16 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		801990125FA41A30B8ADE5E7 /* ProductionSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductionSmokeTests.swift; sourceTree = "<group>"; };
 		95E7652A5B51B2C1CD3E6D39 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		98732D3C633998735A148781 /* MakeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MakeView.swift; sourceTree = "<group>"; };
 		A63CABCD1C5C82345D918B01 /* Session.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Session.swift; sourceTree = "<group>"; };
@@ -90,6 +101,7 @@
 		CDD3AA78E083DAD93A222113 /* ShopView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopView.swift; sourceTree = "<group>"; };
 		D5551BD573D581C8DB539528 /* AIConsent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIConsent.swift; sourceTree = "<group>"; };
 		E04C21412555E3233719B07C /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		E129F74E5AA215BFB6E82704 /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fixtures; path = MUTests/Fixtures; sourceTree = SOURCE_ROOT; };
 		E859F5B164FA53F364CDCD57 /* ModelsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelsTests.swift; sourceTree = "<group>"; };
 		F0F61490DB0634AE8090D1BE /* ja */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = ja; path = ja.lproj/Localizable.strings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -132,6 +144,7 @@
 			children = (
 				BF19E422B1EEAC28966BC2E7 /* MU.app */,
 				49932C238081818516C669B3 /* MUTests.xctest */,
+				2BA3D3824FDF78106D0C5B5B /* MUUITests.xctest */,
 				3D1E794BB01764020997A41E /* MUWidget.appex */,
 			);
 			name = Products;
@@ -179,8 +192,8 @@
 			isa = PBXGroup;
 			children = (
 				6C4140B36BFB33F4D3CBCCE1 /* Info.plist */,
-				3A31AE585B3F93176512B196 /* Localizable.strings */,
 				42F1F6F276BCB5A2CA6FE3E7 /* MUWidget.swift */,
+				3A31AE585B3F93176512B196 /* Localizable.strings */,
 			);
 			path = MUWidget;
 			sourceTree = "<group>";
@@ -202,6 +215,14 @@
 				25D52C74AD48EE37849F85FC /* ClosetView.swift */,
 			);
 			path = Closet;
+			sourceTree = "<group>";
+		};
+		A61C0E08EDF5C1BD34BDDC6F /* MUUITests */ = {
+			isa = PBXGroup;
+			children = (
+				801990125FA41A30B8ADE5E7 /* ProductionSmokeTests.swift */,
+			);
+			path = MUUITests;
 			sourceTree = "<group>";
 		};
 		C31710599BFEC2A9EE80C56A /* Scan */ = {
@@ -233,7 +254,9 @@
 		F8E6C6BAC91467E2058EE433 = {
 			isa = PBXGroup;
 			children = (
+				E129F74E5AA215BFB6E82704 /* Fixtures */,
 				380AC443AA1BCD5A795FBB15 /* MUTests */,
+				A61C0E08EDF5C1BD34BDDC6F /* MUUITests */,
 				677F321D842F1BAC60C14969 /* MUWidget */,
 				6236C37FC4580F98835BB24F /* Resources */,
 				7E219D62C6F104339CB76A3E /* Sources */,
@@ -244,11 +267,30 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		378E10B4C016A7FB25702E59 /* MUUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 796F0F2A2D9412D461B814E3 /* Build configuration list for PBXNativeTarget "MUUITests" */;
+			buildPhases = (
+				B4DBC320CD55446A97C25D58 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0A7A25371517CC0104FD3DD2 /* PBXTargetDependency */,
+			);
+			name = MUUITests;
+			packageProductDependencies = (
+			);
+			productName = MUUITests;
+			productReference = 2BA3D3824FDF78106D0C5B5B /* MUUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		D4D69B41CDC4EBE3E241C378 /* MUTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D14F22A7ABE19A3718E6724E /* Build configuration list for PBXNativeTarget "MUTests" */;
 			buildPhases = (
 				3E6C628ED8D7A2E39A3D33EB /* Sources */,
+				ED6058120DBF15183136EE2F /* Resources */,
 			);
 			buildRules = (
 			);
@@ -309,6 +351,11 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					378E10B4C016A7FB25702E59 = {
+						DevelopmentTeam = 5BV85JW8US;
+						ProvisioningStyle = Automatic;
+						TestTargetID = E937BB375474AE3346DFC265;
+					};
 					D4D69B41CDC4EBE3E241C378 = {
 						DevelopmentTeam = 5BV85JW8US;
 						ProvisioningStyle = Automatic;
@@ -324,7 +371,6 @@
 				};
 			};
 			buildConfigurationList = BB098F2994215D74415357F3 /* Build configuration list for PBXProject "MU" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = ja;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -334,12 +380,14 @@
 			);
 			mainGroup = F8E6C6BAC91467E2058EE433;
 			minimizedProjectReferenceProxies = 1;
-			preferredProjectObjectVersion = 54;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 3C284C5D095C83C89FF97E7B /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				E937BB375474AE3346DFC265 /* MU */,
 				D4D69B41CDC4EBE3E241C378 /* MUTests */,
+				378E10B4C016A7FB25702E59 /* MUUITests */,
 				D9A97F977A0E3121EEA9AA57 /* MUWidget */,
 			);
 		};
@@ -360,6 +408,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				9028964DABB2120FBC9E50A0 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ED6058120DBF15183136EE2F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C5D17A871EF23BA3CBEA7E36 /* Fixtures in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -406,9 +462,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B4DBC320CD55446A97C25D58 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8C8AE289A377AA6D33E675E5 /* ProductionSmokeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		0A7A25371517CC0104FD3DD2 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E937BB375474AE3346DFC265 /* MU */;
+			targetProxy = E5DB96CAF5E0D469C2951C6D /* PBXContainerItemProxy */;
+		};
 		613EACC228FBE6DE48354D46 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = D9A97F977A0E3121EEA9AA57 /* MUWidget */;
@@ -524,6 +593,23 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.wearmu.mu.widget;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		4FD65B4FAC9C3B773E55B898 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wearmu.mu.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MU;
 			};
 			name = Release;
 		};
@@ -646,6 +732,23 @@
 			};
 			name = Release;
 		};
+		E4F1C47DBAC426CA01388430 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.wearmu.mu.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MU;
+			};
+			name = Debug;
+		};
 		F55AFD6A5AD1973205B33E28 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -705,6 +808,15 @@
 			buildConfigurations = (
 				9D2FF937B9745AB0DBC46D8B /* Debug */,
 				360593091E4CFAC0D673404E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		796F0F2A2D9412D461B814E3 /* Build configuration list for PBXNativeTarget "MUUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E4F1C47DBAC426CA01388430 /* Debug */,
+				4FD65B4FAC9C3B773E55B898 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

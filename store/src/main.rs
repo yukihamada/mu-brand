@@ -4,6 +4,7 @@ mod nft;
 mod payments;
 mod jiufight_tokens;
 mod catalog;
+mod order_contract;
 mod agent_api;
 mod manufacturing_schema;
 mod manufacturing_req;
@@ -20564,6 +20565,20 @@ async fn stripe_webhook(
     };
     // /you ¥980/月 subscription lifecycle (created / updated / deleted).
     let ev_type = event["type"].as_str().unwrap_or("");
+    if matches!(ev_type,"charge.refunded"|"payment_intent.canceled"|"refund.created"|"refund.updated") {
+        let obj=&event["data"]["object"];
+        let pi=if ev_type=="payment_intent.canceled" { obj["id"].as_str() } else { obj["payment_intent"].as_str() };
+        let status=if ev_type=="payment_intent.canceled" { "voided" }
+            else if obj["refunded"]==true { "refunded" } else { "partially_refunded" };
+        if ev_type.starts_with("refund.") && matches!(obj["status"].as_str(),Some("failed"|"canceled")) {
+            return StatusCode::OK.into_response();
+        }
+        if pi.is_none() { return StatusCode::BAD_REQUEST.into_response(); }
+        return match order_contract::block_payment(&db.lock().unwrap(),pi,None,status) {
+            Ok(())=>StatusCode::OK.into_response(),
+            Err(e)=>{ tracing::error!("refund persistence: {e}"); StatusCode::INTERNAL_SERVER_ERROR.into_response() }
+        };
+    }
     if ev_type.starts_with("customer.subscription.") {
         handle_subscription_event(&db, ev_type, &event);
         return StatusCode::OK.into_response();
@@ -20586,9 +20601,38 @@ async fn stripe_webhook(
         return StatusCode::OK.into_response();
     }
 
-    if ev_type == "checkout.session.completed" {
+    if ev_type == "checkout.session.async_payment_failed" {
+        let s = &event["data"]["object"];
+        let conn = db.lock().unwrap();
+        if let Some(d) = s["metadata"]["order_draft"].as_str() {
+            if let Err(e) = order_contract::attach(&conn,d,s) { tracing::error!("payment failure binding: {e}"); }
+        }
+        if let Err(e) = conn.execute("UPDATE catalog_orders SET status='payment_failed',payment_status='unpaid',order_updated_at=datetime('now')
+            WHERE stripe_session_id=? AND status IN ('checkout_pending','payment_pending')", [s["id"].as_str().unwrap_or("")]) {
+            tracing::error!("payment failure state: {e}");
+        }
+        return StatusCode::OK.into_response();
+    }
+    if matches!(ev_type, "checkout.session.completed" | "checkout.session.async_payment_succeeded") {
         let session = &event["data"]["object"];
         let meta = session["metadata"].clone();
+        if order_contract::paid(session) && (meta["kind"]=="catalog" || meta.get("order_draft").is_some()
+            || matches!(meta["collab"].as_str(),Some("sweep"|"kokon"|"jiuflow"|"nakamura"|"boosttech"|"housedrip"))) {
+            if let Err(e)=order_contract::enqueue(&db.lock().unwrap(),session) {
+                tracing::error!("paid enqueue failed: {e}");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        }
+        // Manual-capture auction authorization is not a paid merchandise order.
+        if !order_contract::paid(session) && meta["kind"].as_str() != Some("ma_bid") {
+            let conn = db.lock().unwrap();
+            if let Some(d) = meta["order_draft"].as_str() {
+                if let Err(e) = order_contract::attach(&conn,d,session) { tracing::error!("pending payment binding: {e}"); }
+            }
+            let _ = conn.execute("UPDATE catalog_orders SET status='payment_pending',payment_status='unpaid'
+                WHERE stripe_session_id=? AND status='checkout_pending'", [session["id"].as_str().unwrap_or("")]);
+            return StatusCode::OK.into_response();
+        }
 
         // Funnel: server-side checkout_paid event (fires for ANY paid session,
         // including collab + standalone). amount_total is in cents/smallest unit.
@@ -21976,6 +22020,18 @@ BODY (markdown):
     Ok(())
 }
 
+async fn resume_checkout_order(db: Db, session: serde_json::Value) {
+    let sid = session["id"].as_str().unwrap_or("");
+    let kind = order_contract::load(&db.lock().unwrap(),sid).ok()
+        .and_then(|s| s["kind"].as_str().map(str::to_string));
+    match kind.as_deref() {
+        Some("catalog") => catalog::fulfill_catalog_order(db,session).await,
+        Some("collab") => handle_collab_sweep_order(db,&session).await,
+        Some("collab_sample") => handle_collab_sample_order(db,&session).await,
+        _ => order_contract::mark(&db.lock().unwrap(),sid,"blocked_specification","unknown checkout kind"),
+    }
+}
+
 /// MU × SWEEP collab order webhook handler.
 /// Idempotent on stripe_session. Three production routes:
 ///   - 'printful'      → POST draft order to Printful API (SWEEP社 approves in dashboard)
@@ -21983,8 +22039,26 @@ BODY (markdown):
 ///   - 'pre_order'     → Telegram alert; ops contacts the buyer (sizing / consult)
 async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
     let session_id = session["id"].as_str().unwrap_or("").to_string();
-    let slug = session["metadata"]["slug"].as_str().unwrap_or("").to_string();
-    let size = session["metadata"]["size"].as_str().unwrap_or("M").to_string();
+    let snapshot = match order_contract::claim(&db.lock().unwrap(),session) {
+        Ok(Some(s)) => s,
+        Ok(None) => return,
+        Err(e) => { tracing::error!("collab claim: {e}"); return; }
+    };
+    let full = match order_contract::verified_session(&db,session).await {
+        Ok(s) if order_contract::paid(&s) => s,
+        _ => { order_contract::mark(&db.lock().unwrap(),&session_id,"failed_line_items","paid Stripe lines unavailable"); return; }
+    };
+    let purchased = match order_contract::purchased_items(&snapshot,&full)
+        .and_then(|i| order_contract::freeze_items(&db.lock().unwrap(),&session_id,&i)) {
+        Ok(i) => i,
+        Err(e) => { order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification",&e); return; }
+    };
+    let session=&full;
+    if let Err(e)=order_contract::preflight_paid(&db,&snapshot,session,&purchased).await {
+        tracing::error!("collab vendor preflight: {e}"); return;
+    }
+    let slug = snapshot["lines"][0]["sku"].as_str().unwrap_or("").to_string();
+    let size = snapshot["lines"][0]["size"].as_str().unwrap_or("").to_string();
     let amount: i64 = session["amount_total"].as_i64().unwrap_or(0);
     let email = session["customer_details"]["email"].as_str()
         .or_else(|| session["customer_email"].as_str())
@@ -22037,40 +22111,13 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
     let ship_address = format!("{} {} {} {} {} {}", address1, address2, city, state, zip, country)
         .split_whitespace().collect::<Vec<_>>().join(" ");
 
-    // Look up product (route + variant + variant_map + image + files + options)
-    type ProdRow = (
-        i64, String, String, i64,
-        Option<i64>, Option<String>, Option<String>,
-        Option<String>, Option<String>,
-    );
-    let product: Option<ProdRow> = {
-        let conn = db.lock().unwrap();
-        conn.query_row(
-            "SELECT id, name, COALESCE(production_route,'sweep_manual'), price_jpy,
-                    printful_variant_id, image_url, printful_variant_map,
-                    printful_files, printful_options
-             FROM collab_products WHERE slug=? AND partner IN ('sweep','kokon','jiuflow','boosttech','housedrip')",
-            params![slug],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
-        ).ok()
-    };
-    let Some((_pid, name, route, _price, variant_id_default, image_url, variant_map_json,
-              files_json, options_json)) = product else {
-        eprintln!("[sweep/webhook] unknown slug: {}", slug);
-        return;
-    };
-
-    // Resolve variant_id by size from the JSON map, falling back to default.
-    // Map keys are upper-case (S/M/L/XL/2XL/OS/ONE SIZE/S/M etc).
-    let size_key = size.to_uppercase();
-    let variant_id: Option<i64> = variant_map_json.as_ref()
-        .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
-        .and_then(|v| {
-            v.get(&size_key).and_then(|x| x.as_i64())
-                .or_else(|| v.get("OS").and_then(|x| x.as_i64()))
-                .or_else(|| v.get("ONE SIZE").and_then(|x| x.as_i64()))
-        })
-        .or(variant_id_default);
+    // Immutable checkout data; the product may since have been edited or deleted.
+    let line = &snapshot["lines"][0];
+    let selected = purchased.first().cloned().unwrap_or(serde_json::Value::Null);
+    let name = line["name"].as_str().unwrap_or("").to_string();
+    let route = line["route"].as_str().unwrap_or("").to_string();
+    let image_url: Option<String> = None;
+    let variant_id = selected["variant_id"].as_i64();
 
     // Idempotent insert
     {
@@ -22139,30 +22186,8 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
         && variant_id.is_some()
         && !printful_key.is_empty()
     {
-        // Build the line item.
-        // Use product-specific files+options from DB (set in the seed); fall
-        // back to a default DTG file URL using the SIIIEEP wordmark if none
-        // is configured for this product (legacy rows).
-        let mut item = serde_json::json!({
-            "variant_id": variant_id.unwrap(),
-            "quantity": 1,
-        });
-        let files_val: serde_json::Value = files_json.as_ref()
-            .and_then(|s| serde_json::from_str(s).ok())
-            .unwrap_or_else(|| {
-                let fallback_url = image_url.as_ref()
-                    .filter(|u| !u.is_empty() && u.starts_with("http"))
-                    .cloned()
-                    .unwrap_or_else(|| "https://lifestyle.wearmu.com/sweep/_logo.png".into());
-                serde_json::json!([{"type": "default", "url": fallback_url}])
-            });
-        item["files"] = files_val;
-        if let Some(opts) = options_json.as_ref()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .filter(|v| v.as_array().map_or(false, |a| !a.is_empty()))
-        {
-            item["options"] = opts;
-        }
+        // Explicit purchased files/size/quantity; no display-image or logo fallback.
+        let item = selected.clone();
 
         // Convert JP prefecture name → ISO 3166-2 code (e.g. "Tokyo" → "JP-13").
         // Stripe Checkout returns prefecture as the English/Japanese name; Printful
@@ -22200,21 +22225,16 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
                 .unwrap_or(session_id.as_str())
                 .chars().take(32).collect::<String>(),
         });
-        match reqwest::Client::new()
-            .post("https://api.printful.com/orders")
-            .bearer_auth(&printful_key)
-            .json(&order).send().await
+        match order_contract::submit(&db,&session_id,&order,&printful_key,"https://api.printful.com/orders").await
         {
-            Ok(r) if r.status().is_success() => {
-                let j: serde_json::Value = r.json().await.unwrap_or_default();
+            Ok((status,text)) if status.is_success() => {
+                let j: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
                 let oid = j["result"]["id"].as_i64().map(|n| n.to_string())
-                    .or_else(|| j["result"]["external_id"].as_str().map(String::from));
+                    .or_else(|| j["result"]["id"].as_str().map(String::from));
                 eprintln!("[sweep/printful] draft order created: {:?}", oid);
                 oid
             }
-            Ok(r) => {
-                let s = r.status();
-                let t = r.text().await.unwrap_or_default();
+            Ok((s,t)) => {
                 eprintln!("[sweep/printful] {}: {}", s, t.chars().take(300).collect::<String>());
                 None
             }
@@ -22222,6 +22242,8 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
         }
     } else { None };
 
+    order_contract::mark(&db.lock().unwrap(),&session_id,
+        if route != "printful" { "manual_pending" } else if pf_order_id.is_some() { "collab_complete" } else { "submission_uncertain" }, "");
     if let Some(ref oid) = pf_order_id {
         let conn = db.lock().unwrap();
         let _ = conn.execute(
@@ -22308,24 +22330,35 @@ async fn handle_collab_sweep_order(db: Db, session: &serde_json::Value) {
 /// Non-Printful items fall through to Telegram only.
 async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     let session_id = session["id"].as_str().unwrap_or("").to_string();
-    let partner = session["metadata"]["collab"].as_str().unwrap_or("").to_string();
+    let snapshot = match order_contract::claim(&db.lock().unwrap(),session) {
+        Ok(Some(s)) => s,
+        Ok(None) => return,
+        Err(e) => { tracing::error!("sample claim: {e}"); return; }
+    };
+    let full = match order_contract::verified_session(&db,session).await {
+        Ok(s) if order_contract::paid(&s) => s,
+        _ => { order_contract::mark(&db.lock().unwrap(),&session_id,"failed_line_items","paid Stripe lines unavailable"); return; }
+    };
+    let purchased = match order_contract::purchased_items(&snapshot,&full)
+        .and_then(|i| order_contract::freeze_items(&db.lock().unwrap(),&session_id,&i)) {
+        Ok(i) => i,
+        Err(e) => { order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification",&e); return; }
+    };
+    let session=&full;
+    if let Err(e)=order_contract::preflight_paid(&db,&snapshot,session,&purchased).await {
+        tracing::error!("sample vendor preflight: {e}"); return;
+    }
+    let partner = snapshot["partner"].as_str().unwrap_or("").to_string();
     let amount: i64 = session["amount_total"].as_i64().unwrap_or(0);
     let email = session["customer_details"]["email"].as_str()
         .or_else(|| session["customer_email"].as_str())
         .unwrap_or("").to_string();
 
-    // Reassemble sample_items JSON from chunked metadata fields.
-    let chunk_count: usize = session["metadata"]["sample_items_count"]
-        .as_str().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let mut joined = String::new();
-    for i in 0..chunk_count.min(20) {
-        if let Some(s) = session["metadata"][format!("sample_items_{}", i)].as_str() {
-            joined.push_str(s);
-        }
-    }
-    let items: Vec<serde_json::Value> = serde_json::from_str(&joined).unwrap_or_default();
-    if items.is_empty() {
+    // The DB snapshot is canonical, not editable/chunked Stripe metadata.
+    let items: Vec<serde_json::Value> = snapshot["sample_items"].as_array().cloned().unwrap_or_default();
+    if items.is_empty() || Some(items.len()) != snapshot["lines"].as_array().map(Vec::len) {
         eprintln!("[{}/sample-webhook] no items in metadata (session={})", partner, session_id);
+        order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification","invalid sample snapshot");
         return;
     }
 
@@ -22397,8 +22430,11 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     let mut printful_items: Vec<serde_json::Value> = Vec::new();
     let mut manual_lines: Vec<String> = Vec::new();
     let mut summary_lines: Vec<String> = Vec::new();
+    let mut submitted_line_keys = Vec::new();
+    let mut purchased_iter = purchased.into_iter();
 
-    for it in &items {
+    for (index,it) in items.iter().enumerate() {
+        let frozen_line = &snapshot["lines"][index];
         let source = it["source"].as_str().unwrap_or("collab");
         let qty: i64 = it["qty"].as_i64().unwrap_or(1).clamp(1, 20);
 
@@ -22417,27 +22453,32 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
                     "SELECT name FROM products WHERE id=?",
                     params![pid], |r| r.get(0),
                 ).unwrap_or_default();
-                let _ = conn.execute(
-                    "UPDATE products SET sold=sold+? WHERE id=?",
-                    params![qty, pid],
-                );
                 n
             };
             // Record into collab_orders for unified bookkeeping (route='mu_drop').
             let line_key = format!("{}|drop|{}", session_id, pid);
             {
-                let conn = db.lock().unwrap();
-                let _ = conn.execute(
+                let result=(|| -> rusqlite::Result<()> {
+                let mut conn = db.lock().unwrap();
+                let tx=conn.transaction()?;
+                let inserted = tx.execute(
                     "INSERT OR IGNORE INTO collab_orders
                          (stripe_session, slug, size, email, ship_name, ship_address, ship_country,
-                          amount_jpy, production_route, status, created_at)
+                           amount_jpy, production_route, status, created_at)
                      VALUES (?,?,?,?,?,?,?,?,?, 'drop_received', ?)",
                     params![
                         line_key, format!("{}#{:04}", brand, drop_num), "OS", email,
                         ship_name, ship_address, country,
                         0i64, "mu_drop", chrono_now(),
                     ],
-                );
+                )?;
+                if inserted==1 { tx.execute("UPDATE products SET sold=sold+? WHERE id=?",params![qty,pid])?; }
+                tx.commit()
+                })();
+                if let Err(e)=result {
+                    order_contract::mark(&db.lock().unwrap(),&session_id,"failed",&e.to_string());
+                    return;
+                }
             }
             manual_lines.push(format!("{} {} #{:04} ×{} [MU 自社 drop / 手動発送]",
                 name, brand.to_uppercase(), drop_num, qty));
@@ -22451,29 +22492,12 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         let size = it["size"].as_str().unwrap_or("OS").to_string();
         if slug.is_empty() { continue; }
 
-        type Row = (
-            String, String, Option<i64>, Option<String>,
-            Option<String>, Option<String>, Option<String>,
-        );
-        let row: Option<Row> = {
-            let conn = db.lock().unwrap();
-            conn.query_row(
-                "SELECT name, COALESCE(production_route,'sweep_manual'),
-                        printful_variant_id, image_url, printful_variant_map,
-                        printful_files, printful_options
-                 FROM collab_products WHERE slug=? AND partner=?",
-                params![slug, partner],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
-            ).ok()
-        };
-        let Some((name, route, variant_id_default, image_url, variant_map_json, files_json, options_json)) = row else {
-            eprintln!("[{}/sample-webhook] unknown slug: {}", partner, slug);
-            continue;
-        };
+        let name = frozen_line["name"].as_str().unwrap_or("").to_string();
+        let route = frozen_line["route"].as_str().unwrap_or("").to_string();
 
         // Record one collab_orders row per line. The stripe_session column
         // is UNIQUE so suffix with slug+size to keep idempotency per line.
-        let line_key = format!("{}|{}|{}", session_id, slug, size);
+        let line_key = format!("{}|{}|{}|{}", session_id, index, slug, size);
         {
             let conn = db.lock().unwrap();
             let _ = conn.execute(
@@ -22483,48 +22507,21 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
                  VALUES (?,?,?,?,?,?,?,?,?, 'sample_received', ?)",
                 params![
                     line_key, slug, size, email, ship_name, ship_address, country,
-                    0i64, route, chrono_now(),
+                    frozen_line["unit_amount"].as_i64().unwrap_or(0) * qty, route, chrono_now(),
                 ],
             );
         }
 
-        let size_key = size.to_uppercase();
-        let variant_id: Option<i64> = variant_map_json.as_ref()
-            .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
-            .and_then(|v| {
-                v.get(&size_key).and_then(|x| x.as_i64())
-                    .or_else(|| v.get("OS").and_then(|x| x.as_i64()))
-                    .or_else(|| v.get("ONE SIZE").and_then(|x| x.as_i64()))
-            })
-            .or(variant_id_default);
 
         summary_lines.push(format!("• {} (size {}) ×{}", name, size, qty));
 
         if route == "printful" {
-            if let Some(vid) = variant_id {
-                let mut pf_item = serde_json::json!({
-                    "variant_id": vid,
-                    "quantity": qty,
-                });
-                let files_val: serde_json::Value = files_json.as_ref()
-                    .and_then(|s| serde_json::from_str(s).ok())
-                    .unwrap_or_else(|| {
-                        let fallback_url = image_url.as_ref()
-                            .filter(|u| !u.is_empty() && u.starts_with("http"))
-                            .cloned()
-                            .unwrap_or_else(|| format!("https://lifestyle.wearmu.com/{}/_logo.png", partner));
-                        serde_json::json!([{"type": "default", "url": fallback_url}])
-                    });
-                pf_item["files"] = files_val;
-                if let Some(opts) = options_json.as_ref()
-                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                    .filter(|v| v.as_array().map_or(false, |a| !a.is_empty()))
-                {
-                    pf_item["options"] = opts;
-                }
+            if let Some(pf_item) = purchased_iter.next() {
                 printful_items.push(pf_item);
+                submitted_line_keys.push(line_key);
             } else {
-                manual_lines.push(format!("{} (size {}): printful_variant_id 未設定", name, size));
+                order_contract::mark(&db.lock().unwrap(),&session_id,"blocked_specification","missing purchased print line");
+                return;
             }
         } else {
             manual_lines.push(format!("{} (size {}) ×{} [route={}]", name, size, qty, route));
@@ -22557,20 +22554,15 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
                     .unwrap_or(session_id.as_str())
                     .chars().take(24).collect::<String>()),
         });
-        match reqwest::Client::new()
-            .post("https://api.printful.com/orders")
-            .bearer_auth(&printful_key)
-            .json(&order).send().await
+        match order_contract::submit(&db,&session_id,&order,&printful_key,"https://api.printful.com/orders").await
         {
-            Ok(r) if r.status().is_success() => {
-                let j: serde_json::Value = r.json().await.unwrap_or_default();
+            Ok((status,text)) if status.is_success() => {
+                let j: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
                 let oid = j["result"]["id"].as_i64().map(|n| n.to_string());
                 eprintln!("[{}/sample/printful] draft order created: {:?}", partner, oid);
                 oid
             }
-            Ok(r) => {
-                let s = r.status();
-                let t = r.text().await.unwrap_or_default();
+            Ok((s,t)) => {
                 eprintln!("[{}/sample/printful] {}: {}", partner, s, t.chars().take(300).collect::<String>());
                 None
             }
@@ -22581,11 +22573,13 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
     // Mark line statuses for the printful ones.
     if let Some(ref oid) = pf_order_id {
         let conn = db.lock().unwrap();
+        for line_key in &submitted_line_keys {
         let _ = conn.execute(
             "UPDATE collab_orders SET printful_order_id=?, status='sample_printful_draft'
-             WHERE stripe_session LIKE ? AND production_route='printful'",
-            params![oid, format!("{}|%", session_id)],
+             WHERE stripe_session=? AND production_route='printful'",
+            params![oid, line_key],
         );
+        }
     }
 
     // Log the sample purchase into funnel_events so the proposal page's
@@ -22617,10 +22611,23 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
         if let Ok(em) = validate_email(&email) {
             let pts = amount / 10;  // 10% → 1 pt = 1 yen
             if pts > 0 {
-                let conn = db.lock().unwrap();
+                let mut conn = db.lock().unwrap();
                 let ref_ = format!("{}:{}", partner, session_id);
-                let _ = points_mutate(&conn, &em, pts, "sample_back",
-                                      Some(&ref_), Some(partner.as_str()));
+                let result = (|| -> Result<(),String> {
+                    let tx = conn.transaction().map_err(|e|e.to_string())?;
+                    let changed = tx.execute("UPDATE catalog_orders SET sample_credit_applied=1 WHERE stripe_session_id=? AND sample_credit_applied=0
+                        AND COALESCE(payment_status,'') NOT IN ('refunded','partially_refunded','voided')", [&session_id]).map_err(|e|e.to_string())?;
+                    if changed == 1 {
+                        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM proposal_point_events WHERE ref=? AND reason='sample_back')", [&ref_],|r|r.get(0)).map_err(|e|e.to_string())?;
+                        if !exists { points_mutate(&tx,&em,pts,"sample_back",Some(&ref_),Some(partner.as_str()))?; }
+                    }
+                    tx.commit().map_err(|e|e.to_string())
+                })();
+                if let Err(e) = result {
+                    tracing::error!("sample credit transaction: {e}");
+                    order_contract::mark(&conn,&session_id,"submission_uncertain",&e);
+                    return;
+                }
             }
         }
     }
@@ -22649,6 +22656,9 @@ async fn handle_collab_sample_order(db: Db, session: &serde_json::Value) {
             .json(&serde_json::json!({"chat_id": tg_chat, "text": body, "disable_web_page_preview": true}))
             .send().await;
     }
+
+    order_contract::mark(&db.lock().unwrap(),&session_id,
+        if submitted_line_keys.is_empty() { "manual_pending" } else if pf_order_id.is_some() { "collab_complete" } else { "submission_uncertain" }, "");
 
     // Resend email to ops
     let resend_key = env::var("RESEND_API_KEY").unwrap_or_default();
@@ -55971,6 +55981,34 @@ fn partner_proposal_cookie_name(partner: &str) -> &'static str {
     }
 }
 
+fn collab_size_options(route: &str, variant_map: Option<&str>, sizes_json: Option<&str>) -> Vec<String> {
+    if route == "printful" {
+        return variant_map.and_then(|s| serde_json::from_str(s).ok())
+            .and_then(|m| order_contract::size_choices(&m).ok()).unwrap_or_default();
+    }
+    sizes_json.and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+        .unwrap_or_default().into_iter().map(|s|s.trim().to_uppercase()).filter(|s|!s.is_empty()).collect()
+}
+
+fn collab_size_options_html(sizes: &[String]) -> String {
+    let default = sizes.iter().find(|s|s.as_str()=="M").or_else(||sizes.first());
+    sizes.iter().map(|s|format!("<option value=\"{}\"{}>{}</option>",html_attr_escape(s),
+        if Some(s)==default { " selected" } else { "" },html_escape(s))).collect()
+}
+
+#[test]
+fn sweep_size_ui_uses_actual_map_and_no_apparel_fallback() {
+    let os=collab_size_options("printful",Some(r#"{"OS":123}"#),Some(r#"["S","M","L"]"#));
+    assert_eq!(os,vec!["OS"]);
+    assert_eq!(collab_size_options_html(&os),"<option value=\"OS\" selected>OS</option>");
+    let apparel=collab_size_options("printful",Some(r#"{"L":3,"M":2,"S":1}"#),None);
+    assert_eq!(apparel,vec!["S","M","L"]);
+    let html=collab_size_options_html(&apparel);
+    assert!(html.contains("value=\"M\" selected")); assert!(!html.contains("OS"));
+    assert!(collab_size_options("printful",Some("{}"),Some(r#"["M"]"#)).is_empty());
+    assert!(order_contract::size_variant(&serde_json::json!({"OS":123}),"M").is_err());
+}
+
 async fn show_sweep_page(
     State(db): State<Db>,
     headers: HeaderMap,
@@ -55985,21 +56023,24 @@ async fn show_sweep_page(
     }
 
     // Build product list HTML server-side (no caching of the gate cookie path)
-    type Row = (i64, String, String, String, String, i64, Option<String>, i64);
+    type Row = (i64, String, String, String, String, i64, Option<String>, i64, String, Option<String>, Option<String>);
     let items: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url,
-                    COALESCE(lead_time_days, 14)
+                    COALESCE(lead_time_days, 14),COALESCE(production_route,'sweep_manual'),printful_variant_map,sizes_json
              FROM collab_products WHERE partner='sweep' AND active=1
              ORDER BY id"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
-    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead, route, map, sizes)| {
+        let choices = collab_size_options(route,map.as_deref(),sizes.as_deref());
+        let options = collab_size_options_html(&choices);
+        let disabled = if choices.is_empty() { " disabled" } else { "" };
         // Image fallback: if no image_url set yet, show a styled placeholder
         // with the category label, so the gallery is never empty.
         let image_block = match image.as_deref().filter(|u| !u.is_empty() && u.starts_with("http")) {
@@ -56020,9 +56061,9 @@ async fn show_sweep_page(
     <div class="row">
       <span class="price">¥{price_fmt}</span>
       <select id="size-{id}" class="size" aria-label="size">
-        <option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>3XL</option><option>OS</option>
+        {options}
       </select>
-      <button class="buy" data-slug="{slug}" data-id="{id}">注文 →</button>
+      <button class="buy" data-slug="{slug}" data-id="{id}"{disabled}>注文 →</button>
     </div>
     <div class="fb">
       <button class="sig love" data-slug="{slug}" aria-label="好き">👍 <span class="n n-love">0</span></button>
@@ -56410,22 +56451,41 @@ fn kokon_v3_triple(slug: &str) -> Option<(&'static str, &'static str, &'static s
 
 /// GET /kokon — Public MU × kokon.tokyo (yakiniku) collab shop.
 /// No password gate (kokon.tokyo is jointly run by 濱田 → 公開ローンチ済).
+#[tokio::test]
+async fn kokon_page_renders_only_real_sizes_and_disables_missing_map() {
+    let c=rusqlite::Connection::open_in_memory().unwrap();
+    c.execute_batch("CREATE TABLE collab_products(id INTEGER,slug TEXT,category TEXT,name TEXT,description TEXT,
+        price_jpy INTEGER,image_url TEXT,lead_time_days INTEGER,production_route TEXT,printful_variant_map TEXT,
+        sizes_json TEXT,partner TEXT,active INTEGER);
+        INSERT INTO collab_products VALUES (1,'os','mug','Cup','',1000,NULL,14,'printful','{\"OS\":123}','[\"M\"]','kokon',1);
+        INSERT INTO collab_products VALUES (2,'bad','tee','Bad','',1000,NULL,14,'printful',NULL,'[\"M\"]','kokon',1);").unwrap();
+    let response=show_kokon_page(State(std::sync::Arc::new(std::sync::Mutex::new(c)))).await;
+    assert_eq!(response.status(),StatusCode::OK);
+    let html=String::from_utf8(axum::body::to_bytes(response.into_body(),usize::MAX).await.unwrap().to_vec()).unwrap();
+    let options=html.split("id=\"size-1\"").nth(1).unwrap().split("</select>").next().unwrap();
+    assert!(options.contains(">OS</option>")); assert!(!options.contains(">M</option>"));
+    assert!(html.contains("data-slug=\"bad\" data-id=\"2\" disabled"));
+}
+
 async fn show_kokon_page(State(db): State<Db>) -> Response {
-    type Row = (i64, String, String, String, String, i64, Option<String>, i64);
+    type Row = (i64, String, String, String, String, i64, Option<String>, i64, String, Option<String>, Option<String>);
     let items: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, slug, category, name, COALESCE(description,''), price_jpy, image_url,
-                    COALESCE(lead_time_days, 14)
+                    COALESCE(lead_time_days, 14),COALESCE(production_route,'sweep_manual'),printful_variant_map,sizes_json
              FROM collab_products WHERE partner='kokon' AND active=1
              ORDER BY id"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
-            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?
+            r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?,r.get(8)?,r.get(9)?,r.get(10)?
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
-    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead)| {
+    let cards = items.iter().map(|(id, slug, cat, name, desc, price, image, lead, route, map, sizes_json)| {
+        let sizes=collab_size_options(route,map.as_deref(),sizes_json.as_deref());
+        let options=collab_size_options_html(&sizes);
+        let disabled=if sizes.is_empty() { "disabled" } else { "" };
         // v3 3-image gallery: lifestyle / mockup / design. Falls back to
         // legacy single image when this SKU hasn't been backfilled.
         let image_block = if let Some((lifestyle, mockup, design)) = kokon_v3_triple(slug) {
@@ -56467,9 +56527,9 @@ async fn show_kokon_page(State(db): State<Db>) -> Response {
     <div class="row">
       <span class="price">¥{price_fmt}</span>
       <select id="size-{id}" class="size" aria-label="size">
-        <option>XS</option><option>S</option><option selected>M</option><option>L</option><option>XL</option><option>2XL</option><option>OS</option>
+        {options}
       </select>
-      <button class="buy" data-slug="{slug}" data-id="{id}">注文 →</button>
+      <button class="buy" data-slug="{slug}" data-id="{id}" {disabled}>注文 →</button>
     </div>
   </div>
 </article>"#,
@@ -57692,28 +57752,12 @@ async fn sweep_partner_action(
     if id <= 0 {
         return (StatusCode::BAD_REQUEST, "missing id").into_response();
     }
-    let conn = db.lock().unwrap();
+    let mut conn = db.lock().unwrap();
     match action {
-        "approve" => {
-            let _ = conn.execute(
-                "UPDATE collab_products SET partner_approved=1, partner_updated_at=?
-                 WHERE id=? AND partner='sweep'",
-                params![chrono_now(), id],
-            );
-        }
-        "hold" => {
-            let _ = conn.execute(
-                "UPDATE collab_products SET partner_approved=-1, partner_updated_at=?
-                 WHERE id=? AND partner='sweep'",
-                params![chrono_now(), id],
-            );
-        }
-        "reset" => {
-            let _ = conn.execute(
-                "UPDATE collab_products SET partner_approved=0, partner_updated_at=?
-                 WHERE id=? AND partner='sweep'",
-                params![chrono_now(), id],
-            );
+        "approve" | "hold" | "reset" => {
+            if let Err(e) = order_contract::collab_approval(&mut conn,"sweep",id,action,&chrono_now()) {
+                return (StatusCode::CONFLICT,e).into_response();
+            }
         }
         "notes" => {
             let notes = body["notes"].as_str().unwrap_or("").chars().take(2000).collect::<String>();
@@ -57797,20 +57841,20 @@ async fn show_partner_proposal_page(
 
     type Row = (
         i64, String, String, String, i64, Option<i64>,
-        Option<String>, Option<i64>, Option<String>,
+        Option<String>, Option<i64>, Option<String>, String, Option<String>,
     );
     let items: Vec<Row> = {
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, slug, category, name, price_jpy, printful_cost_jpy,
-                    image_url, printful_variant_id, sizes_json
+                    image_url, printful_variant_id, sizes_json,COALESCE(production_route,'sweep_manual'),printful_variant_map
              FROM collab_products
              WHERE partner=? AND active=1
              ORDER BY id",
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map(params![partner], |r| Ok((
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
-            r.get(6)?, r.get(7)?, r.get(8)?,
+            r.get(6)?, r.get(7)?, r.get(8)?, r.get(9)?, r.get(10)?,
         ))).map(|it| it.filter_map(|r| r.ok()).collect()).unwrap_or_default()
     };
 
@@ -57912,18 +57956,7 @@ async fn show_partner_proposal_page(
     let mut tot_skus = 0i64;
     let mut tot_with_cost = 0i64;
     let mut min_sample_total = 0i64;
-    // Categories that should never show clothing sizes (mug / sticker / hat / etc).
-    let is_apparel_category = |c: &str| -> bool {
-        let c = c.to_lowercase();
-        !(c.contains("マグ") || c.contains("mug") || c.contains("ボトル") || c.contains("bottle")
-          || c.contains("ステッカー") || c.contains("sticker") || c.contains("キャップ") || c.contains("cap")
-          || c.contains("ハット") || c.contains("hat") || c.contains("ビーニー") || c.contains("beanie")
-          || c.contains("バッグ") || c.contains("bag") || c.contains("ダッフル") || c.contains("バックパック")
-          || c.contains("トート") || c.contains("tote") || c.contains("ケース") || c.contains("case")
-          || c.contains("マット") || c.contains("缶クーラー") || c.contains("クーラー") || c.contains("エプロン") || c.contains("apron"))
-    };
-
-    let cards = items.iter().map(|(id, slug, cat, name, price, cost, image, pf_vid, sizes_json)| {
+    let cards = items.iter().map(|(id, slug, cat, name, price, cost, image, pf_vid, sizes_json, route, map)| {
         tot_skus += 1;
         if cost.is_some() { tot_with_cost += 1; }
         let sample_price = cost.unwrap_or(0).max(500);
@@ -57935,19 +57968,9 @@ async fn show_partner_proposal_page(
                 html_attr_escape(u), html_attr_escape(name)),
             None => r#"<div class="thumb placeholder" aria-hidden="true">—</div>"#.to_string(),
         };
-        let raw_sizes: Vec<String> = sizes_json.as_deref()
-            .and_then(|j| serde_json::from_str::<Vec<String>>(j).ok())
-            .unwrap_or_else(|| vec!["OS".into()]);
-        // Filter out apparel sizes for non-apparel categories.
-        let sizes: Vec<String> = if is_apparel_category(cat) {
-            raw_sizes.clone()
-        } else {
-            vec!["OS".into()]
-        };
-        let is_one_size = sizes.len() <= 1 || sizes.iter().all(|s| {
-            let s = s.to_uppercase();
-            s == "OS" || s == "ONE SIZE" || s == "FREE" || s.is_empty()
-        });
+        let sizes = collab_size_options(route,map.as_deref(),sizes_json.as_deref());
+        let is_one_size = sizes.len()==1;
+        let sole_size = sizes.first().map(String::as_str).unwrap_or("");
         // Discount %: 100 * (price - cost) / price, only when both known.
         let discount_badge = match cost {
             Some(c) if *price > 0 && *c < *price => {
@@ -57961,7 +57984,7 @@ async fn show_partner_proposal_page(
         } else {
             r#"<span class="route manual" title="お問合せ後に個別対応">手配制</span>"#.to_string()
         };
-        let disabled_attr = if cost.is_none() { " disabled" } else { "" };
+        let disabled_attr = if cost.is_none() || sizes.is_empty() { " disabled" } else { "" };
         let row_class = if cost.is_none() { " no-cost" } else { "" };
 
         // Quantity input block: single qty+size for one-size items, or a
@@ -57969,15 +57992,16 @@ async fn show_partner_proposal_page(
         let qty_block = if is_one_size {
             format!(r##"<div class="cart one-size">
       <label class="qty"><span>数量</span>
-        <input type="number" min="0" max="20" value="0" class="qty-input" data-id="{id}-OS" data-slug="{slug}" data-size="OS" aria-label="{name_a} 数量"{disabled}>
+        <input type="number" min="0" max="20" value="0" class="qty-input" data-id="{id}-{size}" data-slug="{slug}" data-size="{size}" aria-label="{name_a} 数量"{disabled}>
       </label>
-      <span class="size-tag">ワンサイズ</span>
-      <span class="line-total" data-id="{id}-OS">¥0</span>
+      <span class="size-tag">{size}</span>
+      <span class="line-total" data-id="{id}-{size}">¥0</span>
     </div>"##,
                 id = id,
                 slug = html_attr_escape(slug),
                 name_a = html_attr_escape(name),
                 disabled = disabled_attr,
+                size = html_attr_escape(sole_size),
             )
         } else {
             let size_inputs = sizes.iter().map(|s| format!(
@@ -62075,7 +62099,19 @@ async fn collab_checkout(
         return (StatusCode::NOT_FOUND, "product not found").into_response();
     };
     let price = price_jpy.clamp(500, 99_800);
-    let size = body.size.chars().take(8).collect::<String>();
+    let size = body.size.trim().to_uppercase();
+    let line = match order_contract::collab_line(&db.lock().unwrap(),partner,&body.slug,&size,1,price,order_contract::OrderPurpose::Sale) {
+        Ok(line) => line,
+        Err(e) => return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+    };
+    let snapshot = serde_json::json!({"version":1,"kind":"collab","partner":partner,"lines":[line]});
+    let snapshot=match order_contract::prepare_checkout(&snapshot,"JP").await {
+        Ok(s)=>s,Err(e)=>return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+    };
+    let draft = match order_contract::draft(&db.lock().unwrap(),&body.slug,&snapshot) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,e).into_response(),
+    };
     // JiuFlow purchases are made on jiuflow.com, so redirect back there after
     // Stripe success (not wearmu.com). Other partners stay on wearmu.com.
     let base_url = if partner == "jiuflow" {
@@ -62096,6 +62132,7 @@ async fn collab_checkout(
          format!("{} ({}) · {}", name, category, label)),
         ("metadata[collab]", partner.into()),
         ("metadata[collab_product_id]", product_id.to_string()),
+        ("metadata[order_draft]", draft.clone()),
         ("metadata[slug]", body.slug.clone()),
         ("metadata[size]", size),
         ("shipping_address_collection[allowed_countries][0]", "JP".into()),
@@ -62114,6 +62151,9 @@ async fn collab_checkout(
         Ok(r) if r.status().is_success() => {
             let j: serde_json::Value = r.json().await.unwrap_or_default();
             let url = j["url"].as_str().unwrap_or("/").to_string();
+            if let Err(e) = order_contract::attach(&db.lock().unwrap(),&draft,&j) {
+                return (StatusCode::INTERNAL_SERVER_ERROR,e).into_response();
+            }
             Json(serde_json::json!({"url": url, "price_jpy": price})).into_response()
         }
         Ok(r) => {
@@ -63453,6 +63493,7 @@ async fn sample_checkout(
     type DropRow2 = (String, i64, String, i64);
     let mut line_form: Vec<(String, String)> = Vec::new();
     let mut meta_items: Vec<serde_json::Value> = Vec::new();
+    let mut snapshot_lines = Vec::new();
     let mut total = 0i64;
     {
         let conn = db.lock().unwrap();
@@ -63479,6 +63520,8 @@ async fn sample_checkout(
                         return (StatusCode::NOT_FOUND, format!("unknown drop product_id {}", pid)).into_response();
                     };
                     let unit = price.clamp(500, 999_800);
+                    snapshot_lines.push(serde_json::json!({"sku":format!("drop:{pid}"),"source":"drop","product_id":pid,
+                        "name":name,"brand":brand,"drop_num":drop_num,"route":"mu_drop","qty":it.qty,"unit_amount":unit}));
                     total += unit * it.qty;
                     line_form.push((format!("line_items[{}][quantity]", idx), it.qty.to_string()));
                     line_form.push((format!("line_items[{}][price_data][currency]", idx), "jpy".into()));
@@ -63505,7 +63548,11 @@ async fn sample_checkout(
                     };
                     let unit = c.clamp(500, 99_800);
                     total += unit * it.qty;
-                    let size = it.size.chars().take(8).collect::<String>();
+                    let size = it.size.trim().to_uppercase();
+                    match order_contract::collab_line(&conn,partner,&it.slug,&size,it.qty,unit,order_contract::OrderPurpose::PartnerSample) {
+                        Ok(line) => snapshot_lines.push(line),
+                        Err(e) => return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+                    }
                     line_form.push((format!("line_items[{}][quantity]", idx), it.qty.to_string()));
                     line_form.push((format!("line_items[{}][price_data][currency]", idx), "jpy".into()));
                     line_form.push((format!("line_items[{}][price_data][unit_amount]", idx), unit.to_string()));
@@ -63519,6 +63566,14 @@ async fn sample_checkout(
         }
     }
     let _ = total;
+    let snapshot = serde_json::json!({"version":1,"kind":"collab_sample","partner":partner,"lines":snapshot_lines,"sample_items":meta_items});
+    let snapshot=match order_contract::prepare_checkout(&snapshot,"JP").await {
+        Ok(s)=>s,Err(e)=>return (StatusCode::FAILED_DEPENDENCY,e).into_response(),
+    };
+    let draft = match order_contract::draft(&db.lock().unwrap(),partner,&snapshot) {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR,e).into_response(),
+    };
 
     // metadata[sample_items] payload — Stripe caps each metadata value at 500
     // chars. For <30 items the compact JSON fits comfortably, but split into
@@ -63534,6 +63589,7 @@ async fn sample_checkout(
             env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into()), return_path)),
         ("metadata[collab]".into(), partner.into()),
         ("metadata[sample]".into(), "1".into()),
+        ("metadata[order_draft]".into(), draft.clone()),
         ("shipping_address_collection[allowed_countries][0]".into(), "JP".into()),
     ];
     form.extend(line_form);
@@ -63557,6 +63613,9 @@ async fn sample_checkout(
         Ok(r) if r.status().is_success() => {
             let j: serde_json::Value = r.json().await.unwrap_or_default();
             let url = j["url"].as_str().unwrap_or("/").to_string();
+            if let Err(e) = order_contract::attach(&db.lock().unwrap(),&draft,&j) {
+                return (StatusCode::INTERNAL_SERVER_ERROR,e).into_response();
+            }
             Json(serde_json::json!({"url": url, "total_jpy": total})).into_response()
         }
         Ok(r) => {
@@ -70961,6 +71020,8 @@ async fn main() {
     }
 
     // ── catalog optimizer: 30-min autonomous SKU generator + reporter ──
+    // Paid-order recovery must run even when autonomous product generation is disabled.
+    tokio::spawn(catalog::run_order_worker(db.clone()));
     // Honours the master MU_AUTOPILOT flag (CI smoke test sets =0).
     // Without GEMINI_API_KEY / R2_* envs the inner generator will refuse
     // work, so the cron stays a no-op reporter until secrets land.
@@ -72054,6 +72115,7 @@ async fn main() {
         .route("/mujin", get(catalog::store_unmanned_page))
         .route("/unmanned", get(catalog::store_unmanned_page))
         .route("/api/make", post(catalog::public_make).get(catalog::public_make))
+        .route("/api/make/kinds", get(catalog::make_kinds))
         .route("/design/ask", get(catalog::design_ask_page))
         .route("/design/mine", get(catalog::design_mine_page))
         .route("/dojo", get(catalog::dojo_page))

@@ -2,21 +2,9 @@ import SwiftUI
 import UIKit
 import StoreKit
 
-// 1案ぶんの状態。複数案をスワイプで見比べられるよう、着画/磨き/スコアは案ごとに持つ。
-struct DesignVariant: Identifiable {
-    var result: MakeResult
-    var mockupURL: URL? = nil
-    var mockupIsModel = false
-    var polishedURL: URL? = nil
-    var score: DesignScore? = nil
-    var polishNote: String? = nil
-    var id: String { result.sku }
-    // 着画(モデル) > 磨いた絵 > 元デザイン
-    var shownURL: URL? { mockupURL ?? polishedURL ?? result.designURL }
-}
-
 // 「言えば、作れる」— MU の背骨。ひとこと打つと AI がデザインを起こし、即棚に並ぶ。
 // 作ると複数案を生成し、スワイプで見比べて選べる。生成は POST /api/make。
+@MainActor
 struct MakeView: View {
     @EnvironmentObject private var session: Session
     @EnvironmentObject private var app: AppState
@@ -29,7 +17,13 @@ struct MakeView: View {
     @StateObject private var voice = VoiceInput()
     @State private var voiceBasePrompt = ""   // 録音開始時の入力(認識結果を追記する土台)
     @State private var prompt = ""
-    @State private var kind: MakeKind = .auto
+    @State private var kind = ""
+    @State private var kindCatalog = MakeKindCatalog()
+    private var kinds: [MakeKindOption] { kindCatalog.items }
+    private var kindsLoaded: Bool { kindCatalog.loaded }
+    private var kindsUnavailable: Bool { kindCatalog.refreshFailed }
+    @State private var showKinds = false
+    @State private var kindQuery = ""
     @State private var royalty = 10          // 印税 10〜50%(価格は自動調整)
     @State private var isMaking = false
     @State private var errorMessage: String?
@@ -39,6 +33,7 @@ struct MakeView: View {
     // 2026-08-28: 作るには登録必須。未ログインで作ろうとしたら登録シートを開き、
     // 完了したら自動でもう一度 performMake() を叩く(onDismiss)。
     @State private var showAuthGate = false
+    @State private var pendingIntent: MakeIntent?
     @FocusState private var promptFocused: Bool
 
     // デザイン依頼: このお題を誰かに頼む(相手が作る→自分が受け取る→作手に印税)。
@@ -52,7 +47,11 @@ struct MakeView: View {
     @State private var variants: [DesignVariant] = []
     @State private var current = 0           // スワイプ中の案
     @State private var addingVariant = false  // 「もう1案」生成中
-    @State private var pollTasks: [Task<Void, Never>] = []
+    @State private var scope = MakeRequestScope()
+    @State private var workTasks: [String: Task<Void, Never>] = [:]
+    @State private var activeInput: MakeInput?
+    @State private var priceTarget: String?
+    @State private var polishingSKU: String?
 
     // 作っている間の演出
     @State private var makingStep = 0
@@ -93,7 +92,7 @@ struct MakeView: View {
                     // 入力
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(alignment: .bottom, spacing: 8) {
-                            TextField(String(localized: "make.placeholder"), text: $prompt, axis: .vertical)
+                            TextField(promptPlaceholder, text: $prompt, axis: .vertical)
                                 .lineLimit(2...5)
                                 .textFieldStyle(.plain)
                                 .padding(12)
@@ -122,14 +121,7 @@ struct MakeView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                         }
 
-                        // 種類チップ (おまかせ既定)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                ForEach(MakeKind.allCases) { k in
-                                    chip(k)
-                                }
-                            }
-                        }
+                        kindPicker
 
                         royaltyPicker
 
@@ -144,7 +136,7 @@ struct MakeView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .foregroundStyle(.black)
-                        .disabled(isMaking || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(isMaking || !kindsLoaded || !selectedKindAvailable || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                         // このお題を、誰かにデザインしてもらう。
                         Button(action: { startDesignRequest() }) {
@@ -158,7 +150,7 @@ struct MakeView: View {
                             .padding(.vertical, 4)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isMaking || requestBusy || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(isMaking || requestBusy || !selectedKindAvailable || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .disabled(isMaking)
                     .opacity(isMaking ? 0.5 : 1)
@@ -204,6 +196,11 @@ struct MakeView: View {
             .navigationTitle(String(localized: "tab.make"))
             .task {
                 Analytics.track("view_make")
+                await loadKinds()
+                guard !Task.isCancelled else { return }
+                for variant in variants where variant.previewPending || !variant.result.isLive {
+                    startPolling(sku: variant.id)
+                }
                 if popular.isEmpty { popular = (try? await MUAPI.popular()) ?? [] }
             }
             // 声で作る: 認識テキストを「録音開始時の入力 + 認識結果」で追記する
@@ -233,6 +230,7 @@ struct MakeView: View {
                     SafariView(url: url).ignoresSafeArea()
                 }
             }
+            .sheet(isPresented: $showKinds) { allKindsPicker }
             .alert(String(localized: "make.editPrice"), isPresented: $showPriceEdit) {
                 TextField("¥", text: $priceInput).keyboardType(.numberPad)
                 Button(String(localized: "make.priceSave")) { savePrice() }
@@ -249,10 +247,13 @@ struct MakeView: View {
             } message: {
                 Text("完成のお知らせ・受け取りに使います")
             }
-            .aiConsentAlert(isPresented: $showAIConsent) { performMake() }
-            .sheet(isPresented: $showAuthGate, onDismiss: { if session.isLoggedIn { performMake() } }) {
+            .aiConsentAlert(isPresented: $showAIConsent) { resumeIntent() }
+            .sheet(isPresented: $showAuthGate, onDismiss: {
+                if session.isLoggedIn { resumeIntent() } else { pendingIntent = nil }
+            }) {
                 AuthGateSheet()
             }
+            .onDisappear { cancelWork() }
         }
     }
 
@@ -264,6 +265,7 @@ struct MakeView: View {
 
     // このお題を誰かに頼む: ログイン中ならそのメール、なければ入力を促す。
     private func startDesignRequest() {
+        guard validateKind(kind) else { return }
         guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if let e = session.email, e.contains("@") {
             Task { await createRequest(email: e) }
@@ -274,21 +276,27 @@ struct MakeView: View {
     }
 
     private func createRequest(email: String) async {
+        guard validateKind(kind) else { return }
         let brief = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let e = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !brief.isEmpty, e.contains("@") else {
             errorMessage = String(localized: "メールとお題を入れてください"); return
         }
         requestBusy = true; errorMessage = nil
+        let generation = scope.generation
+        let operation = scope.begin("request")
         Analytics.track("design_request_create")
-        let kindArg = kind.rawValue.isEmpty ? nil : kind.rawValue
+        let kindArg = kind.isEmpty ? nil : kind
         do {
             let (link, status) = try await MUAPI.createDesignRequest(email: e, brief: brief, kind: kindArg)
+            guard accepts(generation, "request", operation) else { return }
             requestLink = link
             requestStatusURL = status
         } catch let APIError.message(m) {
+            guard accepts(generation, "request", operation) else { return }
             errorMessage = m
         } catch {
+            guard accepts(generation, "request", operation) else { return }
             errorMessage = String(localized: "リンクを作成できませんでした")
         }
         requestBusy = false
@@ -306,9 +314,6 @@ struct MakeView: View {
 
     // 印税 10〜50%。上げるほど価格が自動で上がり、あなたの取り分が増える。
     private var royaltyPicker: some View {
-        let base = basePrice(kind)
-        let price = adjustedPrice(base, royalty)
-        let earn = price * royalty / 100
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Label(String(localized: "make.royalty"), systemImage: "yensign.circle")
@@ -321,14 +326,14 @@ struct MakeView: View {
                 set: { royalty = min(50, max(10, Int(($0 / 10).rounded()) * 10)) }
             ), in: 10...50, step: 10)
             // 価格と取り分は自動連動(おまかせ時は目安)
-            HStack(spacing: 4) {
-                Text(String(format: String(localized: "make.priceLine"), "¥\(price.formatted())"))
-                Text("·").foregroundStyle(.tertiary)
-                // 単位は商品によって変える(服=着・シール=枚・マグ=個…)
-                Text(String(format: String(localized: "make.earnLine"), "¥\(earn.formatted())", unitFor(kind)))
-                    .foregroundStyle(.tint)
-                if kind == .auto {
+            Group {
+                if let price = selectedKind.estimatedPrice(royalty: royalty) {
+                    Text(String(format: String(localized: "make.priceLine"), "¥\(price.formatted())"))
+                    Text(String(format: String(localized: "make.earnLine"), "¥\((price * royalty / 100).formatted())", unitFor(selectedKind)))
+                        .foregroundStyle(.tint)
                     Text(String(localized: "make.estimate")).foregroundStyle(.tertiary)
+                } else {
+                    Text(String(localized: "make.price.afterKind"))
                 }
             }
             .font(.caption)
@@ -339,32 +344,13 @@ struct MakeView: View {
     }
 
     // 商品ごとの助数詞(着/枚/個…)。日本語は items.counter で出し分け。
-    private func unitFor(_ k: MakeKind) -> String {
-        switch k {
-        case .tee, .hoodie, .rashguard: return String(localized: "unit.apparel")  // 着
-        case .sticker: return String(localized: "unit.sticker")                    // 枚
-        case .mug: return String(localized: "unit.mug")                            // 個
-        case .tote: return String(localized: "unit.bag")                           // 個
-        case .auto: return String(localized: "unit.generic")                       // 点
+    private func unitFor(_ k: MakeKindOption) -> String {
+        guard Locale.current.language.languageCode?.identifier == "ja" else {
+            return k.kind.isEmpty ? String(localized: "unit.generic") : k.label
         }
-    }
-
-    // 種類別の基準価格(印税プレビュー用。サーバの spec.retail_jpy と一致)。
-    private func basePrice(_ k: MakeKind) -> Int {
-        switch k {
-        case .auto, .tee: return 4900
-        case .hoodie: return 8800
-        case .sticker: return 800
-        case .rashguard: return 9800
-        case .tote: return 2900
-        case .mug: return 2200
-        }
-    }
-    // サーバ royalty_adjusted_price と同式: base * 0.9 / (1 - pct/100)、100円丸め。
-    private func adjustedPrice(_ base: Int, _ pct: Int) -> Int {
-        let factor = 0.9 / (1.0 - Double(pct) / 100.0)
-        let raw = Int((Double(base) * factor).rounded())
-        return min(max(((raw + 50) / 100) * 100, base), 99_000)
+        if k.category == "wear" { return String(localized: "unit.apparel") }
+        if k.kind == "sticker" { return String(localized: "unit.sticker") }
+        return String(localized: "unit.generic")
     }
 
     // 作っている間の“作ってる感”。本当に何かが起きている手応えを出す。
@@ -409,32 +395,144 @@ struct MakeView: View {
         }
         .task {
             // 1.4秒ごとにメッセージを進める(完成まで巡回)
-            while isMaking {
-                try? await Task.sleep(nanoseconds: 1_400_000_000)
+            while isMaking && !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 1_400_000_000) } catch { return }
                 withAnimation { makingStep += 1 }
             }
         }
     }
 
-    private func chip(_ k: MakeKind) -> some View {
-        let selected = k == kind
+    private var selectedKind: MakeKindOption { kinds.first { $0.kind == kind } ?? .auto }
+    private var selectedKindAvailable: Bool { MakeKindOption.isAvailable(kind, in: kinds) }
+    private func unavailableMessage(_ kind: String) -> String {
+        kinds.first { $0.kind == kind }?.unavailableMessage() ?? String(localized: "make.kind.unavailableHint")
+    }
+    private func validateKind(_ kind: String) -> Bool {
+        guard MakeKindOption.isAvailable(kind, in: kinds) else {
+            errorMessage = unavailableMessage(kind)
+            return false
+        }
+        return true
+    }
+    private var promptPlaceholder: String {
+        kind.isEmpty ? String(localized: "make.placeholder") :
+            String(format: String(localized: "make.placeholder.kind"), selectedKind.label)
+    }
+
+    private func loadKinds() async {
+        do {
+            let loaded = try await MUAPI.makeKinds()
+            guard !Task.isCancelled else { return }
+            kindCatalog.received(loaded)
+        } catch {
+            guard !Task.isCancelled else { return }
+            kindCatalog.failed()
+        }
+        // Never silently replace a now-unavailable explicit choice with Auto.
+        if !selectedKindAvailable { errorMessage = unavailableMessage(kind) }
+    }
+
+    private var kindPicker: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(kinds.filter { ["", "tee", "rashguard_ls", "tote", "mug"].contains($0.kind) }) { chip($0) }
+                }
+            }
+            Button { showKinds = true } label: {
+                Label(String(format: String(localized: "make.kinds.choose"), selectedKind.label), systemImage: "square.grid.2x2")
+            }
+            .disabled(!kindsLoaded)
+            .accessibilityIdentifier("make.kindPicker")
+            .accessibilityValue(kind.isEmpty ? "auto" : kind)
+            if !selectedKindAvailable {
+                Text(unavailableMessage(kind)).font(.caption).foregroundStyle(.secondary)
+            }
+            if kindsUnavailable {
+                Text(String(localized: "make.kinds.unavailable")).font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("make.kindsUnavailable")
+                Button(String(localized: "make.retry")) { Task { await loadKinds() } }.font(.caption)
+            } else if !kindsLoaded { ProgressView() }
+        }
+    }
+
+    private var allKindsPicker: some View {
+        let filtered = kinds.filter { $0.matches(kindQuery) }
+        let categories = Array(Set(filtered.map(\.category))).sorted()
+        return NavigationStack {
+            List {
+                ForEach(categories, id: \.self) { category in
+                    Section(categoryLabel(category)) {
+                        ForEach(filtered.filter { $0.category == category }) { option in
+                            Button {
+                                guard option.isAvailable else { return }
+                                kind = option.kind
+                                showKinds = false
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(option.label).foregroundStyle(.primary)
+                                        if !option.isAvailable {
+                                            Text(unavailableMessage(option.kind))
+                                                .font(.caption).foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                    if let price = option.estimatedPrice(royalty: royalty) {
+                                        Text("¥\(price.formatted())〜").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    if option.kind == kind { Image(systemName: "checkmark") }
+                                }
+                            }
+                            .disabled(!option.isAvailable)
+                            .accessibilityIdentifier("make.kind.option.\(option.kind.isEmpty ? "auto" : option.kind)")
+                        }
+                    }
+                }
+            }
+            .searchable(text: $kindQuery, prompt: String(localized: "make.kinds.search"))
+            .navigationTitle(String(localized: "make.kinds.title"))
+            .refreshable { await loadKinds() }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(String(localized: "make.cancel")) { showKinds = false }
+                }
+            }
+        }
+    }
+
+    private func categoryLabel(_ category: String) -> String {
+        switch category {
+        case "common": return String(localized: "make.category.common")
+        case "wear", "apparel": return String(localized: "make.category.wear")
+        case "carry", "accessories": return String(localized: "make.category.carry")
+        case "home", "lifestyle": return String(localized: "make.category.home")
+        case "pet", "pets": return String(localized: "make.category.pet")
+        default: return category
+        }
+    }
+
+    private func chip(_ k: MakeKindOption) -> some View {
+        let selected = k.kind == kind
         return Button {
-            kind = k
+            guard k.isAvailable else { return }
+            kind = k.kind
         } label: {
-            Text(k.label)
+            Text(k.isAvailable ? k.label : k.label + " · " + String(localized: "make.kind.unavailable"))
                 .font(.subheadline.weight(selected ? .bold : .regular))
                 .padding(.horizontal, 14).padding(.vertical, 8)
                 .background(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary.opacity(0.4)),
                             in: Capsule())
                 .foregroundStyle(selected ? .black : .primary)
         }
-        .disabled(isMaking)
+        .disabled(isMaking || !k.isAvailable)
+        .accessibilityHint(k.unavailableMessage() ?? "")
     }
 
     // 複数案をスワイプで見比べ。画像をページング、下の操作は現在の案に連動。
     private var variantPager: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label(String(localized: "make.done"), systemImage: "checkmark.seal.fill")
+            Label(String(localized: "make.created"), systemImage: "checkmark.seal.fill")
                 .font(.headline).foregroundStyle(.tint)
                 .scaleEffect(revealed ? 1 : 0.6).opacity(revealed ? 1 : 0)
 
@@ -472,7 +570,7 @@ struct MakeView: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 4)
             }
             .buttonStyle(.bordered)
-            .disabled(addingVariant || isPolishing)
+            .disabled(addingVariant || isPolishing || isRemixing)
 
             Button(String(localized: "make.again")) {
                 resetAll()
@@ -495,14 +593,14 @@ struct MakeView: View {
             }
             .frame(maxWidth: .infinity)
             .clipShape(RoundedRectangle(cornerRadius: 16))
-            .opacity(isPolishing && v.id == currentVariant?.id ? 0.4 : 1)
-            if isPolishing && v.id == currentVariant?.id {
+            .opacity(isPolishing && v.id == polishingSKU ? 0.4 : 1)
+            if isPolishing && v.id == polishingSKU {
                 VStack(spacing: 8) { ProgressView().tint(.white)
                     Text(String(localized: "make.polishing")).font(.footnote).foregroundStyle(.white) }
             }
-            if v.mockupURL != nil && v.polishedURL == nil {
+            if v.shownURL != nil {
                 VStack { HStack { Spacer()
-                    Text(String(localized: v.mockupIsModel ? "make.onbody.model" : "make.onbody"))
+                    Text(String(localized: String.LocalizationValue(v.previewLabelKey)))
                         .font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 4)
                         .background(.black.opacity(0.6), in: Capsule()).foregroundStyle(.white).padding(8)
                 }; Spacer() }
@@ -516,23 +614,38 @@ struct MakeView: View {
         let r = v.result
         Text(r.display.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         Text(r.hook).font(.title3.weight(.medium))
+        Text(kinds.first { $0.kind == r.kind }?.label ?? r.kind)
+            .font(.caption).foregroundStyle(.secondary)
+
+        if v.previewPending {
+            HStack {
+                if !v.previewTimedOut { ProgressView().controlSize(.small) }
+                Text(String(localized: v.previewTimedOut ? "make.preview.delayed" : "make.preview.pending"))
+                    .font(.caption).foregroundStyle(.secondary)
+                if v.previewTimedOut {
+                    Button(String(localized: "make.retry")) { startPolling(sku: r.sku) }.font(.caption)
+                }
+            }
+        }
 
         if let s = v.score { scoreView(s) }
 
         // 価格 + 「変更」(作った後に値段を変えられる)
         HStack {
             Text(r.priceLabel).font(.title2.bold())
-            if r.editToken != nil && r.autoApproved {
+            if r.editToken != nil && r.isLive {
                 Button(String(localized: "make.editPrice")) {
                     priceInput = String(r.retailJpy)
+                    priceTarget = r.sku
                     showPriceEdit = true
                 }
                 .font(.caption).buttonStyle(.bordered).controlSize(.mini)
+                .disabled(savingPrice)
             }
             Spacer()
         }
 
-        if r.autoApproved, let pct = r.makerPct, let earn = r.makerEarnJpy {
+        if r.isLive, let pct = r.makerPct, let earn = r.makerEarnJpy {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: "bag.badge.plus").foregroundStyle(.tint)
                 Text(String(format: String(localized: "make.listedEarn"), pct, "¥\(earn.formatted())")).font(.footnote)
@@ -543,22 +656,22 @@ struct MakeView: View {
 
         Text(v.polishNote ?? r.note).font(.caption).foregroundStyle(.secondary)
 
-        if r.editToken != nil && r.autoApproved {
+        if r.editToken != nil && r.isLive {
             Button { polish(v) } label: {
                 HStack { Image(systemName: "wand.and.stars")
                     Text(isPolishing ? String(localized: "make.polishing") : String(localized: "make.polish")) }
                 .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
             }
-            .buttonStyle(.bordered).tint(.yellow).disabled(isPolishing)
+            .buttonStyle(.bordered).tint(.yellow).disabled(isPolishing || isRemixing)
         }
 
         // はじめての一着だけ、「自分で着る/友達に贈る」の選択を言語化して見せる。
         // 2つ目以降は既に分かっているので出さない(ノイズにしない)。
-        if r.checkoutUrl != nil && !hasCreatedFirstPiece {
+        if r.isLive && r.checkoutUrl != nil && !hasCreatedFirstPiece {
             firstPieceBanner
         }
 
-        if r.checkoutUrl != nil {
+        if r.isLive && r.checkoutUrl != nil {
             Button { Analytics.track("make_buy", ["sku": r.sku]); showCheckout = true } label: {
                 Label(String(localized: "pdp.buy"), systemImage: "bolt.fill")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
@@ -571,11 +684,11 @@ struct MakeView: View {
             .buttonStyle(.bordered).disabled(isPolishing)
             .onAppear { hasCreatedFirstPiece = true }
         } else {
-            Label(String(localized: "make.reviewPending"), systemImage: "clock")
+            Label(String(localized: r.status == "review" ? "make.reviewPending" : "make.notLive"), systemImage: "clock")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
 
-        if r.editToken != nil && r.autoApproved { remixSection(r) }
+        if r.supportsRemix(kinds: kinds) { remixSection(r) }
 
         if let pdp = URL(string: r.pdpUrl) {
             ShareLink(item: pdp, subject: Text(r.display), message: Text(String(localized: "share.message"))) {
@@ -662,7 +775,8 @@ struct MakeView: View {
             // 🥋 道場グッズ プリセット(戦略: BJJ垂直の実需。言うだけでチーム公式グッズ)
             Button {
                 prompt = String(localized: "make.bjj.template")
-                kind = .rashguard
+                guard validateKind("rashguard_ls") else { return }
+                kind = "rashguard_ls"
                 promptFocused = true
                 Analytics.track("make_preset", ["preset": "bjj_dojo"])
             } label: {
@@ -762,7 +876,7 @@ struct MakeView: View {
                         if isRemixing { ProgressView() }
                         else { Text(String(localized: "make.remix.go")).font(.subheadline.bold()) }
                     }
-                    .disabled(isRemixing || remixWords.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(isRemixing || isPolishing || remixWords.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || remixWords.count > 120)
                 }
                 Text(String(localized: "make.remix.royalty"))
                     .font(.caption2).foregroundStyle(.secondary)
@@ -786,26 +900,39 @@ struct MakeView: View {
 
     private func remix(_ r: MakeResult) {
         let words = remixWords.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !words.isEmpty, !isRemixing else { return }
+        guard !words.isEmpty, words.count <= 120, !isRemixing, !isPolishing,
+              r.supportsRemix(kinds: kinds) else { return }
+        authorize(.remix(sku: r.sku, words: words))
+    }
+
+    private func performRemix(sku: String, words: String) {
+        guard let i = variantIndex(sku), variants[i].result.supportsRemix(kinds: kinds), !isRemixing else { return }
+        guard validateKind(variants[i].result.kind) else { return }
+        let generation = scope.generation
+        let token = scope.begin("remix")
+        let apiKey = session.apiKey
         isRemixing = true
-        Task {
+        errorMessage = nil
+        workTasks["remix"] = Task {
             do {
-                let nr = try await MUAPI.remix(sku: r.sku, words: words, apiKey: session.apiKey)
-                Analytics.track("make_remix", ["from": r.sku, "to": nr.sku])
-                await MainActor.run {
-                    isRemixing = false; showRemix = false; remixWords = ""
-                    // リミックスは新しい案として追加し、そこへスワイプ。
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        variants.append(DesignVariant(result: nr))
-                        current = variants.count - 1
-                    }
-                    successHaptic()
-                    startPolling(sku: nr.sku)
+                let nr = try await MUAPI.remix(sku: sku, words: words, apiKey: apiKey)
+                guard accepts(generation, "remix", token) else { return }
+                Analytics.track("make_remix", ["from": sku, "to": nr.sku])
+                isRemixing = false; showRemix = false; remixWords = ""
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    variants.append(DesignVariant(result: nr))
+                    current = variants.count - 1
                 }
+                successHaptic()
+                startPolling(sku: nr.sku)
             } catch APIError.needRegister {
-                await MainActor.run { isRemixing = false; showAuthGate = true }
+                guard accepts(generation, "remix", token) else { return }
+                isRemixing = false
+                pendingIntent = .remix(sku: sku, words: words)
+                showAuthGate = true
             } catch {
-                await MainActor.run { errorMessage = error.localizedDescription; isRemixing = false }
+                guard accepts(generation, "remix", token) else { return }
+                errorMessage = error.localizedDescription; isRemixing = false
             }
         }
     }
@@ -813,80 +940,118 @@ struct MakeView: View {
     private func polish(_ v: DesignVariant) {
         let r = v.result
         guard let token = r.editToken, !isPolishing else { return }
+        let generation = scope.generation
+        let key = "polish:\(r.sku)"
+        let operation = scope.begin(key)
+        let design = r.designUrl
+        // Stop pre-polish peek, including a response already in flight.
+        cancelOperation("peek:\(r.sku)")
         errorMessage = nil
         isPolishing = true
-        Task {
+        polishingSKU = r.sku
+        workTasks[key] = Task {
             do {
                 let res = try await MUAPI.polish(sku: r.sku, editToken: token)
+                guard accepts(generation, key, operation), let i = variantIndex(r.sku),
+                      variants[i].result.designUrl == design else { return }
                 Analytics.track("make_polish", ["sku": r.sku, "improved": res.improved])
-                await MainActor.run {
-                    if let i = variantIndex(r.sku) {
-                        withAnimation {
-                            if res.improved, let url = res.designURL {
-                                variants[i].polishedURL = url
-                                variants[i].score = res.after
-                                variants[i].mockupURL = nil; variants[i].mockupIsModel = false
-                                startPolling(sku: r.sku) // 磨いた絵の着画を取り直す
-                            } else {
-                                variants[i].score = res.after ?? res.before
-                            }
-                            variants[i].polishNote = res.note
-                        }
-                    }
-                    isPolishing = false
-                }
+                withAnimation { variants[i].applyPolish(res) }
+                isPolishing = false; polishingSKU = nil
+                startPolling(sku: r.sku)
             } catch {
-                await MainActor.run { errorMessage = error.localizedDescription; isPolishing = false }
+                guard accepts(generation, key, operation) else { return }
+                errorMessage = error.localizedDescription; isPolishing = false; polishingSKU = nil
+                startPolling(sku: r.sku)
             }
         }
     }
 
     // 値段を作った後に変更(/api/make/edit)。
     private func savePrice() {
-        guard let r = currentVariant?.result, let token = r.editToken,
-              let yen = Int(priceInput.filter(\.isNumber)), yen > 0, !savingPrice else { return }
+        guard let sku = priceTarget, let index = variantIndex(sku) else { return }
+        let r = variants[index].result
+        guard let token = r.editToken,
+              let yen = Int(priceInput.trimmingCharacters(in: .whitespacesAndNewlines)), yen > 0, !savingPrice else {
+            errorMessage = String(localized: "make.price.invalid"); return
+        }
+        let generation = scope.generation
+        let operation = scope.begin("price")
         savingPrice = true
-        Task {
+        workTasks["price"] = Task {
             do {
-                let newPrice = try await MUAPI.editPrice(sku: r.sku, editToken: token, priceJpy: yen)
-                Analytics.track("make_price_edit", ["sku": r.sku, "price": newPrice])
-                await MainActor.run {
-                    if let i = variantIndex(r.sku) { variants[i].result.retailJpy = newPrice }
-                    savingPrice = false; showPriceEdit = false
-                }
+                let saved = try await MUAPI.editPrice(sku: r.sku, editToken: token, priceJpy: yen)
+                guard accepts(generation, "price", operation) else { return }
+                Analytics.track("make_price_edit", ["sku": r.sku, "price": saved.priceJpy])
+                if let i = variantIndex(r.sku) { variants[i].result.applyPrice(saved) }
+                savingPrice = false; showPriceEdit = false
             } catch {
-                await MainActor.run { errorMessage = error.localizedDescription; savingPrice = false }
+                guard accepts(generation, "price", operation) else { return }
+                errorMessage = error.localizedDescription; savingPrice = false
             }
         }
     }
 
     // もう1案つくる(同じ依頼でバリエーションを追加 → スワイプで見比べ)。
     private func addVariation() {
-        guard !addingVariant, let base = variants.first?.result else { return }
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !addingVariant, !isRemixing, let input = activeInput else { return }
+        authorize(.variation(input))
+    }
+
+    private func performVariation(_ input: MakeInput, automatic: Bool = false) {
+        guard !addingVariant, !variants.isEmpty else { return }
+        guard validateKind(input.kind) else { return }
+        let generation = scope.generation
+        let operation = scope.begin("variation")
+        let apiKey = session.apiKey
         addingVariant = true
-        Task {
+        workTasks["variation"] = Task {
             do {
-                let r = try await MUAPI.make(prompt: text.isEmpty ? base.hook : text,
-                                             kind: kind, royalty: royalty, apiKey: session.apiKey)
+                let r = try await MUAPI.make(prompt: input.prompt, kind: input.kind,
+                                             royalty: input.royalty, apiKey: apiKey)
+                guard accepts(generation, "variation", operation) else { return }
                 Analytics.track("make_variation", ["sku": r.sku])
-                await MainActor.run {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        variants.append(DesignVariant(result: r))
-                        current = variants.count - 1
-                    }
-                    addingVariant = false
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    startPolling(sku: r.sku)
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    variants.append(DesignVariant(result: r))
+                    if !automatic { current = variants.count - 1 }
                 }
+                addingVariant = false
+                startPolling(sku: r.sku)
+            } catch APIError.needRegister {
+                guard accepts(generation, "variation", operation) else { return }
+                addingVariant = false
+                pendingIntent = .variation(input)
+                showAuthGate = true
             } catch {
-                await MainActor.run { errorMessage = error.localizedDescription; addingVariant = false }
+                guard accepts(generation, "variation", operation) else { return }
+                errorMessage = error.localizedDescription; addingVariant = false
             }
         }
     }
 
+    private func accepts(_ generation: UUID, _ key: String, _ token: UUID) -> Bool {
+        !Task.isCancelled && scope.accepts(generation, key: key, token: token)
+    }
+
+    private func cancelOperation(_ key: String) {
+        workTasks.removeValue(forKey: key)?.cancel()
+        _ = scope.begin(key)
+    }
+
+    private func cancelWork() {
+        scope.reset()
+        workTasks.values.forEach { $0.cancel() }
+        workTasks.removeAll()
+        isMaking = false; addingVariant = false; isRemixing = false
+        isPolishing = false; savingPrice = false; polishingSKU = nil
+        requestBusy = false
+        pendingIntent = nil
+    }
+
     private func resetAll() {
-        pollTasks.forEach { $0.cancel() }; pollTasks.removeAll()
+        cancelWork()
+        activeInput = nil; priceTarget = nil
+        showRemix = false; remixWords = ""; errorMessage = nil
+        requestLink = nil; requestStatusURL = nil
         withAnimation {
             variants.removeAll(); current = 0; revealed = false
         }
@@ -911,9 +1076,12 @@ struct MakeView: View {
         let n = UserDefaults.standard.integer(forKey: key) + 1
         UserDefaults.standard.set(n, forKey: key)
         guard [2, 8, 25].contains(n) else { return }
-        Task {
-            try? await Task.sleep(nanoseconds: 2_500_000_000) // 着画の余韻を待つ
-            await MainActor.run { requestReview() }
+        let generation = scope.generation
+        let operation = scope.begin("review")
+        workTasks["review"] = Task {
+            do { try await Task.sleep(nanoseconds: 2_500_000_000) } catch { return }
+            guard accepts(generation, "review", operation) else { return }
+            requestReview()
             Analytics.track("review_prompt", ["at": "after_make", "n": n])
         }
     }
@@ -921,86 +1089,97 @@ struct MakeView: View {
     private func make() {
         // 二重発火ガード(オンボーディング受け渡し+連打)。課金が二重に走るのを防ぐ。
         guard !isMaking else { return }
+        guard validateKind(kind) else { return }
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        // 入力テキストはデザイン生成のためGemini(AI)へ送信される。初回のみ同意を取る。
-        guard AIConsent.given else { showAIConsent = true; return }
-        performMake()
+        authorize(.create(MakeInput(prompt: text, kind: kind, royalty: royalty)))
     }
 
-    private func performMake() {
-        let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !isMaking, !text.isEmpty else { return }
+    private func authorize(_ intent: MakeIntent) {
+        pendingIntent = intent
+        guard AIConsent.given else { showAIConsent = true; return }
+        guard session.isLoggedIn else { showAuthGate = true; return }
+        resumeIntent()
+    }
+
+    private func resumeIntent() {
+        guard let intent = pendingIntent else { return }
+        guard AIConsent.given else { showAIConsent = true; return }
+        guard session.isLoggedIn else { showAuthGate = true; return }
+        pendingIntent = nil
+        switch intent {
+        case .create(let input): performMake(input)
+        case .variation(let input): performVariation(input)
+        case .remix(let sku, let words): performRemix(sku: sku, words: words)
+        }
+    }
+
+    private func performMake(_ input: MakeInput) {
+        guard !isMaking, !input.prompt.isEmpty else { return }
+        guard validateKind(input.kind) else { return }
         promptFocused = false
         errorMessage = nil
         resetAll()
+        activeInput = input
+        let generation = scope.generation
+        let operation = scope.begin("make")
+        let apiKey = session.apiKey
         makingStep = 0
         isMaking = true
-        Task {
+        workTasks["make"] = Task {
             do {
-                let r = try await MUAPI.make(prompt: text, kind: kind, royalty: royalty, apiKey: session.apiKey)
-                Analytics.track("make_create", ["kind": r.kind, "sku": r.sku, "royalty": royalty])
-                await MainActor.run {
-                    isMaking = false
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
-                        variants = [DesignVariant(result: r)]
-                        current = 0
-                    }
-                    successHaptic()
-                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
-                    maybePromptPush()
-                    maybeRequestReview()
-                    startPolling(sku: r.sku)
+                let r = try await MUAPI.make(prompt: input.prompt, kind: input.kind, royalty: input.royalty, apiKey: apiKey)
+                guard accepts(generation, "make", operation) else { return }
+                Analytics.track("make_create", ["kind": r.kind, "sku": r.sku, "royalty": input.royalty])
+                isMaking = false
+                withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
+                    variants = [DesignVariant(result: r)]
+                    current = 0
                 }
-                // いろいろスワイプで見比べられるよう、もう1案を裏で生成して追加。
-                // (案を増やしすぎると時間あたりの生成上限に当たるので控えめに。
-                //  さらに欲しい人は「もう1案つくる」で追加できる。)
-                await autoVariations(prompt: text, count: 1)
-            } catch APIError.needRegister {
-                await MainActor.run { isMaking = false; showAuthGate = true }
-            } catch {
-                await MainActor.run { errorMessage = error.localizedDescription; isMaking = false }
-            }
-        }
-    }
-
-    // 追加バリエーションを順に生成して追加(スワイプ用)。
-    private func autoVariations(prompt text: String, count: Int) async {
-        for _ in 0..<count {
-            guard let r = try? await MUAPI.make(prompt: text, kind: kind, royalty: royalty, apiKey: session.apiKey)
-            else { continue }
-            await MainActor.run {
-                guard !variants.isEmpty else { return } // 作り直し済みなら捨てる
-                variants.append(DesignVariant(result: r))
+                successHaptic()
+                withAnimation(.spring(response: 0.6, dampingFraction: 0.6).delay(0.05)) { revealed = true }
+                maybePromptPush()
+                maybeRequestReview()
                 startPolling(sku: r.sku)
+                performVariation(input, automatic: true)
+            } catch APIError.needRegister {
+                guard accepts(generation, "make", operation) else { return }
+                isMaking = false
+                pendingIntent = .create(input)
+                showAuthGate = true
+            } catch {
+                guard accepts(generation, "make", operation) else { return }
+                errorMessage = error.localizedDescription; isMaking = false
             }
         }
     }
 
-    // 着画ポーリングを起動(案ごとに1本・配列で保持し、作り直しで全キャンセル)。
+    // One polling task per SKU, bounded at five minutes (50 x 6 seconds).
     private func startPolling(sku: String) {
-        let t = Task { await pollOnbody(sku: sku) }
-        pollTasks.append(t)
-    }
-
-    // 着画ポーリング: 数秒ごとに peek し、mockup が出たら該当案に反映。
-    private func pollOnbody(sku: String) async {
-        for _ in 0..<14 {
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            if Task.isCancelled { return }
-            if variantIndex(sku) == nil { return }
-            if let peek = try? await MUAPI.peek(sku: sku), let url = peek.mockupURL {
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    guard let i = variantIndex(sku) else { return }
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.75)) {
-                        variants[i].mockupURL = url
-                        variants[i].mockupIsModel = peek.isModel ?? false
-                    }
-                    if i == current { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        let key = "peek:\(sku)"
+        cancelOperation(key)
+        guard let i = variantIndex(sku) else { return }
+        variants[i].previewPending = true
+        variants[i].previewTimedOut = false
+        let generation = scope.generation
+        let operation = scope.begin(key)
+        workTasks[key] = Task {
+            for _ in 0..<50 {
+                do { try await Task.sleep(nanoseconds: 6_000_000_000) } catch { return }
+                guard accepts(generation, key, operation), variantIndex(sku) != nil else { return }
+                do {
+                    let peek = try await MUAPI.peek(sku: sku)
+                    guard accepts(generation, key, operation), let i = variantIndex(sku) else { return }
+                    let complete = variants[i].applyPeek(peek)
+                    // Review status may become live after the preview is ready.
+                    if complete && variants[i].result.isLive { return }
+                } catch {
+                    guard accepts(generation, key, operation) else { return }
+                    // Read-only polling can tolerate transient failure until the deadline.
                 }
-                if peek.isModel == true { return }
             }
+            guard accepts(generation, key, operation), let i = variantIndex(sku) else { return }
+            variants[i].previewTimedOut = variants[i].previewPending
         }
     }
 
