@@ -869,6 +869,61 @@ pub(crate) async fn store_r2_thumbs(key: &str, bytes: &[u8]) {
     }
 }
 
+/// Public URL of the w-wide variant for a mockups.wearmu.com URL. Other hosts
+/// (lifestyle.wearmu.com, absolute /mockups/ paths) are returned unchanged.
+pub(crate) fn mockup_thumb_url(url: &str, w: u32) -> String {
+    let Some(cfg_base) = env::var("R2_PUBLIC_BASE").ok().filter(|s| !s.is_empty())
+        .or_else(|| Some("https://mockups.wearmu.com".into())) else { return url.to_string() };
+    let base = cfg_base.trim_end_matches('/');
+    let Some(rest) = url.strip_prefix(base).and_then(|r| r.strip_prefix('/')) else { return url.to_string() };
+    if rest.contains(".w480.") || rest.contains(".w960.") { return url.to_string(); }
+    format!("{}/{}", base, mockup_thumb_key(rest, w))
+}
+
+/// Boot-time backfill of w480/w960 variants for mockups that already exist on
+/// R2 (uploaded before store_r2_thumbs existed). Walks the objects the
+/// storefront actually references — catalog mockups + product mockups — and
+/// writes variants only where the w960 probe 404s. Sequential with a small
+/// pause so it never competes with request traffic; runs once per boot.
+async fn backfill_mockup_thumbs(db: Arc<Mutex<Connection>>) {
+    let Some(cfg) = r2_config() else { return };
+    let base = cfg.public_base.trim_end_matches('/').to_string();
+    // Gather candidate URLs from the DB: catalog images + product mockups.
+    let urls: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut out: Vec<String> = Vec::new();
+        let mut push_col = |sql: &str| {
+            if let Ok(mut st) = conn.prepare(sql) {
+                if let Ok(rows) = st.query_map([], |r| r.get::<_, Option<String>>(0)) {
+                    for u in rows.flatten().flatten() { out.push(u); }
+                }
+            }
+        };
+        push_col("SELECT mockup_url_external FROM catalog_products WHERE is_active=1 AND mockup_url_external LIKE 'https://mockups.wearmu.com/%'");
+        push_col("SELECT mockup_url FROM products WHERE mockup_url LIKE 'https://mockups.wearmu.com/%' ORDER BY id DESC LIMIT 400");
+        out.sort(); out.dedup(); out
+    };
+    if urls.is_empty() { return; }
+    let client = reqwest::Client::new();
+    let (mut done, mut skipped, mut failed) = (0u32, 0u32, 0u32);
+    for url in urls {
+        let Some(key) = url.strip_prefix(&base).and_then(|r| r.strip_prefix('/')) else { continue };
+        if key.contains(".w480.") || key.contains(".w960.") { continue; }
+        let probe = format!("{}/{}", base, mockup_thumb_key(key, 960));
+        if let Ok(r) = client.head(&probe).send().await {
+            if r.status().is_success() { skipped += 1; continue; }
+        }
+        let bytes = match client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => match r.bytes().await { Ok(b) => b.to_vec(), Err(_) => { failed += 1; continue; } },
+            _ => { failed += 1; continue; }
+        };
+        store_r2_thumbs(key, &bytes).await;
+        done += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    tracing::info!("[r2] mockup thumb backfill: {} written, {} already present, {} failed", done, skipped, failed);
+}
+
 /// Boot-time backfill for the one static hero image the landing depends on.
 /// Downloads hero.png from the public bucket URL, writes hero.w480.jpg and
 /// hero.w960.jpg if they are not already there. Anything failing just logs.
@@ -3772,6 +3827,22 @@ mod mockup_thumb_tests {
         assert_eq!(mockup_thumb_key("123.jpg", 480), "123.w480.jpg");
         // A dot in a directory name must not be mistaken for the extension.
         assert_eq!(mockup_thumb_key("v1.2/noext", 480), "v1.2/noext.w480.jpg");
+    }
+
+    #[test]
+    fn thumb_url_only_rewrites_r2_host() {
+        std::env::remove_var("R2_PUBLIC_BASE");
+        assert_eq!(mockup_thumb_url("https://mockups.wearmu.com/catalog/mockups/A-1.png", 480),
+                   "https://mockups.wearmu.com/catalog/mockups/A-1.w480.jpg");
+        assert_eq!(mockup_thumb_url("https://mockups.wearmu.com/4224.jpg", 960),
+                   "https://mockups.wearmu.com/4224.w960.jpg");
+        // Already a variant → unchanged.
+        assert_eq!(mockup_thumb_url("https://mockups.wearmu.com/hero.w480.jpg", 480),
+                   "https://mockups.wearmu.com/hero.w480.jpg");
+        // Other hosts and relative paths → unchanged.
+        assert_eq!(mockup_thumb_url("https://lifestyle.wearmu.com/x/y.jpg", 480), "https://lifestyle.wearmu.com/x/y.jpg");
+        assert_eq!(mockup_thumb_url("/mockups/12.jpg", 480), "/mockups/12.jpg");
+        assert_eq!(mockup_thumb_url("https://files.cdn.printful.com/a.png", 480), "https://files.cdn.printful.com/a.png");
     }
 
     #[test]
@@ -26318,9 +26389,12 @@ async fn index(State(db): State<Db>, is_en: bool) -> Response {
             let sku_e   = html_attr_escape(sku);
             let name_e  = html_attr_escape(name);
             let img_e   = html_attr_escape(img);
+            // Serve the w480 variant (written by store_r2_thumbs / backfill);
+            // home-boot.js swaps to data-fallback if the variant is missing.
+            let img_thumb_e = html_attr_escape(&mockup_thumb_url(img, 480));
             format!(
-                r#"<a href="/shop/{sku_e}" data-funnel="cta_click" data-funnel-cta="home_shop_pick" style="display:block;text-decoration:none;color:inherit;background:#0d0d0d;border:1px solid rgba(255,255,255,0.07);border-radius:4px;overflow:hidden;transition:border-color 0.2s ease" data-hi="border-color:rgba(230,196,73,0.5)" data-lo="border-color:rgba(255,255,255,0.07)"><div style="width:100%;aspect-ratio:1/1;background:#fff;overflow:hidden"><img src="{img_e}" alt="{name_e}" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></div><div style="padding:9px 10px"><div style="font-size:11px;color:#F5F5F0;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{name_e}</div><div style="font-size:12px;font-weight:600;color:#e6c449;margin-top:3px;font-variant-numeric:tabular-nums">¥{price_fmt}</div></div></a>"#,
-                sku_e = sku_e, name_e = name_e, img_e = img_e, price_fmt = format_jpy(*price),
+                r#"<a href="/shop/{sku_e}" data-funnel="cta_click" data-funnel-cta="home_shop_pick" style="display:block;text-decoration:none;color:inherit;background:#0d0d0d;border:1px solid rgba(255,255,255,0.07);border-radius:4px;overflow:hidden;transition:border-color 0.2s ease" data-hi="border-color:rgba(230,196,73,0.5)" data-lo="border-color:rgba(255,255,255,0.07)"><div style="width:100%;aspect-ratio:1/1;background:#fff;overflow:hidden"><img src="{img_thumb_e}" data-fallback="{img_e}" width="480" height="480" alt="{name_e}" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;display:block"></div><div style="padding:9px 10px"><div style="font-size:11px;color:#F5F5F0;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{name_e}</div><div style="font-size:12px;font-weight:600;color:#e6c449;margin-top:3px;font-variant-numeric:tabular-nums">¥{price_fmt}</div></div></a>"#,
+                sku_e = sku_e, name_e = name_e, img_e = img_e, img_thumb_e = img_thumb_e, price_fmt = format_jpy(*price),
             )
         }).collect();
         format!(
@@ -70906,6 +70980,13 @@ async fn main() {
     // skips if the variant already exists on R2.
     tokio::spawn(async {
         ensure_hero_thumbs().await;
+    });
+    // Existing catalog/product mockups (uploaded before variants existed):
+    // write w480/w960 next to each, sequentially, skipping ones already done.
+    let db_thumbs = db.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+        backfill_mockup_thumbs(db_thumbs).await;
     });
 
     // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
