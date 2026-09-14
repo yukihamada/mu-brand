@@ -157,7 +157,10 @@ async fn teai_chat(prompt: &str, model: &str, max_tokens: u32) -> Result<String,
     if !resp.status().is_success() {
         let status = resp.status();
         let txt = resp.text().await.unwrap_or_default();
-        return Err(format!("teai chat {}: {}", status, &txt[..txt.len().min(300)]));
+        // 生の JSON / 課金URL は運用ログにだけ残し、呼び出し元(=アプリ画面)には
+        // お客様向けの短い日本語を返す(2026-09-14: 残高0の 402 が MU アプリにそのまま表示された)。
+        tracing::error!("teai chat {}: {}", status, &txt[..txt.len().min(300)]);
+        return Err(user_facing_upstream_error(status.as_u16()));
     }
     let json: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
     json["choices"][0]["message"]["content"]
@@ -165,6 +168,17 @@ async fn teai_chat(prompt: &str, model: &str, max_tokens: u32) -> Result<String,
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "no content in teai chat response".into())
+}
+
+/// 上流(teai)の HTTP エラーをお客様向けの一文にする。
+/// 残高不足(402)は MU 側の運用事故であってお客様の操作ミスではないので、
+/// 課金URLや "insufficient_credits" を見せずに「少し待って」に丸める。
+fn user_facing_upstream_error(status: u16) -> String {
+    match status {
+        402 | 429 | 503 => "AIが混み合っています。少し時間をおいてもう一度お試しください。".to_string(),
+        401 | 403 => "AIサービスとの接続に問題が発生しました。時間をおいてもう一度お試しください。".to_string(),
+        _ => format!("AIの応答に問題が発生しました({})。もう一度お試しください。", status),
+    }
 }
 
 /// 画像URLをサーバ側で取得して (mime, b64) にする。
@@ -455,6 +469,34 @@ pub fn parse_judge_json(raw: &str) -> Result<DesignScore, String> {
         .take(120)
         .collect();
     Ok(DesignScore { total, axes, verdict })
+}
+
+#[cfg(test)]
+mod upstream_error_tests {
+    use super::*;
+
+    #[test]
+    fn insufficient_credits_never_leaks_billing_details() {
+        let msg = user_facing_upstream_error(402);
+        assert!(msg.contains("混み合って"), "{}", msg);
+        for leak in ["402", "insufficient", "credits", "teai", "topup", "http"] {
+            assert!(!msg.to_lowercase().contains(leak), "leaked {:?} in {}", leak, msg);
+        }
+    }
+
+    #[test]
+    fn rate_limit_and_outage_share_the_retry_message() {
+        assert_eq!(user_facing_upstream_error(429), user_facing_upstream_error(503));
+        assert_eq!(user_facing_upstream_error(402), user_facing_upstream_error(429));
+    }
+
+    #[test]
+    fn unknown_status_is_still_japanese_and_short() {
+        let msg = user_facing_upstream_error(500);
+        assert!(msg.contains("500"));
+        assert!(msg.chars().count() < 60);
+        assert!(!msg.contains("teai"));
+    }
 }
 
 #[cfg(test)]
