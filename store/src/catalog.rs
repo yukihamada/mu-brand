@@ -8567,7 +8567,7 @@ h1{font-size:30px;font-weight:800;letter-spacing:-.01em;margin-bottom:8px}
 textarea{width:100%;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:14px 16px;font-size:16px;font-family:inherit;min-height:96px;resize:vertical}
 textarea:focus{outline:none;border-color:#ffd700}
 .row{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;align-items:center}
-select{background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:12px 14px;font-size:15px}
+select{max-width:100%;min-width:0;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:12px 14px;font-size:15px}
 button{flex:1;min-width:160px;background:#ffd700;color:#0a0a0a;border:0;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:800;cursor:pointer;letter-spacing:.04em}
 button:disabled{opacity:.5;cursor:default}
 .ex{margin-top:14px;font-size:12px;color:rgba(245,245,240,.45)}
