@@ -12304,11 +12304,19 @@ pub async fn shop_pdp(
 
     // mockup: prefer external CDN; fall back to /static/... relative to root.
     // Printful tmp upload URLs expire (~24h → 403) — treat them as absent.
-    let img = mockup_ext
+    let img_raw = mockup_ext
         .filter(|s| !s.is_empty())
         .filter(|s| !s.starts_with("https://printful-upload.s3") && !s.contains("/tmp/"))
         .or_else(|| mockup_main.map(|p| format!("https://merch.wearmu.com{}", p)))
         .unwrap_or_else(|| "/static/og-default.png".to_string());
+    // PDP hero: try .w960.jpg (16-27KB) before original PNG (200-465KB).
+    // onerror falls back to the original, then to the brand mark.
+    let (img, img_fb) = if img_raw.contains("mockups.wearmu.com") && img_raw.ends_with(".png") {
+        let thumb = format!("{}.w960.jpg", &img_raw[..img_raw.len() - 4]);
+        (thumb, img_raw.clone())
+    } else {
+        (img_raw.clone(), img_raw)
+    };
 
     // Digital goods (event ticket / song) reuse this PDP but must NOT show
     // apparel-only blocks (size chart, shipping table, garment cross-sell,
@@ -13544,7 +13552,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 </nav>
 <div class="wrap">
   <div class="hero">
-    <img src="{og}" alt="{title}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'">
+    <img src="{og}" alt="{title}" loading="lazy" data-fb="{og_fb}" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}else{{this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'}}">
     {design}
     {lifestyle}
     {extras}
@@ -13663,6 +13671,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
                 img.clone()
             }
         }),
+        og_fb = html_attr(&img_fb),
         brand = html_text(&brand),
         brand_q = html_attr(&brand),
         price = format_jpy(price_jpy),
@@ -18152,22 +18161,32 @@ fn list_products(
 }
 
 fn render_card(p: &ProductRow, pos: usize) -> String {
-    let img = p
-        .img
-        .clone()
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            if s.starts_with("http") {
-                s
-            } else {
-                format!("https://merch.wearmu.com{}", s)
+    let (img, img_fallback) = {
+        let raw = p
+            .img
+            .clone()
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                if s.starts_with("http") {
+                    s
+                } else {
+                    format!("https://merch.wearmu.com{}", s)
+                }
+            });
+        match raw {
+            Some(ref url) if url.contains("mockups.wearmu.com") && url.ends_with(".png") => {
+                let thumb = format!("{}.w480.jpg", &url[..url.len() - 4]);
+                (thumb, url.clone())
             }
-        })
-        .unwrap_or_else(|| "/static/designs/marker_zero.png".to_string());
-    // onerror fallback: if the merch-bridge mockup_main_file 404s (989 of
-    // 1,073 BJJ SKUs have stale references), swap to the ━◯━ brand mark
-    // so the grid never shows a broken-image icon. The fallback strips the
-    // onerror after one swap so a broken fallback doesn't loop forever.
+            Some(url) => (url.clone(), url),
+            None => (
+                "/static/designs/marker_zero.png".to_string(),
+                "/static/designs/marker_zero.png".to_string(),
+            ),
+        }
+    };
+    // onerror fallback: try .w480.jpg first → original PNG → ━◯━ brand mark.
+    // The fallback strips the onerror after the final swap so it doesn't loop.
     // Social-proof badge: real sold count, gated at SOLD_BADGE_MIN so a
     // low-volume SKU never shows 0/1. Self-contained inline style (no edit to
     // the shop_index <style> block needed).
@@ -18218,7 +18237,7 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
     // data-funnel: shop_card + grid position (0-based, page-local) so the
     // analytics funnel can split /shop→PDP CTR by card rank (above/below fold).
     format!(
-        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{score_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" onerror="this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span>{maker_chip}</span></a>"##,
+        r##"<a class="card" href="/shop/{sku_enc}" data-funnel="cta_click" data-funnel-cta="shop_card" data-funnel-pos="{pos}"><span class="img" style="position:relative;display:block">{sold_badge}{score_badge}{listen_mini}{listen_song}<img src="{img}" alt="{img_alt}" loading="lazy" data-fb="{img_fb}" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}else{{this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='28px'}}"></span><span class="body"><span class="brand">{brand}</span><span class="name">{name}</span><span class="price">¥{price}</span>{maker_chip}</span></a>"##,
         pos = pos,
         maker_chip = maker_chip,
         sku_enc = urlencoding::encode(&p.sku),
@@ -18227,6 +18246,7 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
         listen_mini = listen_mini,
         listen_song = listen_song,
         img = html_attr(&img),
+        img_fb = html_attr(&img_fallback),
         img_alt = img_alt,
         brand = html_text(&p.brand),
         name = html_text(&p.desc),
