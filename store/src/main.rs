@@ -26359,9 +26359,15 @@ async fn index(State(db): State<Db>, is_en: bool) -> Response {
         let cards: String = lifestyle_tiles.iter().map(|(drop, name, url)| {
             let name_esc = html_attr_escape(name);
             let url_esc  = html_attr_escape(url);
+            let (thumb, fb) = if url.contains("lifestyle.wearmu.com") && url.ends_with(".jpg") {
+                let t = format!("{}.w480.jpg", &url[..url.len()-4]);
+                (t, url.clone())
+            } else {
+                (url.clone(), url.clone())
+            };
             format!(
-                r#"<a href="/mugen" title="{name_esc}" style="display:block;aspect-ratio:4/5;overflow:hidden;border:1px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease"><img src="{url_esc}" alt="MUGEN #{drop} lifestyle" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block"></a>"#,
-                drop = drop, name_esc = name_esc, url_esc = url_esc,
+                r#"<a href="/mugen" title="{name_esc}" style="display:block;aspect-ratio:4/5;overflow:hidden;border:1px solid rgba(255,255,255,0.08);transition:border-color 0.2s ease"><img src="{thumb}" data-fb="{fb}" alt="MUGEN #{drop} lifestyle" loading="lazy" style="width:100%;height:100%;object-fit:cover;display:block" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}"></a>"#,
+                drop = drop, name_esc = name_esc, thumb = html_attr_escape(&thumb), fb = html_attr_escape(&fb),
             )
         }).collect();
         let new_grid = format!(
@@ -59396,7 +59402,7 @@ nav.top .links a{color:var(--mute);text-decoration:none}
 nav.top .links a:hover{color:var(--fg)}
 .cta-mini{background:var(--gold);color:#000;padding:8px 16px;border-radius:2px;font-size:11px;letter-spacing:0.18em;font-weight:700;text-decoration:none;text-transform:uppercase}
 .hero{position:relative;min-height:96vh;display:flex;align-items:flex-end;padding:160px 0 80px;overflow:hidden}
-.hero-bg{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,10,0.4) 0%,rgba(10,10,10,0.55) 45%,rgba(10,10,10,0.95) 100%),url('https://lifestyle.wearmu.com/gi/01/02_back.jpg') center/cover no-repeat;z-index:0}
+.hero-bg{position:absolute;inset:0;background:linear-gradient(180deg,rgba(10,10,10,0.4) 0%,rgba(10,10,10,0.55) 45%,rgba(10,10,10,0.95) 100%),url('https://lifestyle.wearmu.com/gi/01/02_back.w960.jpg') center/cover no-repeat;z-index:0}
 .hero-inner{position:relative;z-index:1;width:100%}
 .eyebrow{display:inline-block;font-size:11px;letter-spacing:0.36em;text-transform:uppercase;color:var(--gold);margin-bottom:18px;font-weight:700}
 h1.hero-title{font-size:62px;font-weight:200;letter-spacing:0.01em;line-height:1.12;margin-bottom:24px}
@@ -59522,7 +59528,7 @@ footer a{color:var(--mute);text-decoration:underline}
       <p>「スポンサード ギ」という概念自体、世界で前例がない。F1 のレーシングスーツ、NASCAR のドライバーシャツ — それらの武道版を、職人の刺繍と金糸で、日本で作り上げた。</p>
       <p class="muted" style="font-size:13px;margin-top:24px">Edition 00 は <b>濱田優貴本人</b> が試合・稽古で着用するモデル。replicas 30 着は同じ仕様で再現し、ハンドナンバリング後に発送。</p>
     </div>
-    <div class="story-img"><img src="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="MU x JiuFlow Sponsored Gi front" loading="lazy"></div>
+    <div class="story-img"><img src="https://lifestyle.wearmu.com/gi/01/01_front.w480.jpg" data-fb="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="MU x JiuFlow Sponsored Gi front" loading="lazy" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}"></div>
   </div>
 </div></section>
 <section id="design"><div class="wrap">
@@ -59530,22 +59536,22 @@ footer a{color:var(--mute);text-decoration:underline}
   <h2>表に <em>13 箇所の刺繍</em>。裏に <em>無限のスポンサー</em>。</h2>
   <p class="section-lead">物理刺繍は厳選した 13 箇所のみ。<b>NASCAR にならない美学</b> を保ちながら、背中の QR・襟内の NFC・裏地のサブリメーションで <b>残り全社を 3 重に表現</b> する。</p>
   <div class="tier-grid">
-    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/03_detail_crest.jpg" alt="crest"><div class="body">
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/03_detail_crest.w480.jpg" data-fb="https://lifestyle.wearmu.com/gi/01/03_detail_crest.jpg" alt="crest" loading="lazy" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}"><div class="body">
       <div class="num">TIER 01 — CREST</div>
       <h3><b>CYBRIDGE × ENABLER</b> 紋章</h3>
       <p>背中 <b>24×12cm</b>、白糸刺繍。月桂樹の冠と二振りの刀で「×」を構成。盾の中心に CYBRIDGE / ENABLER、下に EST. HAMADA YUKI / 濱田優貴。<b>創業の系譜を 1 つの紋章に統合</b> した、本作の心臓部。</p>
     </div></div>
-    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/04_detail_qr.jpg" alt="qr"><div class="body">
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/04_detail_qr.w480.jpg" data-fb="https://lifestyle.wearmu.com/gi/01/04_detail_qr.jpg" alt="qr" loading="lazy" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}"><div class="body">
       <div class="num">TIER 02 — QR</div>
       <h3>金糸刺繍 <b>QR コード</b></h3>
       <p>背中下 <b>10×10cm</b>、Old Gold 糸で刺繍した QR コード。角の位置決めマーカーには <b>M / J / E / C</b> の頭文字を埋込み。読み取るとこのページに着地し、<b>ENAI Token +1 配布</b>。BJJ 業界初の「読める衣装」。</p>
     </div></div>
-    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="embroidery"><div class="body">
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/01_front.w480.jpg" data-fb="https://lifestyle.wearmu.com/gi/01/01_front.jpg" alt="embroidery" loading="lazy" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}"><div class="body">
       <div class="num">TIER 03 — EMBROIDERY</div>
       <h3>胸 / 袖 / 裾 <b>13 箇所</b> の精密刺繍</h3>
       <p>左胸 MU、右胸 JiuFlow、左袖 4 連 (SOLUNA / Koe / KAGI / PASHA)、右袖 4 連 (NOT A HOTEL / FiNANCiE / NEWT / 焼肉古今)、両裾 ATSUME・GIFTMALL・VUILD・NESTING、襟内 CASTER。<b>各 6〜8cm 角、白糸主体 + 焼肉古今のみ Old Gold</b> でアクセント。</p>
     </div></div>
-    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/02_back.jpg" alt="lining"><div class="body">
+    <div class="tier"><img src="https://lifestyle.wearmu.com/gi/01/02_back.w480.jpg" data-fb="https://lifestyle.wearmu.com/gi/01/02_back.jpg" alt="lining" loading="lazy" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}"><div class="body">
       <div class="num">TIER 04 — LINING + NFC</div>
       <h3>裏地 <b>sublimation</b> + 襟裏 <b>NFC</b></h3>
       <p>ジャケット内側裏地に <b>18 ブランド全社のロゴ総柄</b> を sublimation 印刷。脱いだ瞬間に現れる隠し装飾。襟裏には NFC タグを縫込み、<b>スマホをかざすだけ</b> で QR と同じページが起動。Shoyoroll の lining 文化を引き継ぐ、現代の贅沢。</p>
