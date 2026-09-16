@@ -13481,7 +13481,11 @@ pub async fn shop_index(
         let mut cards: Vec<String> = items
             .iter()
             .enumerate()
-            .map(|(i, p)| render_card(p, i))
+            .map(|(i, p)| {
+                let card = render_card(p, i);
+                let href = format!("/shop/{}", html_attr(&p.sku));
+                card.replace(&format!("href=\"{href}\""), &format!("href=\"{href}?lang={lang}\""))
+            })
             .collect();
         // 先頭固め (広告棚っぽさ) を避けて 0 / 5 / 11 番目に散らして「混ぜる」。
         // 一覧が短ければ末尾に足す。
@@ -13549,18 +13553,18 @@ pub async fn shop_index(
     };
     let meta_desc = if lang == "en" {
         if brand_filter.is_empty() {
-            format!("Official store for MU x 10+ brand collab apparel ({total} items). AI-designed tees, BJJ rashguards, stickers, sound tees. Made-to-order from 1 piece, zero waste, Stripe checkout, ships worldwide in 7-14 days.", total = total_active)
+            format!("Explore MU apparel and collaborations ({total} items). Tees, BJJ rashguards and more. Made to order from one piece. Review sizing, shipping and total before payment.", total = total_active)
         } else if self_collab {
-            format!("{name} apparel & goods ({n} items). Made-to-order from 1 piece, zero waste, secure Stripe checkout, ships worldwide in 7-14 days.", name = brand_name, n = total_active)
+            format!("{name} apparel & goods ({n} items). Made to order from one piece. Review sizing, shipping and total before payment.", name = brand_name, n = total_active)
         } else {
-            format!("{name} x MU collab apparel ({n} items). Made-to-order from 1 piece, zero waste, secure Stripe checkout, ships worldwide in 7-14 days.", name = brand_name, n = total_active)
+            format!("{name} x MU collab apparel ({n} items). Made to order from one piece. Review sizing, shipping and total before payment.", name = brand_name, n = total_active)
         }
     } else if brand_filter.is_empty() {
-        format!("MUと10+ブランドのコラボアパレル公式通販 {total}件。AIデザインTシャツ・柔術/BJJラッシュガード・ステッカー・着ると鳴る音楽T。1着から受注生産・完売廃棄ゼロ・Stripe決済・国際発送7-14日。", total = total_active)
+        format!("MUのアパレル・コラボコレクション {total}件。Tシャツ、柔術ラッシュガードなどを1着から受注生産。サイズ・送料・合計金額をお支払い前にご確認ください。", total = total_active)
     } else if self_collab {
-        format!("{name} の商品 {n}件。1着から受注生産・完売廃棄ゼロ・Stripe安全決済・国際発送7-14日。", name = brand_name, n = total_active)
+        format!("{name} の商品 {n}件。1着から受注生産。サイズ・送料・合計金額をお支払い前にご確認ください。", name = brand_name, n = total_active)
     } else {
-        format!("{name} × MU のコラボ商品 {n}件。1着から受注生産・完売廃棄ゼロ・Stripe安全決済・国際発送7-14日。", name = brand_name, n = total_active)
+        format!("{name} × MU のコラボ商品 {n}件。1着から受注生産。サイズ・送料・合計金額をお支払い前にご確認ください。", name = brand_name, n = total_active)
     };
     // canonical drops ?sort= — sorted views are duplicates of the same list.
     // brand + page survive (each is distinct content).
@@ -13687,31 +13691,20 @@ pub async fn shop_index(
   </div>
 </div>"##.to_string()
     } else {
-        format!(r##"<div class="hero">
-  <h1>━◯━ 知ってる人にだけ届く wearable.</h1>
-  <p>柔術・コーヒー・地域 ── 10+ コラボの "内側からの服"。 受注生産 — 1 着から、 完売・廃棄ゼロ。 <strong style="color:#ffd700">{total} 件</strong> 公開中。</p>
-  <div class="trust">
-    <span><strong>国際発送</strong> 7-14 日 (DHL / FedEx)</span>
-    <span><strong>1 着から</strong> オーダー可</span>
-    <span><strong>Bella+Canvas / AOP rashguard</strong> 等プレミアム生地</span>
-    <span><strong>Stripe</strong> 安全決済 + クーポン対応</span>
-  </div>
-</div>"##, total = total_active)
+        let (heading, note, production, payment) = if lang == "en" {
+            ("Find your next favourite.", "Tees, rashguards and collaborations. Pick a design, then check the details and sizing.", "Made to order, from one piece", "Review shipping & total before payment")
+        } else {
+            ("好きな一着を、見つけよう。", "Tシャツ、ラッシュガード、コラボウェア。デザインを選んで、仕様・サイズを確認。", "1着から受注生産", "送料・合計はお支払い前に確認")
+        };
+        format!(r##"<div class="hero"><h1>{heading}</h1><p>{note}</p><div class="trust"><span>{production}</span><span>{payment}</span></div></div>"##)
     };
     // スクロール誘導FAB: グリッドが視界に入る深さまでスクロールしたら
     // 「自分でも作れる」導線を下からスライドイン。表示/クリック/閉じるは
     // mu-funnel.js の delegation で計測される (make_fab_shop)。
-    let make_fab = format!(
-        r##"<div id="muMakeFab" role="complementary" aria-label="{aria}">
-<a href="/make?ref=shop_scroll" data-funnel="cta_click" data-funnel-cta="make_fab_shop"><span class="t">{text}</span><b>{btn}</b></a>
-<button type="button" class="x" aria-label="{close}" data-funnel="cta_click" data-funnel-cta="make_fab_close">×</button>
-</div>{js}"##,
-        aria = if lang == "en" { "Make your own" } else { "自分の一着を作る" },
-        text = if lang == "en" { "✦ Say it — AI makes your tee" } else { "✦ 言うだけで、一着が生まれる" },
-        btn = if lang == "en" { "Try it →" } else { "作ってみる →" },
-        close = if lang == "en" { "Close" } else { "閉じる" },
-        js = SHOP_MAKE_FAB_JS,
-    );
+    // Keep scroll/empty-result measurement; offer creation after the products,
+    // rather than covering a purchase with a second floating conversion goal.
+    let make_fab = SHOP_MAKE_FAB_JS;
+    let make_cta = crate::storefront::app_banner(lang);
     let body = format!(
         r##"<!doctype html><html lang="{html_lang_attr}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-itunes-app" content="app-id=6781269252">
@@ -13802,23 +13795,25 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   #muMakeFab a{{font-size:11.5px;gap:8px}}
   #muMakeFab a b{{padding:6px 12px;font-size:11.5px}}
 }}
-</style></head><body>
+</style><link rel="stylesheet" href="/storefront.css?v=20260917"></head><body class="mu-shop" data-ab="storefront-20260917">
 <nav>
-  <a class="brand" href="/">MU</a>
+  <a class="brand" href="/?lang={lang}">MU</a>
   <div>
-    <a href="/shop">SHOP</a>
+    <a href="/shop?lang={lang}">SHOP</a>
     <a href="/buy" style="margin-left:14px">DROPS</a>
     <a href="/heritage" style="margin-left:14px">HERITAGE</a>
   </div>
 </nav>
 {hero}
-{make_cta}
 {search_form}
 <div class="chips kinds">{kind_chips}</div>
+<details class="browse-options"{filters_open}><summary>{filter_label}</summary>
 <div class="chips" style="padding-top:0">{brand_chips}</div>
 <div class="chips sorts" style="padding-top:0">{sort_chips}</div>
+</details>
 {body_or_empty}
 {pagination}
+{make_cta}
 {make_fab}
 {readmore}
 {drop_form}
@@ -13861,7 +13856,6 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
 <script defer src="/mu-funnel.js"></script>
 {drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
-<div id="lineMakeFab" style="display:none;position:fixed;left:14px;bottom:14px;z-index:9998"><a href="https://line.me/R/ti/p/@876vdgto" data-funnel="cta_click" data-funnel-cta="line_make_fab" style="display:flex;align-items:center;gap:8px;background:#06C755;color:#fff;font-weight:700;padding:10px 16px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);text-decoration:none;font-size:14px">📸 LINEで写真から作る</a></div><script>navigator.language&&navigator.language.toLowerCase().indexOf('ja')==0&&(document.getElementById('lineMakeFab').style.display='block')</script>
 </body></html>"##,
         title = html_text(&title),
         meta_desc = html_attr(&meta_desc),
@@ -13874,7 +13868,9 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
         og_image = html_attr(&og_image),
         ld_json = ld_json,
         hero = hero_html,
-        make_cta = make_cta_banner("shop"),
+        make_cta = make_cta,
+        filters_open = if !brand_filter.is_empty() || !sort.is_empty() { " open" } else { "" },
+        filter_label = if lang == "en" { "Brands & sort order" } else { "ブランド・並び順を選ぶ" },
         search_form = search_form,
         brand_chips = brand_chips,
         kind_chips = kind_chips,
@@ -13884,13 +13880,13 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
             // 検索語があるときだけ、その語をプリフィルした /make への金CTAを出す
             // （種類フィルタだけの0件は除外）。
             let make_cta = if !q_trim.is_empty() {
-                let enc = urlencoding::encode(&q_trim);
                 let qt = html_text(&q_trim);
+                let app_url = crate::storefront::APP_STORE_URL;
                 const ST: &str = "display:inline-block;margin-top:16px;padding:12px 22px;border-radius:12px;background:linear-gradient(180deg,#f4d98a,#b8922f);color:#1a1407;font-weight:800;text-decoration:none;box-shadow:0 8px 22px rgba(216,183,90,.3)";
                 if lang == "en" {
-                    format!(r#"<br><a href="/make?lang=en&q={enc}" style="{ST}">✨ Not on Amazon? Make “{qt}” →</a>"#)
+                    format!(r#"<br><a href="{app_url}" style="{ST}" data-funnel="cta_click" data-funnel-cta="renewal_empty_app">Create “{qt}” in the MU app · App Store →</a>"#)
                 } else {
-                    format!(r#"<br><a href="/make?q={enc}" style="{ST}">✨「{qt}」を、作りますか？ →</a>"#)
+                    format!(r#"<br><a href="{app_url}" style="{ST}" data-funnel="cta_click" data-funnel-cta="renewal_empty_app">「{qt}」をアプリでつくる · App Store →</a>"#)
                 }
             } else { String::new() };
             if lang == "en" {
@@ -14673,7 +14669,7 @@ pub async fn shop_pdp(
         } else if is_house {
             "Stripe · 設計相談デポジット — 決済後に敷地調査・設計のご連絡"
         } else {
-            "Stripe + Printful 7-14 日 国際発送"
+            if lang == "en" { "Made to order · delivery timing varies" } else { "受注生産・納期は商品とお届け先により異なります" }
         };
         // Phone case: render an iPhone-model <select> on the PDP itself,
         // auto-select the visitor's likely model (screen size × DPR — exact
@@ -14734,7 +14730,9 @@ pub async fn shop_pdp(
         );
         
         format!(
-            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" rel="nofollow" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">買う <span class="amt">¥{price}</span> · 即購入 ({fulfil_note})</a>{gift_html}{acctgift_html}{oneclick_html}{cross_script}{phone_script}{acctgift_script}"#,
+            r#"{cross_html}{phone_html}<a class="buy" id="buybtn" rel="nofollow" href="{base}" data-funnel="cta_click" data-funnel-cta="pdp_buy" data-funnel-view="pdp_buy">{checkout_label} <span class="amt">¥{price}</span> →</a><p class="checkout-note">{fulfil_note}</p><details class="purchase-options"><summary>{options_label}</summary>{gift_html}{acctgift_html}{oneclick_html}</details>{cross_script}{phone_script}{acctgift_script}"#,
+            checkout_label = if lang == "en" { "Continue to checkout" } else { "購入手続きへ" },
+            options_label = if lang == "en" { "Gifts & returning customers" } else { "ギフト・以前購入されたお客様" },
             cross_html = cross_html,
             phone_html = phone_html,
             gift_html = gift_html,
@@ -14855,20 +14853,17 @@ pub async fn shop_pdp(
   </div>
 </div>"##, sold_row = sold_row, l1 = l1, s1 = s1)
     } else {
-        format!(r##"<div class="trust-strip">
-  {sold_row}<div class="ts-row">
-    <strong>国際発送 7-14 日</strong>
-    <small>DHL/FedEx tracked · JP・US・EU・CA・AU 即対応</small>
-  </div>
-  <div class="ts-row">
-    <strong>30 日 返品保証</strong>
-    <small>サイズ違い・破損は無料交換 · returns@wearmu.com</small>
-  </div>
-  <div class="ts-row">
-    <strong>受注生産 1 着から</strong>
-    <small>注文を受けてから 1 枚ずつ縫製。 完売・在庫廃棄 ゼロ。</small>
-  </div>
-</div>"##, sold_row = sold_row)
+        let (ship, ship_note, returns, return_note, made, made_note) = if lang == "en" {
+            ("Made-to-order delivery", "Timing varies by item and destination. Review shipping and total before payment.",
+             "Defects or incorrect items", "Contact us within 30 days of delivery. Fit preference is not covered.",
+             "Made to order, from one piece", "Compare the size chart with a garment you own before ordering.")
+        } else {
+            ("受注生産でお届け", "納期は商品・お届け先で異なります。送料・合計はお支払い前に確認。",
+             "不良・誤配送への対応", "到着後30日以内にご連絡ください。サイズ感などお客様都合は対象外です。",
+             "1着から受注生産", "ご注文前に、サイズ表とお手持ちの服の実寸をご確認ください。")
+        };
+        format!(r##"<div class="trust-strip">{sold_row}<div class="ts-row"><strong>{ship}</strong><small>{ship_note}</small></div><div class="ts-row"><strong>{returns}</strong><small>{return_note} <a href="/returns">{policy}</a></small></div><div class="ts-row"><strong>{made}</strong><small>{made_note}</small></div></div>"##,
+            policy = if lang == "en" { "Returns policy" } else { "返品条件" })
     };
 
     // ── BJJ reason-to-buy (brand=bjj only) ───────────────────────────────────
@@ -14881,14 +14876,14 @@ pub async fn shop_pdp(
     let bjj_reason_block = if is_bjj_brand(&brand)
         && !is_digital && !is_house && !is_device
     {
-        let make_href = if lang == "en" { "/make?lang=en" } else { "/make" };
+        let make_href = crate::storefront::APP_STORE_URL;
         if lang == "en" {
             format!(r##"<div class="bjj-why" data-funnel-view="pdp_bjj_why">
   <div class="bjj-why-h">🥋 Why grapplers pick this</div>
   <ul>
     <li>An inside joke only people who <b>actually train</b> will get — wear it, get the nod on the mats.</li>
-    <li>Made to order, <b>from 1 piece</b> · 30-day free exchange for size or damage.</li>
-    <li>Not quite your vibe? <a href="{href}" data-funnel="cta_click" data-funnel-cta="pdp_bjj_make">Make your own with your dojo, belt or signature move — 30s →</a></li>
+    <li>Made to order, <b>from 1 piece</b>. Check sizing and the <a href="/returns">returns policy</a> before ordering.</li>
+    <li>Not quite your vibe? <a href="{href}" data-funnel="cta_click" data-funnel-cta="pdp_bjj_app">Download MU on the App Store and create your own →</a></li>
   </ul>
 </div>"##, href = make_href)
         } else {
@@ -14896,8 +14891,8 @@ pub async fn shop_pdp(
   <div class="bjj-why-h">🥋 なぜ柔術家がこれを選ぶか</div>
   <ul>
     <li>道場で「それな」と伝わる、<b>柔術が分かる人にだけ刺さる</b>ネタ。</li>
-    <li>受注生産で<b>1 着から</b>・サイズ違い / 破損は 30 日 無料交換。</li>
-    <li>このネタがピンと来なければ <a href="{href}" data-funnel="cta_click" data-funnel-cta="pdp_bjj_make">あなたの道場・帯・得意技で、世界に 1 枚を 30 秒で →</a></li>
+    <li>受注生産で<b>1着から</b>。ご注文前にサイズ表と<a href="/returns">返品条件</a>をご確認ください。</li>
+    <li>このネタがピンと来なければ <a href="{href}" data-funnel="cta_click" data-funnel-cta="pdp_bjj_app">App StoreからMUをダウンロードして、自分の一着を →</a></li>
   </ul>
 </div>"##, href = make_href)
         }
@@ -15690,16 +15685,16 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 }}
 .back{{display:inline-block;margin-top:24px;color:rgba(245,245,240,0.6);text-decoration:none;font-size:11px}}
 .back:hover{{color:#ffd700}}
-</style></head><body>
+</style><link rel="stylesheet" href="/storefront.css?v=20260917"></head><body class="mu-pdp" data-ab="storefront-20260917">
 <nav>
-  <a class="brand" href="/">MU</a>
+  <a class="brand" href="/?lang={lang}">MU</a>
   <div>
-    <a href="/shop">← SHOP</a>
+    <a href="/shop?lang={lang}">← SHOP</a>
   </div>
 </nav>
 <div class="wrap">
   <div class="hero">
-    <img src="{og}" alt="{title}" loading="lazy" data-fb="{og_fb}" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}else{{this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'}}">
+    <img src="{og}" alt="{title}" fetchpriority="high" data-fb="{og_fb}" onerror="if(this.dataset.fb&&this.dataset.fb!==this.src){{this.src=this.dataset.fb;this.dataset.fb=''}}else{{this.onerror=null;this.src='/static/designs/marker_zero.png';this.style.objectFit='contain';this.style.background='#0a0a0a';this.style.padding='60px'}}">
     {design}
     {lifestyle}
     {extras}
@@ -15715,11 +15710,10 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     {sealed}
     {listen}
     {buy}
+    {trust}
     {share}
-    {drop_form}
     {muon_banner}
     {suzuri}
-    {trust}
     {assessment}
     {edition_doc}
     {spec}
@@ -15728,24 +15722,25 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
     {story}
     {reviews}
     <div class="sku">SKU: {sku}</div>
-    <a class="back" href="/shop?brand={brand_q}">← {brand} のほかの商品</a>
+    <a class="back" href="/shop?brand={brand_q}&amp;lang={lang}">← {brand}</a>
   </div>
 </div>
 <div style="max-width:920px;margin:0 auto;padding:0 22px 10px">{make_cta}</div>
 {design_variants}
 {related}
 {readmore}
+{drop_form}
 <footer class="pdp-footer">
   <div class="legal-links">
     <a href="/shop">SHOP</a>
-    <a href="/make">作る</a>
+    <a href="{app_url}" data-funnel="cta_click" data-funnel-cta="pdp_footer_app">{app_label}</a>
     <a href="/shipping">配送 / Shipping</a>
     <a href="/returns">返品 / Returns</a>
     <a href="/faq">FAQ</a>
     <a href="/privacy">プライバシー / Privacy</a>
     <a href="mailto:info@enablerdao.com">CONTACT</a>
   </div>
-  <div class="legal-fine">© 2026 MU / Enabler Inc. · 東京千代田区九段南 1-5-6 · 受注生産・国際発送 7-14 日</div>
+  <div class="legal-fine">© 2026 MU / Enabler Inc.</div>
 </footer>
 <script defer src="/tracking.js"></script>
 <script defer src="/mu-funnel.js"></script>
@@ -15776,9 +15771,10 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 {drop_js}
 <script defer src="https://enabler-analytics.fly.dev/t.js"></script>
 <script>(function(){{try{{var b=JSON.stringify({{s:'wearmu.com',k:'click',l:'pdp:{sku}'}});if(navigator.sendBeacon){{navigator.sendBeacon('https://enabler-analytics.fly.dev/api/event',new Blob([b],{{type:'application/json'}}));}}}}catch(e){{}}}})();</script>
-<div id="lineMakeFab" style="display:none;position:fixed;left:14px;bottom:14px;z-index:9998"><a href="https://line.me/R/ti/p/@876vdgto" data-funnel="cta_click" data-funnel-cta="line_make_fab" style="display:flex;align-items:center;gap:8px;background:#06C755;color:#fff;font-weight:700;padding:10px 16px;border-radius:999px;box-shadow:0 4px 14px rgba(0,0,0,.3);text-decoration:none;font-size:14px">📸 LINEで写真から作る</a></div><script>navigator.language&&navigator.language.toLowerCase().indexOf('ja')==0&&(document.getElementById('lineMakeFab').style.display='block')</script>
 </body></html>"##,
-        make_cta = make_cta_banner("pdp"),
+        make_cta = crate::storefront::app_banner(lang),
+        app_url = crate::storefront::APP_STORE_URL,
+        app_label = if lang == "en" { "Get the MU app" } else { "MUアプリをダウンロード" },
         maker_line = maker_line,
         share = share_block,
         drop_form = drop_inline_form_html("pdp"),

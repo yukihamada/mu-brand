@@ -4,6 +4,7 @@ mod nft;
 mod payments;
 mod jiufight_tokens;
 mod catalog;
+mod storefront;
 mod order_contract;
 mod agent_api;
 mod manufacturing_schema;
@@ -26184,7 +26185,7 @@ async fn home(
         // Prefer en only when the client clearly wants en and not ja.
         al.contains("en") && !al.contains("ja")
     };
-    index(State(db), is_en).await.into_response()
+    storefront::home(State(db), is_en).await
 }
 
 async fn index(State(db): State<Db>, is_en: bool) -> Response {
