@@ -3060,7 +3060,8 @@ pub async fn design_remix_create(
     }
     // 登録必須+1日上限ゲート(2026-08-28・/make と共通)。Gemini を叩く前に弾く。
     let maker_email = match require_maker_email(&db, &headers) { Ok(e) => e, Err(r) => return r };
-    { let conn = db.lock().unwrap(); if let Err(r) = check_daily_make_cap(&conn, &maker_email) { return r; } }
+    // 1日3枚まで無料、4枚目から ¥100(MUクレジット→不足ならStripe)。
+    if let Err(r) = enforce_make_quota(&db, &maker_email).await { return r; }
     let (base_label, design, base_meta, base_price) = {
         let conn = db.lock().unwrap();
         let Some((_b, label, _d, design, meta)) = design_variant_base_row(&conn, &base_sku) else {
@@ -6507,7 +6508,19 @@ const MAKE_HOURLY_CAP: i64 = 40;
 
 /// 2026-08-28 本人指示: 匿名の使い捨て生成(著作権丸投げ/濫用)を防ぐため、
 /// 商品作成(/make・/design-remix)は登録(メールログイン)必須+1人1日この点数まで。
+///
+/// 2026-09-17 本人指示で「1日3枚まで無料、4枚目から課金」に変更:
+///   - 1〜3枚目: 無料(MAKE_FREE_PER_DAY)
+///   - 4枚目以降: MAKE_PAID_JPY/枚。MUクレジット → 不足なら Stripe Checkout
+///   - 1日の絶対上限 MAKE_DAILY_CAP_PER_MAKER は濫用防止で残す
+/// 超過しても 429 で突き放さず、402 + checkout_url を返して課金へ流す。
 const MAKE_DAILY_CAP_PER_MAKER: i64 = 5;
+
+/// 1日あたりの無料作成枠(この枚数までは課金しない)。
+pub(crate) const MAKE_FREE_PER_DAY: i64 = 3;
+
+/// 無料枠を超えた1枚あたりの価格(円)。
+pub(crate) const MAKE_PAID_JPY: i64 = 100;
 
 /// 呼び出し元の作者メールを解決する。Bearer api_key / mu_collab_session cookie
 /// (crate::bearer_or_session_email — アプリ/サイト共通の認証)を優先し、
@@ -6538,24 +6551,155 @@ fn require_maker_email(db: &Db, headers: &axum::http::HeaderMap) -> Result<Strin
     })
 }
 
-/// 1人1日 MAKE_DAILY_CAP_PER_MAKER 点まで(/make + /design-remix 合算)。
-/// 超過は 429。maker_email は catalog_products.meta_json に作成時点で必ず刻まれる
+/// 1人1日の作成数を数える(/make + /design-remix 合算)。
+/// maker_email は catalog_products.meta_json に作成時点で必ず刻まれる
 /// (require_maker_email が先に通っている前提)。
-fn check_daily_make_cap(conn: &rusqlite::Connection, email: &str) -> Result<(), Response> {
-    let made_today: i64 = conn.query_row(
+fn count_made_today(conn: &rusqlite::Connection, email: &str) -> i64 {
+    conn.query_row(
         "SELECT COUNT(*) FROM catalog_products \
          WHERE legacy_source IN ('public_make','design_remix') \
          AND LOWER(json_extract(meta_json,'$.maker_email'))=? \
          AND created_at > datetime('now','-1 day')",
         rusqlite::params![email], |r| r.get(0),
-    ).unwrap_or(0);
+    ).unwrap_or(0)
+}
+
+/// 1日3枚まで無料、4枚目から MAKE_PAID_JPY/枚。
+///
+/// 支払い順序: MUクレジット(mu_credits) → 不足なら Stripe Checkout。
+///   - クレジットで足りる → その場で引き落として Ok(Charged)。生成続行。
+///   - 足りない → Err(402) + checkout_url。クライアントはそこへ飛ばす。
+///   - Stripe 未設定 → Err(402) だが URL なし(UIは「明日また」を出す)。
+/// 1日の絶対上限 MAKE_DAILY_CAP_PER_MAKER は濫用防止で残し、超過は 429。
+///
+/// 冪等性: ref_id を `make:<email>:<JST日付>:<n枚目>` とし、同じ1枚に対して
+/// 二重引き落としが起きないようにする(mu_credit_apply は ref_id 重複を弾く)。
+pub(crate) enum MakeGate {
+    /// 無料枠内、または課金済み。生成してよい。
+    Ok(MakeCharge),
+    /// 支払いが必要。checkout_url があればそこへ飛ばす。
+    PaymentRequired { checkout_url: Option<String>, made_today: i64 },
+    /// 1日の絶対上限に到達。課金でも突破させない。
+    DailyLimit { made_today: i64 },
+}
+
+pub(crate) struct MakeCharge {
+    pub(crate) made_today: i64,
+    /// 今回課金した金額(円)。無料枠なら 0。
+    pub(crate) charged_jpy: i64,
+    /// mu_credit_ledger の ref_id(課金時のみ)。
+    pub(crate) ref_id: Option<String>,
+}
+
+fn jst_today_key() -> String {
+    // JST の日付を 1 日の境界に使う(サーバは UTC で動いている)。
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0) + 9 * 3600;
+    let days = now / 86_400;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+/// 同期部分だけを切り出した判定。Stripe を呼ぶ必要があるかどうかを返す。
+/// 呼び出し側(db のロックを外した後)が `needs_checkout` を見て
+/// `crate::make_paid_checkout_url()` を await する。
+fn check_daily_make_gate(conn: &rusqlite::Connection, email: &str) -> Result<MakeGate, Response> {
+    let made_today = count_made_today(conn, email);
     if made_today >= MAKE_DAILY_CAP_PER_MAKER {
-        return Err((StatusCode::TOO_MANY_REQUESTS, axum::Json(serde_json::json!({
-            "ok": false,
-            "error": format!("1日に作れるのは{}点までです。また明日お試しください。", MAKE_DAILY_CAP_PER_MAKER),
-        }))).into_response());
+        return Ok(MakeGate::DailyLimit { made_today });
     }
-    Ok(())
+    if made_today < MAKE_FREE_PER_DAY {
+        return Ok(MakeGate::Ok(MakeCharge {
+            made_today, charged_jpy: 0, ref_id: None,
+        }));
+    }
+
+    // 4枚目以降: ¥100/枚。まず MUクレジット、足りなければ Stripe。
+    let n = made_today + 1; // 何枚目の作成か(1-indexed)
+    let ref_id = format!("make:{}:{}:{}", email.to_lowercase(), jst_today_key(), n);
+    // すでにこの1枚分を Stripe で払済みなら通す(リロード・二重送信対策)。
+    let already_paid: bool = conn.query_row(
+        "SELECT 1 FROM make_paid_sessions WHERE ref_id=? AND paid_at IS NOT NULL",
+        rusqlite::params![ref_id], |_| Ok(true),
+    ).unwrap_or(false);
+    if already_paid {
+        return Ok(MakeGate::Ok(MakeCharge {
+            made_today, charged_jpy: MAKE_PAID_JPY, ref_id: Some(ref_id),
+        }));
+    }
+    let balance = crate::mu_credit_balance(conn, email);
+    if balance >= MAKE_PAID_JPY {
+        // 同じ枠を二重に引かない。mu_credit_apply は ref_id の重複を検査
+        // しない(他経路の挙動を変えないため触らない)ので、ここで弾く。
+        let already_charged: bool = conn.query_row(
+            "SELECT 1 FROM mu_credit_ledger WHERE ref_id=? AND reason='make_paid_creation'",
+            rusqlite::params![ref_id], |_| Ok(true),
+        ).unwrap_or(false);
+        if already_charged {
+            // この枠はもう払っている(リロード・二重送信)。追加課金せず通す。
+            return Ok(MakeGate::Ok(MakeCharge {
+                made_today, charged_jpy: MAKE_PAID_JPY, ref_id: Some(ref_id),
+            }));
+        }
+        if crate::mu_credit_apply(conn, email, -MAKE_PAID_JPY, "make_paid_creation", Some(&ref_id))
+        {
+            return Ok(MakeGate::Ok(MakeCharge {
+                made_today, charged_jpy: MAKE_PAID_JPY, ref_id: Some(ref_id),
+            }));
+        }
+        // 引き落としに失敗(残高不足等)は安全側に倒して課金へ誘導。
+    }
+    Ok(MakeGate::PaymentRequired { checkout_url: None, made_today })
+}
+
+/// 1日3枚無料・4枚目から¥100 のゲートを通す。呼び出し側は async fn。
+/// 支払いが必要なときは Err(402 + checkout_url) を返す。
+pub(crate) async fn enforce_make_quota(db: &Db, email: &str) -> Result<MakeCharge, Response> {
+    let gate = {
+        let conn = db.lock().unwrap();
+        check_daily_make_gate(&conn, email)?
+    };
+    match gate {
+        MakeGate::Ok(c) => Ok(c),
+        MakeGate::DailyLimit { made_today } => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({
+                "ok": false,
+                "made_today": made_today,
+                "error": format!("1日に作れるのは{}点までです。また明日お試しください。",
+                    MAKE_DAILY_CAP_PER_MAKER),
+            })),
+        ).into_response()),
+        MakeGate::PaymentRequired { made_today, .. } => {
+            let n = made_today + 1;
+            let ref_id = format!("make:{}:{}:{}", email.to_lowercase(), jst_today_key(), n);
+            let checkout_url = crate::make_paid_checkout_url(db, email, &ref_id).await;
+            let mut body = serde_json::json!({
+                "ok": false,
+                "need_payment": true,
+                "made_today": made_today,
+                "free_per_day": MAKE_FREE_PER_DAY,
+                "price_jpy": MAKE_PAID_JPY,
+                "error": format!("1日{}枚まで無料。{}枚目は{}円です。",
+                    MAKE_FREE_PER_DAY, n, MAKE_PAID_JPY),
+            });
+            if let Some(u) = checkout_url {
+                body["checkout_url"] = serde_json::Value::from(u);
+            }
+            Err((StatusCode::PAYMENT_REQUIRED, axum::Json(body)).into_response())
+        }
+    }
 }
 
 /// 「作る動線」: 全ページに貼れる自己完結CTA（インラインstyle）。`src`はfunnel計測タグ。
@@ -7501,6 +7645,42 @@ pub async fn send_muon_reward_email(to: String, tee_count: i64, reward_jpy: i64)
 }
 
 /// GET /api/make/ab — A/B/C の現況（各案のユニーク訪問者作成数・作成総数・勝者）。
+/// GET /api/make/quota — 今日あと何枚無料で作れるかを返す。
+/// /make の UI が「あと N 枚まで無料」を出すための読み取り専用口。
+/// 未ログイン(メール未解決)は free_left=MAKE_FREE_PER_DAY を返し、
+/// 作る時点で require_maker_email が 401 を出す(二重の説明を避ける)。
+pub async fn make_quota_status(
+    State(db): State<Db>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let made_today = match resolve_maker_email(&db, &headers) {
+        Some(email) => {
+            let conn = db.lock().unwrap();
+            count_made_today(&conn, &email)
+        }
+        None => 0,
+    };
+    let free_left = (MAKE_FREE_PER_DAY - made_today).max(0);
+    let will_charge = made_today >= MAKE_FREE_PER_DAY;
+    let mut h = axum::http::HeaderMap::new();
+    h.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-store"),
+    );
+    (
+        h,
+        axum::Json(serde_json::json!({
+            "ok": true,
+            "made_today": made_today,
+            "free_per_day": MAKE_FREE_PER_DAY,
+            "free_left": free_left,
+            "daily_cap": MAKE_DAILY_CAP_PER_MAKER,
+            "price_jpy": MAKE_PAID_JPY,
+            "will_charge": will_charge,
+        })),
+    ).into_response()
+}
+
 pub async fn make_ab_status(State(db): State<Db>) -> Response {
     let conn = db.lock().unwrap();
     let winner = cv_get(&conn, "make_winner");
@@ -8689,7 +8869,10 @@ button:disabled{opacity:.5;cursor:default}
     <select id="k" aria-label="作る種類を選ぶ">
 __KIND_OPTIONS__
     </select>
-    <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる（無料でデザイン）</button>
+    <button id="go" data-funnel="cta_click" data-funnel-cta="make_generate">つくる</button>
+  </div>
+  <div id="quota" style="margin-top:8px;font-size:12.5px;color:rgba(245,245,240,.6);line-height:1.7">1日3枚まで無料。4枚目からは1枚100円です。</div>
+  <div class="row" style="margin-top:0">
     <div style="text-align:center;margin-top:10px"><a href="/design/ask" data-funnel="cta_click" data-funnel-cta="make_ask_someone" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🎁 自分で作らず、誰かに頼む →</a> · <a href="/dojo" data-funnel="cta_click" data-funnel-cta="make_dojo" style="color:rgba(255,215,0,.75);font-size:12.5px;text-decoration:none">🥋 道場の一着を作る →</a></div>
   </div>
   <div class="price-hint">__PRICE_HINT__</div>
@@ -8909,10 +9092,26 @@ async function runMake(){
       $('#out').innerHTML=registerGateHtml();
       wireRegisterGate();
     }
+    else if(r.status===402&&j.need_payment){
+      // 2026-09-17: 1日3枚まで無料、4枚目から ¥100。checkout_url があれば
+      // そのまま決済へ。無い(Stripe未設定等)ときは明日また、と伝える。
+      if(j.checkout_url){
+        $('#out').innerHTML='<div class=err style="line-height:1.8">'
+          +(j.error||'')+'<div style="margin-top:12px"><a href="'+j.checkout_url+'" style="display:inline-block;background:#ffd700;color:#0a0a0a;padding:12px 22px;border-radius:10px;font-weight:800;text-decoration:none;font-size:14px">100円でこの1枚を作る →</a></div>'
+          +'<div style="margin-top:8px;font-size:12px;opacity:.7">支払い後にこの画面へ戻り、もう一度「つくる」を押してください。</div></div>';
+      } else {
+        $('#out').innerHTML='<div class=err>'+(j.error||'')+'<br>決済の準備ができていません。また明日お試しください。</div>';
+      }
+      quotaLoad();
+    }
     else if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
       // 添付は1作品で消費(次の作成に紛れ込まない)。
       if(ATT===attachment && ATTSEQ===attachmentSeq){ATT=null;attF.value='';attRender();}
+      // 作った分だけ残り枚数を減らす。fetch しない(回帰テストの前提を壊さない)。
+      // quotaBump は runMake の外で定義されているが、vm 単体実行の回帰テストは
+      // この関数範囲しか読まないため、未定義でも落ちないよう typeof で守る。
+      try{ if(typeof quotaBump==='function') quotaBump(); }catch(_){}
       // 2026-08-28: 作るには登録必須になった → maker_email は生成時点で常に確定済み。
       // 旧mu_make_okクッキー判定(生成後にメール認証を求める名義化ゲート)は不要になった。
       renderResult(j,p,true);
@@ -9676,9 +9875,22 @@ pub async fn make_edit_apply(
             Err((c, m)) => return (c, axum::Json(serde_json::json!({"ok":false,"error":m}))).into_response(),
         }
     };
-    // 取り下げ(棚から下げる)。元に戻すのは人間オペレーション。
+    // 削除(非公開)。2026-09-17 本人指示で「棚から下げる」から改名。
+    // 方針は /you と同じ: 公開を止めるが、注文が入ったものは配送・返金の
+    // 記録を守るため拒否する(409)。元に戻すのは人間オペレーション。
     if body.retire == Some(true) {
         let conn = db.lock().unwrap();
+        let ordered: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM catalog_orders WHERE sku=?",
+            rusqlite::params![&sku], |r| r.get(0),
+        ).unwrap_or(0);
+        if ordered > 0 {
+            return (StatusCode::CONFLICT, axum::Json(serde_json::json!({
+                "ok": false,
+                "reason": "ordered",
+                "error": "この作品はすでに注文が入っているため削除できません。配送と返金の記録を残す必要があります。取り下げの相談は info@wearmu.com まで。",
+            }))).into_response();
+        }
         let _ = conn.execute(
             "UPDATE catalog_products SET status='retired', is_active=0, updated_at=datetime('now') WHERE sku=?",
             rusqlite::params![&sku],
@@ -10581,8 +10793,13 @@ audio{width:100%;margin:6px 0}
   <div class="msg" id="msg"></div>
   <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:center">
     <a id="pdp" href="#" style="color:#ffd700;font-size:13px">商品ページを見る →</a>
-    <button class="danger" id="retire">棚から下げる</button>
+    <button class="danger" id="retire">削除する（非公開にする）</button>
   </div>
+  <p style="margin-top:10px;font-size:11.5px;color:rgba(245,245,240,.5);line-height:1.7">
+    「削除する」はこの作品を<strong style="color:rgba(245,245,240,.75)">非公開</strong>にします。
+    MUの棚と検索から消え、購入できなくなります。
+    すでに注文が入った作品は、配送と返金の記録を残すため削除できません。
+  </p>
 </div>
 <div class="err-page" id="errPage" hidden>この編集リンクは無効です。<br>作成した端末・作成直後のリンクからもう一度開いてください。</div>
 <script>
@@ -10665,13 +10882,43 @@ $('#save').onclick=function(){
     }).catch(function(){btn.disabled=false;$('#msg').textContent='通信エラー。もう一度どうぞ。';$('#msg').className='msg err';});
 };
 $('#retire').onclick=function(){
-  if(!confirm('この作品を棚から下げます（販売停止）。よろしいですか？'))return;
+  if(!confirm('この作品を削除します。\n\n・MUの棚と検索から消え、購入できなくなります\n・元に戻すには運営への連絡が必要です\n\nよろしいですか？'))return;
   fetch('/api/make/edit/'+encodeURIComponent(SKU)+'?t='+encodeURIComponent(T),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({retire:true})})
     .then(function(r){return r.json();}).then(function(j){
-      if(j.ok){$('#msg').textContent='棚から下げました。';$('#msg').className='msg ok';$('#save').disabled=true;$('#retire').disabled=true;}
+      if(j.ok){$('#msg').textContent='削除しました（非公開）。';$('#msg').className='msg ok';$('#save').disabled=true;$('#retire').disabled=true;}
       else{$('#msg').textContent=j.error||'できませんでした';$('#msg').className='msg err';}
     });
 };
+// ── 1日3枚まで無料 / 4枚目から ¥100 ──
+// サーバ (GET /api/make/quota) が正本。UI は表示だけ。
+var QUOTA_LEFT=null; // quotaLoad() がサーバから取る。null=未取得。
+function quotaBump(){
+  // 生成成功時に残り枚数を 1 減らす。fetch しない(回帰テストの前提を壊さない)。
+  if(typeof QUOTA_LEFT!=='number') return;
+  if(QUOTA_LEFT>0) QUOTA_LEFT--;
+  var el=$('#quota'); if(!el) return;
+  if(QUOTA_LEFT>0){el.innerHTML='今日はあと <strong style="color:#ffd700">'+QUOTA_LEFT+'</strong> 枚まで無料で作れます。';}
+  else{el.innerHTML='今日の無料枠を使い切りました。次の1枚は <strong style="color:#ffd700">'+QUOTA_PRICE+'円</strong> です。';}
+}
+async function quotaLoad(){
+  var el=$('#quota'); if(!el) return;
+  try{
+    var r=await fetch('/api/make/quota',{headers:{'Accept':'application/json'}});
+    var j=await r.json();
+    if(!j.ok) return;
+    QUOTA_LEFT=j.free_left; QUOTA_PRICE=j.price_jpy;
+    if(j.free_left>0){
+      el.innerHTML='今日はあと <strong style="color:#ffd700">'+j.free_left+'</strong> 枚まで無料で作れます（1日'+j.free_per_day+'枚）。';
+    } else if(j.made_today>=j.daily_cap){
+      el.innerHTML='今日の上限（'+j.daily_cap+'枚）に達しました。また明日お試しください。';
+    } else {
+      el.innerHTML='今日の無料枠（'+j.free_per_day+'枚）を使い切りました。次の1枚は <strong style="color:#ffd700">'+j.price_jpy+'円</strong> です。';
+    }
+  }catch(e){}
+}
+// 初期取得は setTimeout(0) で遅らせる — ページ初期化の fetch 列
+// (runMake 等)と混ざらないようにするため。
+setTimeout(quotaLoad,0);
 load();
 </script>
 </body></html>"##;
@@ -10909,7 +11156,8 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     }
     // 登録必須+1日上限ゲート(2026-08-28)。Gemini を叩く前に弾く。
     let maker_email = match require_maker_email(&db, &headers) { Ok(e) => e, Err(r) => return r };
-    { let conn = db.lock().unwrap(); if let Err(r) = check_daily_make_cap(&conn, &maker_email) { return r; } }
+    // 1日3枚まで無料、4枚目から ¥100(MUクレジット→不足ならStripe)。
+    if let Err(r) = enforce_make_quota(&db, &maker_email).await { return r; }
     // 添付（/api/make/upload が返した自ホスト URL のみ受ける）。外部 URL の
     // 持ち込みは権利リスク評価不能なので弾く（MCP の agent 経路と同じ思想）。
     let valid_attach = |u: &Option<String>| -> Result<Option<String>, Response> {
@@ -21432,5 +21680,186 @@ mod sock_mockup_tests {
     #[test]
     fn sock_mockup_rejects_garbage_design() {
         assert!(compose_sock_mockup(b"not a png").is_err());
+    }
+}
+
+#[cfg(test)]
+mod make_quota_tests {
+    use super::*;
+
+    fn quota_db(made: i64) -> (Db, String) {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE catalog_products(sku TEXT PRIMARY KEY, brand TEXT, label TEXT,
+                retail_price_jpy INTEGER, status TEXT, design_file TEXT,
+                mockup_url_external TEXT, fulfillment_route TEXT,
+                printful_product_id INTEGER, printful_variant_id INTEGER,
+                meta_json TEXT, legacy_source TEXT, is_active INTEGER,
+                updated_at TEXT, created_at TEXT DEFAULT (datetime('now')));
+             CREATE TABLE mu_credits(email TEXT PRIMARY KEY, balance_jpy INTEGER NOT NULL,
+                total_earned_jpy INTEGER, total_spent_jpy INTEGER, updated_at TEXT);
+             CREATE TABLE mu_credit_ledger(id INTEGER PRIMARY KEY, email TEXT NOT NULL,
+                delta_jpy INTEGER NOT NULL, reason TEXT NOT NULL, ref_id TEXT,
+                created_at INTEGER NOT NULL);
+             CREATE TABLE make_paid_sessions(ref_id TEXT PRIMARY KEY, email TEXT NOT NULL,
+                stripe_session_id TEXT, amount_jpy INTEGER NOT NULL, paid_at TEXT,
+                created_at TEXT NOT NULL);",
+        ).unwrap();
+        let email = "maker@example.com".to_string();
+        for i in 0..made {
+            conn.execute(
+                "INSERT INTO catalog_products (sku,brand,label,retail_price_jpy,status,
+                    design_file,mockup_url_external,fulfillment_route,printful_product_id,
+                    printful_variant_id,meta_json,legacy_source,is_active)
+                 VALUES (?1,'minna','x',4900,'live','','', 'printful_dtg',71,4012,?2,'public_make',1)",
+                rusqlite::params![
+                    format!("MAKE-TEE-{}", i),
+                    serde_json::json!({"maker_email": email}).to_string(),
+                ],
+            ).unwrap();
+        }
+        (std::sync::Arc::new(std::sync::Mutex::new(conn)), email)
+    }
+
+    /// 1〜3枚目は課金しない(課金ゲートを通っても charged_jpy=0)。
+    #[test]
+    fn first_three_are_free() {
+        for made in 0..MAKE_FREE_PER_DAY {
+            let (db, email) = quota_db(made);
+            let conn = db.lock().unwrap();
+            let gate = check_daily_make_gate(&conn, &email).unwrap();
+            match gate {
+                MakeGate::Ok(c) => assert_eq!(c.charged_jpy, 0,
+                    "{}枚目なのに課金されている", made + 1),
+                other => panic!("{}枚目が無料で通らない: {:?}", made + 1, matches!(other, MakeGate::PaymentRequired{..})),
+            }
+        }
+    }
+
+    /// 4枚目は課金対象。クレジットが無ければ PaymentRequired になる。
+    #[test]
+    fn fourth_requires_payment_when_no_credit() {
+        let (db, email) = quota_db(MAKE_FREE_PER_DAY);
+        let conn = db.lock().unwrap();
+        let gate = check_daily_make_gate(&conn, &email).unwrap();
+        match gate {
+            MakeGate::PaymentRequired { made_today, .. } => {
+                assert_eq!(made_today, MAKE_FREE_PER_DAY);
+            }
+            other => panic!("4枚目が課金を要求しない: {}",
+                matches!(other, MakeGate::Ok(_))),
+        }
+    }
+
+    /// クレジットがあればその場で ¥100 引き落として通す。
+    #[test]
+    fn fourth_charges_credit_when_balance_available() {
+        let (db, email) = quota_db(MAKE_FREE_PER_DAY);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO mu_credits (email,balance_jpy,total_earned_jpy,total_spent_jpy,updated_at)
+                 VALUES (?,500,500,0,'1')", rusqlite::params![email]).unwrap();
+        }
+        let charged = {
+            let conn = db.lock().unwrap();
+            match check_daily_make_gate(&conn, &email).unwrap() {
+                MakeGate::Ok(c) => c,
+                _ => panic!("クレジットがあるのに課金へ誘導された"),
+            }
+        };
+        assert_eq!(charged.charged_jpy, MAKE_PAID_JPY);
+        assert!(charged.ref_id.is_some(), "ref_id が無いと二重課金を検知できない");
+        let conn = db.lock().unwrap();
+        let bal: i64 = conn.query_row(
+            "SELECT balance_jpy FROM mu_credits WHERE email=?",
+            rusqlite::params![email], |r| r.get(0)).unwrap();
+        assert_eq!(bal, 500 - MAKE_PAID_JPY, "残高から引かれていない");
+    }
+
+    /// 同じ1枚に対して二重に引き落とさない(ref_id の一意性)。
+    #[test]
+    fn same_slot_is_not_charged_twice() {
+        let (db, email) = quota_db(MAKE_FREE_PER_DAY);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO mu_credits (email,balance_jpy,total_earned_jpy,total_spent_jpy,updated_at)
+                 VALUES (?,500,500,0,'1')", rusqlite::params![email]).unwrap();
+        }
+        let first = {
+            let conn = db.lock().unwrap();
+            match check_daily_make_gate(&conn, &email).unwrap() {
+                MakeGate::Ok(c) => c,
+                _ => panic!("1回目が通らない"),
+            }
+        };
+        // 同じ枠をもう一度ゲートに通す(リロード想定)。
+        // 2回目は「すでにこの枠で引いている」ので追加課金されない。
+        let second = {
+            let conn = db.lock().unwrap();
+            match check_daily_make_gate(&conn, &email).unwrap() {
+                MakeGate::Ok(c) => c,
+                _ => panic!("2回目が通らない"),
+            }
+        };
+        assert_eq!(second.charged_jpy, MAKE_PAID_JPY);
+        let conn = db.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mu_credit_ledger
+             WHERE reason='make_paid_creation' AND ref_id=?",
+            rusqlite::params![first.ref_id.as_deref().unwrap()], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "同じ枠で2回引き落とされている");
+        let bal: i64 = conn.query_row(
+            "SELECT balance_jpy FROM mu_credits WHERE email=?",
+            rusqlite::params![email], |r| r.get(0)).unwrap();
+        assert_eq!(bal, 500 - MAKE_PAID_JPY, "残高が二重に減っている");
+    }
+
+    /// 1日の絶対上限(5枚)は課金でも突破できない。
+    #[test]
+    fn daily_cap_blocks_even_with_payment() {
+        let (db, email) = quota_db(MAKE_DAILY_CAP_PER_MAKER);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO mu_credits (email,balance_jpy,total_earned_jpy,total_spent_jpy,updated_at)
+                 VALUES (?,99999,99999,0,'1')", rusqlite::params![email]).unwrap();
+        }
+        let conn = db.lock().unwrap();
+        match check_daily_make_gate(&conn, &email).unwrap() {
+            MakeGate::DailyLimit { made_today } => {
+                assert_eq!(made_today, MAKE_DAILY_CAP_PER_MAKER);
+            }
+            _ => panic!("上限に達しているのに通ってしまった"),
+        }
+    }
+
+    /// Stripe で払済みの枠は通す(支払い後に戻ってきたときの二重請求防止)。
+    #[test]
+    fn paid_session_is_accepted() {
+        let (db, email) = quota_db(MAKE_FREE_PER_DAY);
+        let ref_id = format!("make:{}:{}:{}", email, jst_today_key(), MAKE_FREE_PER_DAY + 1);
+        {
+            let conn = db.lock().unwrap();
+            conn.execute(
+                "INSERT INTO make_paid_sessions (ref_id,email,stripe_session_id,amount_jpy,paid_at,created_at)
+                 VALUES (?,'','cs_test',100,'now','now')",
+                rusqlite::params![ref_id]).unwrap();
+        }
+        let conn = db.lock().unwrap();
+        match check_daily_make_gate(&conn, &email).unwrap() {
+            MakeGate::Ok(c) => assert_eq!(c.charged_jpy, MAKE_PAID_JPY),
+            _ => panic!("支払済みなのに通らない"),
+        }
+    }
+
+    /// 定数が本人指示どおり(1日3枚無料・¥100)であることを固定する。
+    #[test]
+    fn quota_constants_match_owner_spec() {
+        assert_eq!(MAKE_FREE_PER_DAY, 3, "本人指示: 1日3枚まで無料");
+        assert_eq!(MAKE_PAID_JPY, 100, "本人指示: ¥100/枚");
+        assert!(MAKE_DAILY_CAP_PER_MAKER > MAKE_FREE_PER_DAY,
+            "無料枠より上限が小さいと課金枠が存在しない");
     }
 }

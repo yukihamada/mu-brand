@@ -20660,6 +20660,22 @@ async fn stripe_webhook(
             product_id,
             serde_json::json!({"amount_total": amount_total, "session": session_id})).await;
 
+        // ── /make の無料枠超過分(¥100/枚)の支払い完了 ──
+        // ここで paid_at を立てる。クレジット付与はしない(決済は「その1枚を
+        // 作る権利」の購入であり、残高チャージではない)。生成そのものは
+        // ユーザーが Checkout から戻った後の /api/make で行われる。
+        if meta["kind"].as_str() == Some("make_paid_creation") {
+            if let Some(ref_id) = meta["ref_id"].as_str() {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "UPDATE make_paid_sessions SET paid_at=?, stripe_session_id=COALESCE(?, stripe_session_id)
+                     WHERE ref_id=?",
+                    params![chrono_now(), session_id, ref_id],
+                );
+                eprintln!("[make_paid] paid ref_id={} session={}", ref_id, session_id);
+            }
+        }
+
         // ── Abandoned-cart suppression + post-purchase mail queue ──
         // Mark the abandoned-cart row as paid so the recovery mailer doesn't
         // chase a customer who already converted. customer_email is the
@@ -27506,7 +27522,7 @@ async fn collab_create(
 // Gemini 画像 -0.5 MU。 全イベントを mu_credit_ledger に records。
 // Apply credit changes inside an existing DB lock (caller-provided conn).
 
-fn mu_credit_apply(conn: &rusqlite::Connection, email: &str, delta_jpy: i64, reason: &str, ref_id: Option<&str>) -> bool {
+pub(crate) fn mu_credit_apply(conn: &rusqlite::Connection, email: &str, delta_jpy: i64, reason: &str, ref_id: Option<&str>) -> bool {
     let now_s: i64 = chrono_now().parse().unwrap_or(0);
     let email_lc = email.to_lowercase();
     let _ = conn.execute(
@@ -27536,11 +27552,81 @@ fn mu_credit_apply(conn: &rusqlite::Connection, email: &str, delta_jpy: i64, rea
     true
 }
 
-fn mu_credit_balance(conn: &rusqlite::Connection, email: &str) -> i64 {
+pub(crate) fn mu_credit_balance(conn: &rusqlite::Connection, email: &str) -> i64 {
     conn.query_row(
         "SELECT balance_jpy FROM mu_credits WHERE email=?",
         params![email.to_lowercase()], |r| r.get(0)
     ).unwrap_or(0)
+}
+
+/// /make の無料枠超過分(4枚目以降)を Stripe Checkout で払うための URL を作る。
+///
+/// - 単発の ¥100 決済。サブスクでも回数券でもない(「1日3枚まで無料」の
+///   延長として、その1枚だけを買う形にする)。
+/// - `ref_id` を metadata に刻み、Webhook 側で「どの作成に対する支払いか」
+///   を辿れるようにする。
+/// - Stripe 未設定・API エラー時は None を返す(呼び出し側が 402 を返す)。
+///   決済を通せないからといって生成を無料で通してはいけない。
+pub(crate) async fn make_paid_checkout_url(
+    db: &Db,
+    email: &str,
+    ref_id: &str,
+) -> Option<String> {
+    let stripe_key = env::var("STRIPE_SECRET_KEY").unwrap_or_default();
+    if stripe_key.is_empty() { return None; }
+    let base = env::var("BASE_URL").unwrap_or_else(|_| "https://wearmu.com".into());
+    let base = base.trim_end_matches('/').to_string();
+
+    let mut form: Vec<(String, String)> = vec![
+        ("mode".into(), "payment".into()),
+        ("success_url".into(), format!("{}/make?paid=1", base)),
+        ("cancel_url".into(), format!("{}/make?paid=cancel", base)),
+        ("customer_email".into(), email.to_lowercase()),
+        ("line_items[0][price_data][currency]".into(), "jpy".into()),
+        ("line_items[0][price_data][unit_amount]".into(),
+            (catalog::MAKE_PAID_JPY * 100).to_string()),
+        ("line_items[0][price_data][product_data][name]".into(),
+            format!("MU で作る — {}枚目 (1日{}枚まで無料)",
+                ref_id.rsplit(':').next().unwrap_or("?"), catalog::MAKE_FREE_PER_DAY)),
+        ("line_items[0][quantity]".into(), "1".into()),
+        ("metadata[ref_id]".into(), ref_id.to_string()),
+        ("metadata[kind]".into(), "make_paid_creation".into()),
+        ("metadata[email]".into(), email.to_lowercase()),
+    ];
+    // 日本向けの表記。住所収集は不要(デジタル生成のため)。
+    form.push(("locale".into(), "ja".into()));
+
+    let client = reqwest::Client::new();
+    let r = client.post("https://api.stripe.com/v1/checkout/sessions")
+        .basic_auth(&stripe_key, Some(""))
+        .form(&form).send().await;
+    match r {
+        Ok(resp) => {
+            let raw = resp.text().await.unwrap_or_default();
+            let v: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+            let url = v.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let sid = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            if url.is_empty() {
+                eprintln!("[make_paid] checkout session failed: {}", &raw[..raw.len().min(300)]);
+                return None;
+            }
+            // 監査用にセッション id を ledger とは別に残す(make_paid_sessions)。
+            {
+                let conn = db.lock().unwrap();
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO make_paid_sessions (ref_id, email, stripe_session_id, amount_jpy, created_at)
+                     VALUES (?,?,?,?,?)",
+                    params![ref_id, email.to_lowercase(), sid, catalog::MAKE_PAID_JPY, chrono_now()],
+                );
+            }
+            Some(url)
+        }
+        Err(e) => {
+            eprintln!("[make_paid] stripe error: {}", e);
+            None
+        }
+    }
 }
 
 // Grant for a shirt purchase (called after mu_purchases insert). 1 MU = ¥1,000.
@@ -69628,6 +69714,18 @@ async fn main() {
             created_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_mu_ledger_email ON mu_credit_ledger(email, created_at DESC);
+        -- /make の無料枠超過分(4枚目以降・¥100/枚)の Stripe Checkout 記録。
+        -- 支払い完了は Stripe Webhook が paid_at を埋める。残高払い
+        -- (mu_credit_ledger)とは経路が違うので別テーブルにする。
+        CREATE TABLE IF NOT EXISTS make_paid_sessions (
+            ref_id             TEXT PRIMARY KEY,
+            email              TEXT NOT NULL,
+            stripe_session_id  TEXT,
+            amount_jpy         INTEGER NOT NULL,
+            paid_at            TEXT,
+            created_at         TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_make_paid_email ON make_paid_sessions(email, created_at DESC);
         -- 2026-09-01: MU PAY 残高の現金化(出金申請)。実際の送金は人間が
         -- Stripe Connect(国内銀行振込)/PayPay/Solana で行い、完了後に
         -- admin/withdrawals から mark-paid する(bounty_rewards の
@@ -72468,6 +72566,7 @@ async fn main() {
         .route("/api/make/verify/send", post(catalog::make_verify_send))
         .route("/api/make/verify/check", post(catalog::make_verify_check))
         .route("/api/make/ab", get(catalog::make_ab_status))
+        .route("/api/make/quota", get(catalog::make_quota_status))
         // song 試聴プレビュー(冒頭のみ・フルURL非公開)。
         .route("/api/song/preview/:sku", get(catalog::song_preview))
         .route("/admin/catalog/lifestyle_gen", get(catalog::admin_lifestyle_gen))
