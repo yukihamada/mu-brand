@@ -211,6 +211,12 @@ textarea.input{resize:vertical;min-height:88px;line-height:1.7}
 .history-meta{position:absolute;bottom:0;left:0;right:0;padding:12px 14px;
   background:linear-gradient(180deg,transparent,rgba(0,0,0,0.85));font-size:9px;letter-spacing:0.18em}
 .history-meta b{color:var(--y);font-weight:600;text-transform:uppercase}
+.hist-del{position:absolute;top:6px;right:6px;width:26px;height:26px;line-height:1;
+  border:none;border-radius:50%;background:rgba(0,0,0,0.55);color:rgba(255,255,255,0.7);
+  font-size:15px;cursor:pointer;opacity:0;transition:opacity 0.15s,background 0.15s}
+.history-card:hover .hist-del{opacity:1}
+.hist-del:hover{background:rgba(224,123,123,0.9);color:#fff}
+.hist-del:disabled{opacity:0.4;cursor:default}
 .history-empty{font-size:12px;opacity:0.4;text-align:center;padding:40px;
   border:1px dashed rgba(255,255,255,0.08)}
 
@@ -785,8 +791,9 @@ footer a:hover{opacity:1}
      <details>
        <summary>自分のページとデザインを完全に消したい</summary>
        <div class="answer">
-         このページの一番下の「アカウントを削除」から、いつでも自分で消せます。<br>
-         消えるもの: 公開ページ (wearmu.com/あなたのID)、メールアドレス、好み・サイズ・配送住所、生成されたデザイン画像。<br>
+        このページの一番下の「アカウントを削除」から、いつでも自分で消せます。<br>
+        1 案だけ消したいときは「これまでの案」のカードに出る × から消せます(注文に進んだものは除く)。<br>
+        消えるもの: 公開ページ (wearmu.com/あなたのID)、メールアドレス、好み・サイズ・配送住所、生成されたデザイン画像。<br>
          残るもの: 注文・配送・返金の記録(法令とお問い合わせ対応のため。個人情報は含まれません)。<br>
          削除は取り消せません。同じメールアドレスで再登録できます。
        </div>
@@ -1093,12 +1100,32 @@ function showHistory(items){
     // 'generating' rows return the placeholder SVG; either way the <div>
     // background renders correctly.
     const bg = `#000 center/cover no-repeat url("${d.image_url || '/og.jpg'}")`;
+    const claimed = (d.status === 'claimed');
     card.innerHTML = `
       <div class="history-img" style="background:${bg}"></div>
-      <div class="history-meta">DAY ${String(d.day_num||1).padStart(3,'0')} · <b>${d.status||'PENDING'}</b></div>`;
+      <div class="history-meta">DAY ${String(d.day_num||1).padStart(3,'0')} · <b>${d.status||'PENDING'}</b></div>
+      ${claimed ? '' : `<button class="hist-del" data-del-id="${d.id}" title="この案を消す">×</button>`}`;
     grid.appendChild(card);
   });
 }
+
+// 1 案だけ消す。Claim 済み(注文に進んだ)ものはサーバが 409 で拒否する。
+document.addEventListener('click', async e=>{
+  const btn = e.target.closest('.hist-del[data-del-id]');
+  if (!btn) return;
+  const id = btn.getAttribute('data-del-id');
+  if (!token) { toast('登録情報がありません', true); return; }
+  if (!confirm('この 1 案を削除します。よろしいですか？\n(同じ日付に再生成されることはありません)')) return;
+  btn.disabled = true;
+  try {
+    await api('/api/you/design/delete', {token, design_id: Number(id)});
+    toast('削除しました');
+    if (token) loadDaily(token);
+  } catch(err){
+    btn.disabled = false;
+    toast(err.message || '削除できませんでした', true);
+  }
+});
 
 async function loadDaily(tk){
   try {
