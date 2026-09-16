@@ -562,3 +562,57 @@ fn you_delete_scrubs_identifiers_and_releases_slug() {
         [], |_| Ok(true)).unwrap_or(false);
     assert!(!visible, "削除後も公開ページがレンダリングされる");
 }
+
+/// 1 案だけ消す: 削除済み行は「その日は不要」の意思として残り、
+/// 翌日の再生成でも復活しないこと(ensure_design_for_day の分岐)。
+/// ここでは SQL レベルの不変条件のみを検証する(ネットワーク・本番DB非接触)。
+#[test]
+fn you_delete_design_marks_row_deleted_and_hides_it() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE you_users (
+            id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, token TEXT NOT NULL UNIQUE,
+            slug TEXT UNIQUE, taste_json TEXT NOT NULL DEFAULT '{}', size TEXT NOT NULL DEFAULT 'S',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, unsubscribed_at TEXT, deleted_at TEXT
+         );
+         CREATE TABLE you_designs (
+            id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, day TEXT NOT NULL,
+            day_num INTEGER NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL,
+            seed TEXT NOT NULL, image_url TEXT, print_url TEXT, gen_status TEXT NOT NULL,
+            status TEXT NOT NULL, updated_at TEXT, printful_order_id TEXT,
+            UNIQUE(user_id, day)
+         );",
+    ).unwrap();
+    conn.execute("INSERT INTO you_users (id,email,token,slug,created_at,updated_at) VALUES (13,'a@b.c','tok','sl','1','1')", []).unwrap();
+    conn.execute(
+        "INSERT INTO you_designs (id,user_id,day,day_num,name,prompt,seed,image_url,gen_status,status)
+         VALUES (1,13,'2026-09-16',128,'A','p','s','https://mockups.wearmu.com/you/1.png','ready','pending'),
+                (2,13,'2026-09-15',127,'B','p','s','https://mockups.wearmu.com/you/2.png','ready','claimed')",
+        []).unwrap();
+
+    // pending の 1 件だけ削除
+    conn.execute(
+        "UPDATE you_designs
+            SET name='', prompt='', seed='', image_url=NULL, print_url=NULL,
+                gen_status='deleted', status='deleted', updated_at='2'
+          WHERE id=1 AND user_id=13", []).unwrap();
+
+    // 公開ページ / 履歴の取得条件(gen_status <> 'deleted')から消えている
+    let visible: Vec<i64> = {
+        let mut st = conn.prepare(
+            "SELECT id FROM you_designs WHERE user_id=13 AND gen_status <> 'deleted' ORDER BY day DESC").unwrap();
+        st.query_map([], |r| r.get::<_, i64>(0)).unwrap().filter_map(|r| r.ok()).collect()
+    };
+    assert_eq!(visible, vec![2], "削除済みの案が公開一覧に残っている");
+
+    // UNIQUE(user_id, day) は生きている = 同じ日に再生成されない
+    let dup = conn.execute(
+        "INSERT INTO you_designs (id,user_id,day,day_num,name,prompt,seed,gen_status,status)
+         VALUES (3,13,'2026-09-16',129,'C','p','s','generating','pending')", []);
+    assert!(dup.is_err(), "削除した日が再生成されてしまう");
+
+    // Claim 済みは削除対象にならない(ハンドラが 409 で拒否する前提)
+    let claimed_status: String = conn.query_row(
+        "SELECT status FROM you_designs WHERE id=2", [], |r| r.get(0)).unwrap();
+    assert_eq!(claimed_status, "claimed", "Claim 済みの行まで消してはいけない");
+}

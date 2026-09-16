@@ -40748,6 +40748,11 @@ fn ensure_design_for_day(conn: &Connection, user_id: i64, day: &str, taste: &ser
     ).ok();
 
     if let Some((id, refresh_count, gen_status)) = existing {
+        // 本人が消した日は再生成しない(UNIQUE(user_id, day) の行は証跡として
+        // 残るが、gen_status='deleted' は「その日は不要」の明示的な意思)。
+        if gen_status == "deleted" {
+            return Ok((id, false));
+        }
         if !force_refresh {
             // Re-kick generation only if a prior attempt failed and nothing is
             // currently running; never re-kick a 'ready' row.
@@ -41267,7 +41272,9 @@ async fn you_subscribe(
 fn list_history(conn: &Connection, user_id: i64) -> Vec<serde_json::Value> {
     let mut stmt = match conn.prepare(
         "SELECT id, day, day_num, name, status, seed, gen_status
-         FROM you_designs WHERE user_id=? ORDER BY day DESC LIMIT 30"
+         FROM you_designs
+         WHERE user_id=? AND gen_status <> 'deleted'
+         ORDER BY day DESC LIMIT 30"
     ) {
         Ok(s) => s, Err(_) => return vec![],
     };
@@ -65178,11 +65185,121 @@ async fn you_delete_account(
     })).into_response()
 }
 
+// ── Delete ONE design (2026-09-17) ───────────────────────────────────────────
+//
+// アカウントごと消さなくても「この 1 枚だけ消したい」に応える口。
+// 公開ページのグリッドから消え、画像 (R2) も消える。
+// ただし Claim 済み(= 実際に購入・製造に進んだ)ものは証跡を壊さないよう
+// 拒否する。その場合はサポート窓口へ誘導する。
+#[derive(Deserialize)]
+struct YouDeleteDesignBody {
+    token: String,
+    design_id: i64,
+}
+
+async fn you_delete_design(
+    State(db): State<Db>,
+    Json(body): Json<YouDeleteDesignBody>,
+) -> impl IntoResponse {
+    let now = chrono_now();
+    // 1. 本人確認 + 対象デザインの所有者確認 + Claim 状態の取得を 1 接続で。
+    let row: Option<(i64, i64, String, Option<String>, Option<String>, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        let uid: Option<i64> = conn.query_row(
+            "SELECT id FROM you_users
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
+            params![body.token.trim()],
+            |r| r.get(0),
+        ).ok();
+        let uid = match uid {
+            Some(v) => v,
+            None => return (StatusCode::NOT_FOUND, "invalid token").into_response(),
+        };
+        conn.query_row(
+            "SELECT user_id, day_num, status, image_url, print_url, printful_order_id
+             FROM you_designs WHERE id=?",
+            params![body.design_id],
+            |r| Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, Option<String>>(4)?,
+                r.get::<_, Option<String>>(5)?,
+            )),
+        ).ok().map(|d| (uid, d.0, d.2, d.3, d.4, d.5))
+    };
+    let (uid, owner_id, status, image_url, print_url, printful_order_id) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND, "design not found").into_response(),
+    };
+    if owner_id != uid {
+        return (StatusCode::FORBIDDEN, "not your design").into_response();
+    }
+    // Claim 済み / 製造に進んだものは消さない(注文・配送・返金の証跡)。
+    if status == "claimed" || printful_order_id.is_some() {
+        return (StatusCode::CONFLICT, serde_json::json!({
+            "ok": false,
+            "reason": "claimed",
+            "message": "この一着はすでに注文に進んでいるため削除できません。キャンセル・返金は info@wearmu.com までご連絡ください。",
+        }).to_string()).into_response();
+    }
+
+    // 2. R2 の実体を先に消す(URL を NULL にするとキーを辿れなくなるため)。
+    let mut images_deleted = 0usize;
+    let mut images_failed = 0usize;
+    for u in [image_url.as_deref(), print_url.as_deref()] {
+        if let Some(u) = u {
+            if let Some(k) = r2_key_from_url(u) {
+                match r2_delete_object(&k).await {
+                    Ok(true) => images_deleted += 1,
+                    _ => images_failed += 1,
+                }
+            }
+        }
+    }
+
+    // 3. 中身を消す。行自体は残し「この日は削除済み」という事実だけ残す
+    //    (同じ日に再生成されないよう UNIQUE(user_id, day) を活かす)。
+    let scrubbed = {
+        let conn = db.lock().unwrap();
+        let n = conn.execute(
+            "UPDATE you_designs
+                SET name='', prompt='', seed='', image_url=NULL, image_bytes=NULL,
+                    image_mime=NULL, print_url=NULL, print_bytes=NULL, print_mime=NULL,
+                    gen_status='deleted', gen_error=NULL, status='deleted',
+                    updated_at=?
+              WHERE id=? AND user_id=?",
+            params![now, body.design_id, uid],
+        ).unwrap_or(0);
+        let _ = conn.execute(
+            "DELETE FROM you_signals WHERE design_id=?", params![body.design_id]);
+        n
+    };
+    if scrubbed == 0 {
+        return (StatusCode::NOT_FOUND, "design not found").into_response();
+    }
+
+    eprintln!("[you] design deleted id={} uid={} images_deleted={} images_failed={}",
+        body.design_id, uid, images_deleted, images_failed);
+
+    Json(serde_json::json!({
+        "ok": true,
+        "design_id": body.design_id,
+        "deleted_at": now,
+        "images_deleted": images_deleted,
+        "images_failed": images_failed,
+        "note": "この一着は公開ページから消えました。同じ日付に再生成されることはありません。",
+    })).into_response()
+}
+
 /// Pull the R2 object key out of a stored public URL.
 /// `https://mockups.wearmu.com/you/123.png` → `you/123.png`.
 fn r2_key_from_url(url: &str) -> Option<String> {
     let u = url.trim();
     if u.is_empty() { return None; }
+    // data: URI (inline SVG placeholder) は R2 のオブジェクトではない
+    if u.starts_with("data:") { return None; }
     let after = match u.split_once("://") {
         Some((_, rest)) => rest,
         None => u,
@@ -65455,7 +65572,9 @@ async fn slug_or_static(
         let conn = db.lock().unwrap();
         let mut stmt = match conn.prepare(
             "SELECT id, day, day_num, name, prompt, status, gen_status, image_url
-             FROM you_designs WHERE user_id=? ORDER BY day DESC LIMIT 24"
+             FROM you_designs
+             WHERE user_id=? AND gen_status <> 'deleted'
+             ORDER BY day DESC LIMIT 24"
         ) {
             Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db error").into_response(),
         };
@@ -70995,6 +71114,7 @@ async fn main() {
         .route("/api/you/claim", post(you_claim))
         .route("/api/you/unsubscribe", post(you_unsubscribe))
         .route("/api/you/delete", post(you_delete_account))
+        .route("/api/you/design/delete", post(you_delete_design))
         .route("/api/you/design/:id/image.png", get(you_image))
         .route("/api/you/design/:id/image", get(you_image))
         .route("/api/you/design/:id/print.png", get(you_print_image))
