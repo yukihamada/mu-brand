@@ -458,3 +458,107 @@ fn make_en_table_no_new_straight_apostrophes() {
         }
     }
 }
+
+// ── /api/you/delete — 公開ページとメールを確実に消す ────────────────────────
+//
+// 「投稿したやつを自分で消したい」ための自己削除口。ここで守るべきは
+//   1) R2 のキー抽出が URL 形に左右されない(消し残し = 公開物が残る)
+//   2) 削除後は公開ページの元になる slug が必ず NULL(再公開防止)
+//   3) 注文・配送・返金の証跡は消さない(デザイン行そのものは残る)
+// ネットワーク・本番DBには触れない。
+
+#[test]
+fn r2_key_from_url_extracts_object_key() {
+    let f = crate::r2_key_from_url;
+    assert_eq!(f("https://mockups.wearmu.com/you/3497.png").as_deref(), Some("you/3497.png"));
+    assert_eq!(f("http://mockups.wearmu.com/you/12.png").as_deref(), Some("you/12.png"));
+    // クエリは落とす(R2 のキーには含めない)
+    assert_eq!(f("https://mockups.wearmu.com/you/12.png?v=3").as_deref(), Some("you/12.png"));
+    // 空・パスなし・トラバーサルは None(誤削除防止)
+    assert_eq!(f(""), None);
+    assert_eq!(f("https://mockups.wearmu.com"), None);
+    assert_eq!(f("https://mockups.wearmu.com/../etc/passwd"), None);
+}
+
+/// 削除 SQL が「slug を必ず解放し、メールを必ず潰す」ことを in-memory DB で実測。
+/// you_delete_account の UPDATE 文と同じ文を適用し、事後状態を検証する。
+#[test]
+fn you_delete_scrubs_identifiers_and_releases_slug() {
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE you_users (
+            id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, token TEXT NOT NULL UNIQUE,
+            slug TEXT UNIQUE, display_name TEXT, taste_json TEXT NOT NULL DEFAULT '{}',
+            size TEXT NOT NULL DEFAULT 'S', created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            unsubscribed_at TEXT, deleted_at TEXT, email_hash TEXT,
+            shipping_address_json TEXT, stripe_customer_id TEXT, subscription_status TEXT
+         );
+         CREATE TABLE you_designs (
+            id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, day TEXT NOT NULL,
+            day_num INTEGER NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL,
+            seed TEXT NOT NULL, image_url TEXT, print_url TEXT, gen_status TEXT NOT NULL,
+            status TEXT NOT NULL, updated_at TEXT
+         );",
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO you_users (id,email,token,slug,display_name,taste_json,size,created_at,updated_at,shipping_address_json,stripe_customer_id)
+         VALUES (13,'ohashikzk@gmail.com','tok','6a7rd5j','x','{\"mood\":[\"力強い\"]}','XL','1','1','{\"city\":\"Tokyo\"}','cus_1')",
+        [],
+    ).unwrap();
+    conn.execute(
+        "INSERT INTO you_designs (id,user_id,day,day_num,name,prompt,seed,image_url,print_url,gen_status,status)
+         VALUES (3497,13,'2026-09-16',128,'幾何学','prompt','seed','https://mockups.wearmu.com/you/3497.png',NULL,'ready','pending')",
+        [],
+    ).unwrap();
+
+    // ── 本番と同じ UPDATE を適用 ──
+    let now = "1789509607";
+    conn.execute(
+        "UPDATE you_designs
+            SET name='', prompt='', seed='', image_url=NULL, print_url=NULL,
+                gen_status='deleted', updated_at=?
+          WHERE user_id=?",
+        rusqlite::params![now, 13],
+    ).unwrap();
+    conn.execute(
+        "UPDATE you_users
+            SET email=?, email_hash=?, slug=NULL, display_name=NULL,
+                taste_json='{}', size='S', shipping_address_json=NULL,
+                stripe_customer_id=NULL, subscription_status=NULL,
+                unsubscribed_at=COALESCE(unsubscribed_at, ?),
+                deleted_at=?, updated_at=?
+          WHERE id=?",
+        rusqlite::params![
+            "deleted+13@invalid", "hash13", now, now, now, 13,
+        ],
+    ).unwrap();
+
+    // ── 事後検証 ──
+    let (email, slug, taste, addr, cust, deleted): (String, Option<String>, String, Option<String>, Option<String>, Option<String>) =
+        conn.query_row(
+            "SELECT email, slug, taste_json, shipping_address_json, stripe_customer_id, deleted_at
+             FROM you_users WHERE id=13", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            }).unwrap();
+    assert!(!email.contains("ohashikzk"), "メールが残っている: {}", email);
+    assert!(slug.is_none(), "slug が解放されていない(公開ページが残る): {:?}", slug);
+    assert_eq!(taste, "{}", "好みデータが残っている");
+    assert!(addr.is_none(), "配送住所が残っている");
+    assert!(cust.is_none(), "Stripe id が残っている");
+    assert!(deleted.is_some(), "deleted_at が立っていない");
+
+    // デザイン行自体は証跡として残るが、中身は消えている
+    let (cnt, name, img, st): (i64, String, Option<String>, String) = conn.query_row(
+        "SELECT COUNT(*), name, image_url, gen_status FROM you_designs WHERE user_id=13",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).unwrap();
+    assert_eq!(cnt, 1, "注文/配送の証跡行まで消してはいけない");
+    assert_eq!(name, "", "デザイン名が残っている");
+    assert!(img.is_none(), "画像 URL が残っている(画像が見える)");
+    assert_eq!(st, "deleted");
+
+    // 公開ページの lookup 条件(deleted_at IS NULL)で引っかからないこと
+    let visible: bool = conn.query_row(
+        "SELECT 1 FROM you_users WHERE slug='6a7rd5j' AND unsubscribed_at IS NULL AND deleted_at IS NULL",
+        [], |_| Ok(true)).unwrap_or(false);
+    assert!(!visible, "削除後も公開ページがレンダリングされる");
+}
