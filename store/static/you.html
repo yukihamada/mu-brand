@@ -780,12 +780,22 @@ footer a:hover{opacity:1}
       <div class="answer">受信メールに <code>STOP</code> と返信、またはこのページの一番下から退会できます。即時に配信停止し、登録情報は 30 日後に削除されます。</div>
     </details>
 
-    <details>
-      <summary>MUGEN / MUON / MA とどう違う？</summary>
-      <div class="answer">MUGEN・MUON・MA はブランドが「世界全員に対して」毎時・毎日・毎月生成する公開ドロップ。MU × YOU は「あなた1人に対して」毎日生成する個別ドロップです。生成エンジンとプロダクション工場は同じです。</div>
-    </details>
-  </div>
-</section>
+     <details>
+       <summary>MUGEN / MUON / MA とどう違う？</summary>
+       <div class="answer">MUGEN・MUON・MA はブランドが「世界全員に対して」毎時・毎日・毎月生成する公開ドロップ。MU × YOU は「あなた1人に対して」毎日生成する個別ドロップです。生成エンジンとプロダクション工場は同じです。</div>
+     </details>
+
+     <details>
+       <summary>自分のページとデザインを完全に消したい</summary>
+       <div class="answer">
+         このページの一番下の「アカウントを削除」から、いつでも自分で消せます。<br>
+         消えるもの: 公開ページ (wearmu.com/あなたのID)、メールアドレス、好み・サイズ・配送住所、生成されたデザイン画像。<br>
+         残るもの: 注文・配送・返金の記録(法令とお問い合わせ対応のため。個人情報は含まれません)。<br>
+         削除は取り消せません。同じメールアドレスで再登録できます。
+       </div>
+     </details>
+   </div>
+ </section>
 
 <footer>
   <div>MU × YOU © wearmu.com</div>
@@ -797,6 +807,7 @@ footer a:hover{opacity:1}
     <a href="/tos">利用規約</a>
     <a href="/about.html">About</a>
     <a href="#" id="unsub-link">退会</a>
+    <a href="#" id="delete-link" style="color:#e07b7b">アカウントを削除</a>
   </div>
   <div style="margin-top:18px;font-size:10px;opacity:0.45;letter-spacing:0.15em;width:100%;text-align:center">
     株式会社イネブラ (Enabler Inc.) · yuki (1 human operator) · 28 agents
@@ -1036,6 +1047,7 @@ function schedulePoll(){
 
 function updateShareBar(shareUrl, slug){
   if (!shareUrl) return;
+  if (slug) window.__mu_you_slug = slug;
   $('#share-url').value = shareUrl;
   if (slug && !$('#slug-input').value) $('#slug-input').value = slug;
   $('#share-bar').classList.add('show');
@@ -1586,6 +1598,37 @@ $('#unsub-link').addEventListener('click', async e=>{
     toast('退会しました');
     setTimeout(()=>location.reload(), 1500);
   } catch(e){ toast(e.message, true); }
+});
+
+// SELF-SERVICE ACCOUNT DELETION
+// Erases the public page (wearmu.com/<slug>), the email address, taste /
+// address / Stripe ids and every generated design image. Order + shipping +
+// refund records are kept (no personal data in them). Irreversible.
+$('#delete-link').addEventListener('click', async e=>{
+  e.preventDefault();
+  if (!token) { toast('登録情報がありません', true); return; }
+  const slugNow = (window.__mu_you_slug || $('#share-bar')?.dataset?.slug || '').toString();
+  const msg =
+    'アカウントを削除します。\n\n' +
+    '・公開ページ wearmu.com/' + (slugNow || 'あなたのID') + ' はすぐ見られなくなります\n' +
+    '・メールアドレス・好み・配送住所・生成画像も削除されます\n' +
+    '・注文・配送・返金の記録だけ残ります(個人情報なし)\n\n' +
+    'この操作は取り消せません。\n続けるには DELETE と入力してください。';
+  const typed = window.prompt(msg, '');
+  if (typed === null) return;
+  if (typed.trim().toUpperCase() !== 'DELETE') {
+    toast('DELETE と入力された場合のみ削除します', true);
+    return;
+  }
+  try {
+    const r = await api('/api/you/delete', {token, confirm: 'DELETE'});
+    localStorage.removeItem('mu_you_token');
+    toast('削除しました。公開ページはもう表示されません。');
+    console.log('[you] deleted', r);
+    setTimeout(()=>{ location.href = '/you?deleted=1'; }, 1800);
+  } catch(err){
+    toast(err.message || '削除に失敗しました', true);
+  }
 });
 
 // TASTE EDIT

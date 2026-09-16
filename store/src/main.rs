@@ -7915,7 +7915,7 @@ async fn admin_email_vault_waitlist_blast(
             "SELECT DISTINCT u.email FROM you_users u
              WHERE COALESCE(u.lifetime_free, 0) = 0
                AND (u.subscription_status IS NULL OR u.subscription_status = '')
-               AND u.unsubscribed_at IS NULL
+               AND u.unsubscribed_at IS NULL AND u.deleted_at IS NULL
                AND u.email IS NOT NULL AND u.email != ''
                AND u.email NOT LIKE '%@example.com'
                AND u.email NOT LIKE 'test%'
@@ -41296,7 +41296,7 @@ async fn you_daily(
         let conn = db.lock().unwrap();
         let row: Option<(i64, String)> = conn.query_row(
             "SELECT id, taste_json FROM you_users
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![token],
             |r| Ok((r.get::<_,i64>(0)?, r.get::<_,String>(1)?)),
         ).ok();
@@ -41459,7 +41459,7 @@ async fn you_subscribe_3mo(
         let conn = db.lock().unwrap();
         let row: Option<(i64, String)> = conn.query_row(
             "SELECT id, email FROM you_users
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![body.token], |r| Ok((r.get(0)?, r.get(1)?)),
         ).ok();
         let (u, e) = match row {
@@ -41539,7 +41539,7 @@ async fn you_subscribe_paid(
         let conn = db.lock().unwrap();
         let row: Option<(i64, String, Option<String>)> = conn.query_row(
             "SELECT id, email, stripe_customer_id FROM you_users
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![body.token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok();
         let (u, e, c) = match row {
@@ -41619,7 +41619,7 @@ async fn you_portal(
         let conn = db.lock().unwrap();
         match conn.query_row(
             "SELECT stripe_customer_id FROM you_users
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![body.token], |r| r.get::<_, Option<String>>(0),
         ).ok().flatten() {
             Some(c) if !c.is_empty() => c,
@@ -41973,7 +41973,7 @@ async fn you_preferences(
     if q.token.is_empty() { return (StatusCode::BAD_REQUEST, "missing token").into_response(); }
     let conn = db.lock().unwrap();
     let user_id: i64 = match conn.query_row(
-        "SELECT id FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        "SELECT id FROM you_users WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
         params![q.token], |r| r.get(0),
     ).ok() { Some(v) => v, None => return (StatusCode::NOT_FOUND, "invalid token").into_response() };
     let prefs = compute_user_preferences(&conn, user_id);
@@ -49011,7 +49011,7 @@ async fn you_referral_status(
     let conn = db.lock().unwrap();
     let row: Option<(String, i64, i64)> = conn.query_row(
         "SELECT slug, COALESCE(referral_credit_jpy,0), COALESCE(referral_count,0)
-         FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+         FROM you_users WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
         params![body.token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).ok();
     let Some((slug, credit, count)) = row else {
@@ -49963,7 +49963,7 @@ async fn submit_feedback(
         let row: Option<(i64, String, i64)> = if !body.token.is_empty() {
             conn.query_row(
                 "SELECT id, email, COALESCE(lifetime_free,0) FROM you_users
-                 WHERE token=? AND unsubscribed_at IS NULL",
+                 WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
                 params![body.token], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
             ).ok()
         } else if !body.email.is_empty() {
@@ -50428,7 +50428,7 @@ async fn send_blog_digest(db: &Db, slug: &str, title: &str, body_md: &str) -> Re
         .map_err(|_| "RESEND_API_KEY missing".to_string())?;
     let recipients: Vec<String> = {
         let conn = db.lock().unwrap();
-        let result = match conn.prepare("SELECT email FROM you_users WHERE unsubscribed_at IS NULL") {
+        let result = match conn.prepare("SELECT email FROM you_users WHERE unsubscribed_at IS NULL AND deleted_at IS NULL") {
             Ok(mut stmt) => stmt.query_map([], |r| r.get::<_, String>(0))
                 .map(|it| it.filter_map(|r| r.ok()).collect::<Vec<_>>())
                 .unwrap_or_default(),
@@ -51814,7 +51814,7 @@ async fn admin_chronicle_vote_announce(
         if include_you {
             let mut s2 = match conn.prepare(
                 "SELECT LOWER(email) FROM you_users
-                 WHERE unsubscribed_at IS NULL
+                 WHERE unsubscribed_at IS NULL AND deleted_at IS NULL
                    AND LOWER(email) NOT IN (?, ?)
                    AND LOWER(email) NOT IN (SELECT LOWER(email) FROM mu_purchases WHERE session_id LIKE 'cs_live_%')"
             ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db you").into_response() };
@@ -63054,7 +63054,7 @@ async fn council_vote(
     let conn = db.lock().unwrap();
     // Verify the voter is MA Council (= owns at least one MA piece)
     let voter_email: Option<String> = conn.query_row(
-        "SELECT email FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        "SELECT email FROM you_users WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
         params![body.token], |r| r.get(0),
     ).ok();
     let Some(email) = voter_email else {
@@ -64260,7 +64260,7 @@ async fn you_claim(
         let conn = db.lock().unwrap();
         let row: Option<(i64, String, String)> = conn.query_row(
             "SELECT id, email, size FROM you_users
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![body.token],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok();
@@ -64516,7 +64516,7 @@ async fn you_style_set(
         let conn = db.lock().unwrap();
         conn.execute(
             "UPDATE you_users SET style_name=?, updated_at=?
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![name, chrono_now(), body.token],
         ).unwrap_or(0)
     };
@@ -64534,7 +64534,7 @@ async fn you_taste_update(
         let conn = db.lock().unwrap();
         let row: Option<(i64, String, Option<String>, Option<String>)> = conn.query_row(
             "SELECT id, email, slug, display_name FROM you_users
-             WHERE token=? AND unsubscribed_at IS NULL",
+             WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![body.token],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         ).ok();
@@ -64860,7 +64860,7 @@ async fn you_admin_backfill(
             "SELECT id, email, taste_json, slug, trial_end_at, COALESCE(lifetime_free,0),
                     created_at, style_name, subscription_status, subscription_until
              FROM you_users
-             WHERE unsubscribed_at IS NULL"
+             WHERE unsubscribed_at IS NULL AND deleted_at IS NULL"
         ) { Ok(s) => s, Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map([], |r| Ok((
             r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?,
@@ -64936,7 +64936,7 @@ async fn you_admin_email_today(
             "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug, u.token
              FROM you_designs d JOIN you_users u ON u.id = d.user_id
              WHERE d.day=? AND d.gen_status='ready'
-               AND u.unsubscribed_at IS NULL
+               AND u.unsubscribed_at IS NULL AND u.deleted_at IS NULL
                AND length(coalesce(u.email,''))>3"
         ) { Ok(s)=>s, Err(_)=>return (StatusCode::INTERNAL_SERVER_ERROR, "db").into_response() };
         stmt.query_map(params![day], |r| Ok((
@@ -65036,6 +65036,181 @@ async fn you_unsubscribe(
         return (StatusCode::NOT_FOUND, "invalid token").into_response();
     }
     Json(serde_json::json!({"ok": true})).into_response()
+}
+
+// ── Self-service account deletion (2026-09-17) ──────────────────────────────
+//
+// /you は毎日Tシャツ案を描いて公開ページ (wearmu.com/<slug>) まで作る。
+// 「投稿したやつを自分で消したい」に応えるため、本人がトークン 1 つで
+// 自分の公開物を消せる口を用意する。unsubscribed_at(配信停止)とは別物。
+//
+// 消すもの(即時): メールアドレス / 好み(taste_json) / 表示名 / 配送住所 /
+//   Stripe id / slug(公開ページ URL) / 生成画像の R2 実体
+// 残すもの: you_users 行・you_designs 行の骨格(id, day, day_num, status)
+//   → 注文・発送・返金・購読の証跡を壊さないため。メールは email_hash のみ。
+#[derive(Deserialize)]
+struct YouDeleteBody {
+    token: String,
+    /// Optional second confirmation from the UI ("DELETE" typed by hand).
+    #[serde(default)]
+    confirm: Option<String>,
+}
+
+async fn you_delete_account(
+    State(db): State<Db>,
+    Json(body): Json<YouDeleteBody>,
+) -> impl IntoResponse {
+    let token = body.token.trim();
+    if token.is_empty() {
+        return (StatusCode::BAD_REQUEST, "token required").into_response();
+    }
+    let confirm = body.confirm.as_deref().unwrap_or("").trim().to_ascii_uppercase();
+    if confirm != "DELETE" {
+        return (StatusCode::BAD_REQUEST,
+            "confirm required: send {\"confirm\":\"DELETE\"} to erase the account")
+            .into_response();
+    }
+
+    let now = chrono_now();
+    // 1. Resolve the account. Already-deleted tokens are rejected (idempotent
+    //    for the user, but we don't re-scrub / don't leak whether it existed).
+    let row: Option<(i64, String, Option<String>)> = {
+        let conn = db.lock().unwrap();
+        conn.query_row(
+            "SELECT id, email, slug FROM you_users
+             WHERE token=? AND deleted_at IS NULL",
+            params![token],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?)),
+        ).ok()
+    };
+    let (uid, email, old_slug) = match row {
+        Some(v) => v,
+        None => return (StatusCode::NOT_FOUND,
+            "invalid token or already deleted").into_response(),
+    };
+    let email_hash = sha256_hex_of_str(&format!("you-delete:{}", email.to_lowercase()));
+
+    // 2. Collect the R2 keys of this user's designs BEFORE nulling the URL
+    //    columns, so the images themselves disappear too (the public page and
+    //    the /api/you/design/:id/image.png route both 404 afterwards).
+    let r2_keys: Vec<String> = {
+        let conn = db.lock().unwrap();
+        let mut keys = Vec::new();
+        if let Ok(mut st) = conn.prepare(
+            "SELECT image_url, print_url FROM you_designs WHERE user_id=?",
+        ) {
+            if let Ok(rows) = st.query_map(params![uid], |r| {
+                Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+            }) {
+                for r in rows.flatten() {
+                    for u in [r.0, r.1] {
+                        if let Some(u) = u {
+                            if let Some(k) = r2_key_from_url(&u) { keys.push(k); }
+                        }
+                    }
+                }
+            }
+        }
+        keys
+    };
+
+    // 3. Scrub identifiers + free the slug. The row stays (audit trail).
+    let (designs_scrubbed, signals_deleted, feedback_deleted) = {
+        let conn = db.lock().unwrap();
+        let d = conn.execute(
+            "UPDATE you_designs
+                SET name='', prompt='', seed='', image_url=NULL, image_bytes=NULL,
+                    image_mime=NULL, print_url=NULL, print_bytes=NULL, print_mime=NULL,
+                    gen_status='deleted', gen_error=NULL, updated_at=?
+              WHERE user_id=?",
+            params![now, uid],
+        ).unwrap_or(0);
+        let s = conn.execute("DELETE FROM you_signals WHERE user_id=?", params![uid]).unwrap_or(0);
+        let f = conn.execute("DELETE FROM you_feedback WHERE user_id=?", params![uid]).unwrap_or(0);
+        (d, s, f)
+    };
+    {
+        let conn = db.lock().unwrap();
+        let _ = conn.execute("DELETE FROM mypage_sessions WHERE email=?", params![email]);
+        let _ = conn.execute("DELETE FROM mypage_login_tokens WHERE email=?", params![email]);
+        let _ = conn.execute(
+            "UPDATE you_users
+                SET email=?, email_hash=?, slug=NULL, display_name=NULL,
+                    taste_json='{}', size='S', shipping_address_json=NULL,
+                    stripe_customer_id=NULL, stripe_subscription_id=NULL,
+                    subscription_status=NULL, subscription_until=NULL,
+                    style_name=NULL,
+                    unsubscribed_at=COALESCE(unsubscribed_at, ?),
+                    deleted_at=?, updated_at=?
+              WHERE id=?",
+            params![
+                format!("deleted+{}@invalid", uid),
+                email_hash,
+                now, now, now, uid,
+            ],
+        );
+    }
+
+    // 4. Best-effort R2 object removal. Failure is logged, not fatal — the DB
+    //    no longer points at these keys, so nothing renders them anyway.
+    let mut r2_deleted = 0usize;
+    let mut r2_failed = 0usize;
+    for k in &r2_keys {
+        match r2_delete_object(k).await {
+            Ok(true) => r2_deleted += 1,
+            _ => r2_failed += 1,
+        }
+    }
+
+    eprintln!("[you] account deleted uid={} designs={} r2_deleted={} r2_failed={}",
+        uid, designs_scrubbed, r2_deleted, r2_failed);
+
+    Json(serde_json::json!({
+        "ok": true,
+        "deleted_at": now,
+        "slug_released": old_slug,
+        "designs_scrubbed": designs_scrubbed,
+        "signals_deleted": signals_deleted,
+        "feedback_deleted": feedback_deleted,
+        "images_deleted": r2_deleted,
+        "images_failed": r2_failed,
+        "note": "公開ページとメールアドレスは即時消去。注文・配送・返金の記録は保持されます。",
+    })).into_response()
+}
+
+/// Pull the R2 object key out of a stored public URL.
+/// `https://mockups.wearmu.com/you/123.png` → `you/123.png`.
+fn r2_key_from_url(url: &str) -> Option<String> {
+    let u = url.trim();
+    if u.is_empty() { return None; }
+    let after = match u.split_once("://") {
+        Some((_, rest)) => rest,
+        None => u,
+    };
+    let path = match after.find('/') {
+        Some(i) => &after[i + 1..],
+        None => return None,
+    };
+    let path = path.split('?').next().unwrap_or(path);
+    if path.is_empty() || path.contains("..") { return None; }
+    Some(path.to_string())
+}
+
+/// Delete one object from R2 (S3-compatible). Returns Ok(false) when R2 is
+/// not configured — callers treat that as "nothing to do", not an error.
+async fn r2_delete_object(key: &str) -> Result<bool, String> {
+    let cfg = match r2_config() { Some(c) => c, None => return Ok(false) };
+    match cfg.bucket.delete_object(key).await {
+        Ok(r) => {
+            let code = r.status_code();
+            // 404 = already gone; that still counts as "not visible".
+            Ok(code == 200 || code == 204 || code == 404)
+        }
+        Err(e) => {
+            eprintln!("[r2_delete_object] {} err: {}", key, e);
+            Err(format!("{e}"))
+        }
+    }
 }
 
 // ── Slug / share page ────────────────────────────────────────────────────────
@@ -65142,7 +65317,7 @@ async fn you_slug_set(
         "SELECT id FROM you_users WHERE slug=?", params![slug], |r| r.get(0),
     ).ok();
     let me: Option<i64> = conn.query_row(
-        "SELECT id FROM you_users WHERE token=? AND unsubscribed_at IS NULL",
+        "SELECT id FROM you_users WHERE token=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
         params![body.token], |r| r.get(0),
     ).ok();
     let me = match me {
@@ -65236,7 +65411,7 @@ async fn slug_or_static(
         let conn = db.lock().unwrap();
         conn.query_row(
             "SELECT id, email, display_name FROM you_users
-             WHERE slug=? AND unsubscribed_at IS NULL",
+             WHERE slug=? AND unsubscribed_at IS NULL AND deleted_at IS NULL",
             params![slug_lo],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).ok()
@@ -69959,6 +70134,17 @@ async fn main() {
     // says so). This counter enforces that — 0 = can still change, >=1 = locked.
     let _ = conn.execute(
         "ALTER TABLE you_users ADD COLUMN slug_changes INTEGER NOT NULL DEFAULT 0", []);
+    // Self-service account deletion (2026-09-17). `deleted_at` = the user
+    // pressed "delete my account" themselves via POST /api/you/delete.
+    // Distinct from `unsubscribed_at` (mail opt-out only, data kept).
+    // On delete we scrub identifiers (email / taste / address / Stripe ids)
+    // and free the slug so the public page /<slug> 404s immediately, but we
+    // KEEP the row + its designs so orders / shipping / refund records stay
+    // auditable. See you_delete_account().
+    let _ = conn.execute(
+        "ALTER TABLE you_users ADD COLUMN deleted_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE you_users ADD COLUMN email_hash TEXT", []);
 
     // Backfill: every existing you_user gets a random slug if missing
     {
@@ -70808,6 +70994,7 @@ async fn main() {
         .route("/api/you/feedback", post(you_feedback))
         .route("/api/you/claim", post(you_claim))
         .route("/api/you/unsubscribe", post(you_unsubscribe))
+        .route("/api/you/delete", post(you_delete_account))
         .route("/api/you/design/:id/image.png", get(you_image))
         .route("/api/you/design/:id/image", get(you_image))
         .route("/api/you/design/:id/print.png", get(you_print_image))
@@ -81226,7 +81413,7 @@ async fn run_you_daily_cron(db: Db) {
             "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug, u.token
              FROM you_designs d JOIN you_users u ON u.id = d.user_id
              WHERE d.day=? AND d.gen_status='ready'
-               AND u.unsubscribed_at IS NULL
+               AND u.unsubscribed_at IS NULL AND u.deleted_at IS NULL
                AND length(coalesce(u.email,''))>3
                AND COALESCE(d.daily_email_sent_at,'')=''"
         ) {
@@ -81235,7 +81422,7 @@ async fn run_you_daily_cron(db: Db) {
                 "SELECT d.id, u.email, d.day_num, d.name, d.prompt, u.slug, u.token
                  FROM you_designs d JOIN you_users u ON u.id = d.user_id
                  WHERE d.day=? AND d.gen_status='ready'
-                   AND u.unsubscribed_at IS NULL
+                   AND u.unsubscribed_at IS NULL AND u.deleted_at IS NULL
                    AND length(coalesce(u.email,''))>3"
             ) {
                 Ok(s) => s,
