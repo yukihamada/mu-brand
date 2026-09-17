@@ -6028,7 +6028,8 @@ pub async fn admin_enrich_desc(
              Rules:\n\
              - Keep the existing title text at the start, then add concrete detail.\n\
              - Describe what the design depicts and who would enjoy wearing it.\n\
-             - Mention it is made to order from one piece only if natural.\n\
+             - Apparel is counted in 着 (1着から受注生産), stickers/mugs/posters in 枚, \
+               songs and digital items in 曲 or 点. NEVER write 1個 or 1つ for apparel.\n\
              - NEVER invent: review scores, sales ranks, scarcity/limited counts, discounts, \
                delivery dates, materials, sizes, or celebrity/brand endorsements.\n\
              - No emoji, no hashtags, no line breaks. Plain Japanese text only.\n\
