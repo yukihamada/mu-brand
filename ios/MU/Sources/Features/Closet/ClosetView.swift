@@ -40,11 +40,12 @@ struct AuthView: View {
                     .textContentType(.emailAddress)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
-                    .disabled(codeSent)
+                    .disabled(codeSent || busy)
                 if codeSent {
                     TextField(String(localized: "auth.code"), text: $code)
                         .keyboardType(.numberPad)
                         .textContentType(.oneTimeCode)
+                        .disabled(busy)
                 }
             }
             Section {
@@ -66,6 +67,7 @@ struct AuthView: View {
                         error = nil
                     }
                     .font(.footnote)
+                    .disabled(busy)
                 }
             }
             if let error {
@@ -75,14 +77,18 @@ struct AuthView: View {
     }
 
     private func submit() async {
+        guard !busy else { return }
+        let submittedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        let submittedCode = code.trimmingCharacters(in: .whitespacesAndNewlines)
         busy = true
         defer { busy = false }
         do {
             if codeSent {
-                let key = try await MUAPI.verify(email: email, code: code)
-                session.logIn(email: email, apiKey: key)
+                let key = try await MUAPI.verify(email: submittedEmail, code: submittedCode)
+                session.logIn(email: submittedEmail, apiKey: key)
             } else {
-                try await MUAPI.register(email: email)
+                try await MUAPI.register(email: submittedEmail)
+                email = submittedEmail
                 codeSent = true
             }
             error = nil

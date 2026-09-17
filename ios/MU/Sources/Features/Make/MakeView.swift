@@ -99,6 +99,7 @@ struct MakeView: View {
                                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
                                 .focused($promptFocused)
                                 .disabled(isMaking)
+                                .accessibilityIdentifier("make.prompt")
                             // 声で作る
                             Button {
                                 Task {
@@ -136,7 +137,10 @@ struct MakeView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .foregroundStyle(.black)
+                        .accessibilityIdentifier("make.create")
                         .disabled(isMaking || !kindsLoaded || !selectedKindAvailable || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Text(String(localized: "make.creationCost"))
+                            .font(.caption).foregroundStyle(.secondary)
 
                         // このお題を、誰かにデザインしてもらう。
                         Button(action: { startDesignRequest() }) {
@@ -198,6 +202,7 @@ struct MakeView: View {
                 Analytics.track("view_make")
                 await loadKinds()
                 guard !Task.isCancelled else { return }
+                consumePendingPrompt()
                 for variant in variants where variant.previewPending || !variant.result.isLive {
                     startPolling(sku: variant.id)
                 }
@@ -212,13 +217,15 @@ struct MakeView: View {
                 if rec { voiceBasePrompt = prompt.isEmpty ? "" : prompt + " " }
             }
             // オンボーディングからの「最初の一着」を受け取り、その場で自動生成。
-            // 受け取りは onChange の1箇所のみ(onAppear と二重に拾うと make が2回
-            // 走り課金が二重になる)。make() 冒頭にも二重発火ガードを置く。
-            .onChange(of: app.pendingPrompt) { _, new in
-                guard let p = new else { return }
-                app.pendingPrompt = nil
-                prompt = p
-                make()
+            // Consume once, including a prompt set before this view/catalog was ready.
+            .onChange(of: app.pendingPrompt, initial: true) { consumePendingPrompt() }
+            .onChange(of: app.selectedTab) { consumePendingPrompt() }
+            // Signing out, or switching to another account, must not leave the
+            // previous account's designs, in-flight work or pending intent behind.
+            // The first login (nil -> an email) is deliberately excluded: the auth
+            // sheet resumes that intent on dismissal.
+            .onChange(of: session.identity) { previous, next in
+                discardStateIfAccountChanged(from: previous, to: next)
             }
             .sheet(isPresented: $showCheckout) {
                 if let s = currentVariant?.result.checkoutUrl, let url = URL(string: s) {
@@ -253,7 +260,7 @@ struct MakeView: View {
             }) {
                 AuthGateSheet()
             }
-            .onDisappear { cancelWork() }
+            .onDisappear { suspendPresentation() }
         }
     }
 
@@ -571,6 +578,7 @@ struct MakeView: View {
             }
             .buttonStyle(.bordered)
             .disabled(addingVariant || isPolishing || isRemixing)
+            .accessibilityIdentifier("make.another")
 
             Button(String(localized: "make.again")) {
                 resetAll()
@@ -614,6 +622,7 @@ struct MakeView: View {
         let r = v.result
         Text(r.display.uppercased()).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
         Text(r.hook).font(.title3.weight(.medium))
+            .accessibilityIdentifier("make.result.\(r.sku)")
         Text(kinds.first { $0.kind == r.kind }?.label ?? r.kind)
             .font(.caption).foregroundStyle(.secondary)
 
@@ -626,6 +635,11 @@ struct MakeView: View {
                     Button(String(localized: "make.retry")) { startPolling(sku: r.sku) }.font(.caption)
                 }
             }
+            .accessibilityIdentifier("make.previewPending")
+        } else {
+            Text(String(localized: "make.preview.reference"))
+                .font(.caption2).foregroundStyle(.secondary)
+                .accessibilityIdentifier("make.previewReady")
         }
 
         if let s = v.score { scoreView(s) }
@@ -997,7 +1011,7 @@ struct MakeView: View {
         authorize(.variation(input))
     }
 
-    private func performVariation(_ input: MakeInput, automatic: Bool = false) {
+    private func performVariation(_ input: MakeInput) {
         guard !addingVariant, !variants.isEmpty else { return }
         guard validateKind(input.kind) else { return }
         let generation = scope.generation
@@ -1012,7 +1026,7 @@ struct MakeView: View {
                 Analytics.track("make_variation", ["sku": r.sku])
                 withAnimation(.spring(response: 0.5, dampingFraction: 0.7)) {
                     variants.append(DesignVariant(result: r))
-                    if !automatic { current = variants.count - 1 }
+                    current = variants.count - 1
                 }
                 addingVariant = false
                 startPolling(sku: r.sku)
@@ -1037,6 +1051,32 @@ struct MakeView: View {
         _ = scope.begin(key)
     }
 
+    /// A design belongs to the account that created it. Switching accounts, or
+    /// signing out, must clear it and any work still in flight so a late response
+    /// from the old account cannot land on the new one's screen.
+    /// The first login (nil -> an email) is excluded: the auth sheet resumes the
+    /// pending intent on dismissal, and that intent must survive.
+    private func discardStateIfAccountChanged(from previous: String?, to next: String?) {
+        guard let previous, previous != next else { return }
+        resetAll()
+        prompt = ""
+        showCheckout = false
+        showGift = false
+        showAuthGate = false
+        showPriceEdit = false
+        askEmail = false
+        requestEmail = ""
+    }
+
+    private func suspendPresentation() {
+        voice.stop()
+        // POSTs may already have created/charged a design. Keep their result when
+        // switching tabs; only stop read-only previews and presentation work.
+        for key in Array(workTasks.keys) where key.hasPrefix("peek:") || key == "review" {
+            cancelOperation(key)
+        }
+    }
+
     private func cancelWork() {
         scope.reset()
         workTasks.values.forEach { $0.cancel() }
@@ -1059,7 +1099,7 @@ struct MakeView: View {
 
     // 作った直後に1回だけ「通知オン?」を促す (ドロップ/売れた通知に繋ぐ)。
     private func maybePromptPush() {
-        guard !didPromptPush else { return }
+        guard !didPromptPush, app.selectedTab == AppState.Tab.make else { return }
         didPromptPush = true
         Task {
             if await PushManager.status() == .notDetermined {
@@ -1075,7 +1115,7 @@ struct MakeView: View {
         let key = "mu.makeSuccessCount"
         let n = UserDefaults.standard.integer(forKey: key) + 1
         UserDefaults.standard.set(n, forKey: key)
-        guard [2, 8, 25].contains(n) else { return }
+        guard [2, 8, 25].contains(n), app.selectedTab == AppState.Tab.make else { return }
         let generation = scope.generation
         let operation = scope.begin("review")
         workTasks["review"] = Task {
@@ -1084,6 +1124,14 @@ struct MakeView: View {
             requestReview()
             Analytics.track("review_prompt", ["at": "after_make", "n": n])
         }
+    }
+
+    private func consumePendingPrompt() {
+        guard kindsLoaded, app.selectedTab == AppState.Tab.make, !isMaking,
+              let next = app.pendingPrompt else { return }
+        app.pendingPrompt = nil
+        prompt = next
+        make()
     }
 
     private func make() {
@@ -1117,6 +1165,7 @@ struct MakeView: View {
     private func performMake(_ input: MakeInput) {
         guard !isMaking, !input.prompt.isEmpty else { return }
         guard validateKind(input.kind) else { return }
+        voice.stop()
         promptFocused = false
         errorMessage = nil
         resetAll()
@@ -1141,7 +1190,8 @@ struct MakeView: View {
                 maybePromptPush()
                 maybeRequestReview()
                 startPolling(sku: r.sku)
-                performVariation(input, automatic: true)
+                // Another idea consumes another creation (and can debit credit).
+                // Generate it only after the explicit "Make another idea" action.
             } catch APIError.needRegister {
                 guard accepts(generation, "make", operation) else { return }
                 isMaking = false
@@ -1156,6 +1206,7 @@ struct MakeView: View {
 
     // One polling task per SKU, bounded at five minutes (50 x 6 seconds).
     private func startPolling(sku: String) {
+        guard app.selectedTab == AppState.Tab.make else { return }
         let key = "peek:\(sku)"
         cancelOperation(key)
         guard let i = variantIndex(sku) else { return }
@@ -1209,6 +1260,19 @@ private struct AuthGateSheet: View {
             }
             .padding([.horizontal, .top])
             AuthView()
+                #if DEBUG
+                // Offline only: completes the real AuthGate flow in memory, so a UI
+                // test can exercise nil -> email without a Keychain write, an OTP or
+                // any network login.
+                .safeAreaInset(edge: .bottom) {
+                    if MakeUITestFixture.enabled {
+                        Button("fixture: sign in") {
+                            MakeUITestFixture.signInAs("first@example.invalid", session: session)
+                        }
+                        .accessibilityIdentifier("fixture.authSignIn")
+                    }
+                }
+                #endif
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button(String(localized: "make.cancel")) { dismiss() }

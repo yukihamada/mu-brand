@@ -1,4 +1,5 @@
 "tab.live" = "ライブ";
+"feed.retry" = "読み込みを再試行";
 "tab.make" = "作る";
 "tab.shop" = "ショップ";
 "tab.scan" = "スキャン";
@@ -114,7 +115,8 @@
 "pdp.openWeb" = "Webで開く（ギフト・詳細）";
 
 "make.registerGate.title" = "作るには登録が必要です";
-"make.registerGate.subtitle" = "無断使用や著作権侵害を防ぐためです。1人1日5点まで作れます。";
+"make.registerGate.subtitle" = "作品をアカウントに保存するためにログインします。1日3枚まで無料、以降は1枚100円です。";
+"make.creationCost" = "1日3枚まで無料、以降1枚100円。追加案・リミックスも1枚に数えます。MUクレジット残高がある場合は使用されます。";
 "auth.lead" = "メールアドレスに6桁のコードを送ります。コードを入れるだけでログイン完了。パスワードはありません。";
 "auth.email" = "メールアドレス";
 "auth.code" = "6桁コード";

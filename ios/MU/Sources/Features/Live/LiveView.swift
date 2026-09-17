@@ -2,31 +2,34 @@ import SwiftUI
 
 // 🔥 Live — 毎時生成のドロップフィード。新着順 + 次の一着カウントダウン。
 struct LiveView: View {
-    @State private var products: [FeedProduct] = []
-    @State private var page = 1
+    @StateObject private var feed = ProductFeed()
     @State private var kind: ProductKind = .all
-    @State private var loading = false
-    @State private var reachedEnd = false
-    @State private var error: String?
-    @State private var loadedOnce = false
     @State private var showScan = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(spacing: 16) {
-                    LatestDropBar(products: products)
+                    LatestDropBar(products: feed.products)
                     KindChips(selected: $kind)
-                    ForEach(products) { p in
+                    ForEach(feed.products) { p in
                         NavigationLink(value: p) { DropCard(product: p) }
                             .buttonStyle(.plain)
-                            .onAppear { if p == products.last { Task { await loadMore() } } }
+                            .onAppear {
+                                if p == feed.products.last, feed.error == nil {
+                                    Task { await feed.loadMore() }
+                                }
+                            }
                     }
-                    if loading { ProgressView().padding() }
-                    if !loading && loadedOnce && products.isEmpty {
+                    if feed.loading { ProgressView().padding() }
+                    if feed.error != nil {
+                        Button(String(localized: "feed.retry")) { Task { await feed.loadMore() } }
+                            .accessibilityIdentifier("feed.retry")
+                    }
+                    if !feed.loading && feed.loadedOnce && feed.products.isEmpty {
                         ContentUnavailableView(
-                            error == nil ? String(localized: "live.empty") : String(localized: "shop.error"),
-                            systemImage: error == nil ? "flame" : "wifi.exclamationmark"
+                            feed.error == nil ? String(localized: "live.empty") : String(localized: "shop.error"),
+                            systemImage: feed.error == nil ? "flame" : "wifi.exclamationmark"
                         )
                         .padding(.top, 60)
                     }
@@ -45,7 +48,7 @@ struct LiveView: View {
             }
             .refreshable { await reload() }
             .task {
-                if products.isEmpty { await reload() }
+                if feed.products.isEmpty { await reload() }
                 Analytics.track("view_live")
             }
             .onChange(of: kind) { Task { await reload() } }
@@ -53,29 +56,7 @@ struct LiveView: View {
     }
 
     private func reload() async {
-        page = 1
-        reachedEnd = false
-        await fetch(replace: true)
-    }
-
-    private func loadMore() async {
-        guard !loading, !reachedEnd else { return }
-        page += 1
-        await fetch(replace: false)
-    }
-
-    private func fetch(replace: Bool) async {
-        loading = true
-        defer { loading = false; loadedOnce = true }
-        do {
-            let new = try await MUAPI.feed(page: page, kind: kind)
-            if new.isEmpty { reachedEnd = true }
-            products = replace ? new : products + new
-            error = nil
-        } catch {
-            self.error = error.localizedDescription
-            if replace { products = [] }
-        }
+        await feed.reload(kind: kind)
     }
 }
 

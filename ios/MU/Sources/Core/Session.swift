@@ -6,6 +6,14 @@ import Security
 final class Session: ObservableObject {
     @Published var email: String?
     @Published var isLoggedIn = false
+    /// Identifies *which* account is signed in. Results and in-flight work belong to
+    /// one identity only; when it changes, screens must drop the previous account's
+    /// state instead of showing it to the next user.
+    @Published private(set) var identity: String?
+    /// Rotated on every identity change, including B -> A. Comparing identities as
+    /// strings would accept a reply from an earlier visit to the same account, so
+    /// in-flight work captures this generation and compares it instead.
+    @Published private(set) var identityGeneration = UUID()
 
     private static let service = "com.wearmu.mu.session"
     private static let keyAccount = "api_key"
@@ -16,11 +24,21 @@ final class Session: ObservableObject {
     private static var cachedKey: String?? = nil  // nil=未読込, .some(nil)=未ログイン
 
     init() {
+        #if DEBUG
+        if MakeUITestFixture.enabled {
+            Self.cachedKey = MakeUITestFixture.startsSignedOut ? .some(nil) : .some("offline-fixture")
+            email = MakeUITestFixture.startsSignedOut ? nil : "fixture@example.invalid"
+            isLoggedIn = !MakeUITestFixture.startsSignedOut
+            identity = MakeUITestFixture.startsSignedOut ? nil : "fixture@example.invalid"
+            return
+        }
+        #endif
         let key = Self.keychainRead(Self.keyAccount)
         Self.cachedKey = .some(key)
         if let key, !key.isEmpty {
             isLoggedIn = true
             email = Self.keychainRead(Self.emailAccount)
+            identity = email
         }
     }
 
@@ -40,6 +58,7 @@ final class Session: ObservableObject {
         Self.cachedKey = .some(apiKey)
         self.email = email
         self.isLoggedIn = true
+        setIdentity(email)
     }
 
     func logOut() {
@@ -48,7 +67,46 @@ final class Session: ObservableObject {
         Self.cachedKey = .some(nil)
         email = nil
         isLoggedIn = false
+        setIdentity(nil)
     }
+
+    // MARK: - Offline UI-test account switching (DEBUG + fixture only)
+
+    /// Unit tests cannot set a launch environment variable, so they opt in through
+    /// `enableFixtureForUnitTest()`. Still DEBUG-only and memory-only: no Keychain write.
+    #if DEBUG
+    private var _fixtureOverride = false
+    private var fixtureOverride: Bool { _fixtureOverride || MakeUITestFixture.enabled }
+    func enableFixtureForUnitTest() { _fixtureOverride = true }
+    #endif
+
+    /// Publishes the new identity and rotates its generation, so work started under
+    /// a previous generation is rejected even when the email is identical (A -> B -> A).
+    private func setIdentity(_ next: String?) {
+        identity = next
+        identityGeneration = UUID()
+    }
+
+    /// Changes the in-memory identity without touching the Keychain, so a UI test
+    /// can exercise sign-out and account switching offline. Never compiled into
+    /// Release and never available to a normal device login.
+    #if DEBUG
+    func logInForUITest(email: String) {
+        guard fixtureOverride else { return }
+        Self.cachedKey = .some("offline-fixture-\(email)")
+        self.email = email
+        isLoggedIn = true
+        setIdentity(email)
+    }
+
+    func logOutForUITest() {
+        guard fixtureOverride else { return }
+        Self.cachedKey = .some(nil)
+        email = nil
+        isLoggedIn = false
+        setIdentity(nil)
+    }
+    #endif
 
     // MARK: - Keychain (kSecClassGenericPassword / AfterFirstUnlockThisDeviceOnly)
 

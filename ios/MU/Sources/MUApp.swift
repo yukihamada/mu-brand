@@ -7,6 +7,12 @@ struct MUApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("hasOnboarded") private var hasOnboarded = false
 
+    init() {
+        #if DEBUG
+        if MakeUITestFixture.enabled { URLProtocol.registerClass(MakeUITestFixture.self) }
+        #endif
+    }
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -26,6 +32,7 @@ struct MUApp: App {
 
 struct RootView: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var session: Session
 
     var body: some View {
         // 順序: ライブ / ショップ / 作る(中央) / スキャン / アカウント。
@@ -47,5 +54,18 @@ struct RootView: View {
                 .tabItem { Label(String(localized: "tab.closet"), systemImage: "person.crop.square") }
                 .tag(AppState.Tab.account)
         }
+        #if DEBUG
+        // Above every tab, so a test can read counters while Make is offscreen.
+        .overlay(alignment: .top) {
+            if MakeUITestFixture.enabled { FixtureCounterProbe() }
+        }
+        // Offline account switching for tests only. Buttons, not a shared file:
+        // the test runner and the app run in separate sandboxes.
+        .overlay(alignment: .top) {
+            if MakeUITestFixture.enabled {
+                FixtureAccountSwitcher().environmentObject(session)
+            }
+        }
+        #endif
     }
 }

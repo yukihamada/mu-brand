@@ -12,6 +12,7 @@
 "live.empty" = "No drops yet. Wait a moment or pull to refresh.";
 "shop.empty" = "Nothing found. Try different words.";
 "shop.error" = "Couldn't load. Pull to refresh.";
+"feed.retry" = "Retry loading";
 
 "make.title" = "Say it. It's made.";
 "make.subtitle" = "Type one line. AI designs it and it lands on the shelf instantly.";
@@ -114,7 +115,8 @@
 "pdp.openWeb" = "Open on web (gift & details)";
 
 "make.registerGate.title" = "Sign up to create";
-"make.registerGate.subtitle" = "This prevents anonymous misuse and copyright abuse. You can create up to 5 pieces per day.";
+"make.registerGate.subtitle" = "Sign in to keep your creations linked to your account. Up to 3 creations per day are free; further creations cost ¥100 each.";
+"make.creationCost" = "3 creations per day are free; then ¥100 each. Another idea or remix also counts as a creation. Available MU credit may be used.";
 "auth.lead" = "We'll email you a 6-digit code. Enter it and you're in — no password.";
 "auth.email" = "Email";
 "auth.code" = "6-digit code";

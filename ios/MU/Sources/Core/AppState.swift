@@ -16,6 +16,11 @@ final class AppState: ObservableObject {
     private var pushObserver: NSObjectProtocol?
 
     init() {
+        #if DEBUG
+        if MakeUITestFixture.enabled {
+            pendingPrompt = ProcessInfo.processInfo.environment["MU_UI_PROMPT"]
+        }
+        #endif
         // 通知タップ(AppDelegate)→ タブ遷移。queue:.main だが @MainActor 隔離を守るため Task で渡す。
         pushObserver = NotificationCenter.default.addObserver(
             forName: .muPushOpen, object: nil, queue: .main

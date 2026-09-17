@@ -30,9 +30,18 @@ struct AgentView: View {
                     }
                 }
                 inputBar
+                Text(String(localized: "make.creationCost"))
+                    .font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
             }
             .navigationTitle(String(localized: "tab.agent"))
             .task { Analytics.track("view_agent") }
+            .onDisappear { voice.stop() }
+            // Every authentication transition, including the first login
+            // (nil -> email), rotates the generation. Clearing on the generation
+            // rather than on the email keeps `sending` from getting stuck: a reply
+            // captured before the change is always rejected, so nothing else can
+            // clear the flag.
+            .onChange(of: session.identityGeneration) { resetForNewIdentity() }
             .onChange(of: voice.transcript) { _, t in if !t.isEmpty { input = voiceBase + t } }
             .onChange(of: voice.isRecording) { _, rec in if rec { voiceBase = input.isEmpty ? "" : input + " " } }
             .sheet(item: Binding(get: { showCheckout.map { IdentifiedURL(url: $0) } },
@@ -124,12 +133,14 @@ struct AgentView: View {
                 .lineLimit(1...4).padding(10)
                 .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 18))
                 .focused($focused).disabled(sending)
+                .accessibilityIdentifier("agent.input")
             Button { Task { await voice.toggle() } } label: {
                 Image(systemName: voice.isRecording ? "waveform.circle.fill" : "mic.circle.fill")
                     .font(.system(size: 30)).foregroundStyle(voice.isRecording ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
             }
             Button { send() } label: { Image(systemName: "arrow.up.circle.fill").font(.system(size: 30)) }
                 .disabled(sending || input.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityIdentifier("agent.send")
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(.bar)
@@ -152,12 +163,19 @@ struct AgentView: View {
         input = ""
         sending = true
         let history = messages.suffix(8).map { ["role": $0.role == .user ? "user" : "assistant", "content": $0.text] }
+        // Snapshot the key and the account at send time. A reply that arrives after
+        // the account changed belongs to the old account and must be discarded.
+        let apiKey = session.apiKey
+        // Generation, not the email: A -> B -> A must not accept an old reply.
+        let sentGeneration = session.identityGeneration
         Task {
             do {
-                let res = try await MUAPI.agentChat(message: text, history: history, apiKey: session.apiKey)
+                let res = try await MUAPI.agentChat(message: text, history: history, apiKey: apiKey)
+                guard await acceptsGeneration(sentGeneration) else { return }
                 Analytics.track("agent_chat", ["action": res.action])
-                await execute(res)
+                await execute(res, apiKey: apiKey, sentGeneration: sentGeneration)
             } catch {
+                guard await acceptsGeneration(sentGeneration) else { return }
                 await MainActor.run {
                     messages.append(ChatMessage(role: .assistant, text: error.localizedDescription))
                     sending = false
@@ -167,7 +185,8 @@ struct AgentView: View {
     }
 
     // 意図に応じて MU アクションを実行(= MCP と同じ操作群)。
-    private func execute(_ res: AgentChatResponse) async {
+    private func execute(_ res: AgentChatResponse, apiKey: String?, sentGeneration: UUID) async {
+        guard await acceptsGeneration(sentGeneration) else { return }
         await MainActor.run { messages.append(ChatMessage(role: .assistant, text: res.reply)) }
         switch res.action {
         case "make":
@@ -176,6 +195,7 @@ struct AgentView: View {
             let kind = res.args?.kind ?? ""
             let royalty = res.args?.royalty ?? 10
             let kinds = (try? await MUAPI.makeKinds()) ?? MakeKindOption.fallback
+            guard await acceptsGeneration(sentGeneration) else { return }
             // Never silently turn an unsupported explicit kind into an auto-picked product.
             guard MakeKindOption.isAvailable(kind, in: kinds) else {
                 await MainActor.run {
@@ -184,21 +204,46 @@ struct AgentView: View {
                 }
                 break
             }
-            if let r = try? await MUAPI.make(prompt: prompt, kind: kind, royalty: royalty, apiKey: session.apiKey) {
+            do {
+                // Snapshot key: never create under a key read after the account changed.
+                let r = try await MUAPI.make(prompt: prompt, kind: kind, royalty: royalty, apiKey: apiKey)
+                guard await acceptsGeneration(sentGeneration) else { return }
                 await MainActor.run { messages.append(ChatMessage(role: .assistant, text: "", product: r)) }
-            } else {
-                await MainActor.run { messages.append(ChatMessage(role: .assistant, text: String(localized: "agent.makeFail"))) }
+            } catch {
+                guard await acceptsGeneration(sentGeneration) else { return }
+                await MainActor.run { messages.append(ChatMessage(role: .assistant, text: error.localizedDescription)) }
             }
         case "sales":
-            if let key = session.apiKey, let s = try? await MUAPI.sales(apiKey: key) {
+            if let key = apiKey, let s = try? await MUAPI.sales(apiKey: key) {
+                guard await acceptsGeneration(sentGeneration) else { return }
                 await MainActor.run { messages.append(ChatMessage(role: .assistant, text: "", sales: s)) }
             } else {
+                guard await acceptsGeneration(sentGeneration) else { return }
                 await MainActor.run { messages.append(ChatMessage(role: .assistant, text: String(localized: "agent.loginNeeded"))) }
             }
         default:
             break
         }
+        guard await acceptsGeneration(sentGeneration) else { return }
         await MainActor.run { sending = false }
+    }
+
+    /// Drops everything owned by the previous identity: transcript, pending
+    /// consent, in-progress send state and voice capture.
+    private func resetForNewIdentity() {
+        voice.stop()
+        voiceBase = ""
+        messages.removeAll()
+        input = ""
+        sending = false
+        showCheckout = nil
+        showAIConsent = false
+    }
+
+    /// Rejects anything started under a previous identity generation. The first
+    /// login (nil -> an email) keeps working because it never had prior state.
+    private func acceptsGeneration(_ sentGeneration: UUID) async -> Bool {
+        await MainActor.run { session.identityGeneration == sentGeneration }
     }
 }
 
