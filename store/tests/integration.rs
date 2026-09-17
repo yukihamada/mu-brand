@@ -163,6 +163,26 @@ fn sitemap_xml_returns_urlset() {
 }
 
 #[test]
+fn original_collection_routes_keep_their_spa_after_homepage_renewal() {
+    let srv = start_server();
+    let http = client();
+    for lang in ["ja", "en"] {
+        let home = http.get(format!("{}/?lang={lang}", srv.base))
+            .send().unwrap().text().unwrap();
+        assert!(home.contains("class=\"mu-storefront\""));
+        assert!(!home.contains("id=\"originals\""));
+        for brand in ["mugen", "ma", "muon"] {
+            let response = http.get(format!("{}/{brand}?lang={lang}", srv.base))
+                .send().unwrap();
+            assert!(response.status().is_success());
+            let html = response.text().unwrap();
+            assert!(html.contains("function initRouter()"), "{brand} must retain its section router");
+            assert!(!html.contains("class=\"mu-storefront\""), "{brand} must not render the generic homepage");
+        }
+    }
+}
+
+#[test]
 fn product_page_unknown_sku_is_404() {
     let srv = start_server();
     let resp = client()

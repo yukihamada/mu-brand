@@ -26154,6 +26154,7 @@ async fn you_active_count(State(db): State<Db>) -> impl IntoResponse {
 /// には正準ドキュメント /llms.txt の本文をそのまま返す（既存挙動への影響ゼロ）。
 async fn home(
     State(db): State<Db>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
@@ -26185,7 +26186,13 @@ async fn home(
         // Prefer en only when the client clearly wants en and not ja.
         al.contains("en") && !al.contains("ja")
     };
-    storefront::home(State(db), is_en).await
+    // These routes use the original SPA's section router and auction UI.
+    // Sending them to the purchase-first homepage hides all three collections.
+    if matches!(uri.path(), "/mugen" | "/ma" | "/muon") {
+        index(State(db), is_en).await
+    } else {
+        storefront::home(State(db), is_en).await
+    }
 }
 
 async fn index(State(db): State<Db>, is_en: bool) -> Response {
