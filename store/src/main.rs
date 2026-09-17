@@ -4,6 +4,7 @@ mod nft;
 mod payments;
 mod jiufight_tokens;
 mod catalog;
+mod prompt_selection;
 mod storefront;
 mod order_contract;
 mod agent_api;

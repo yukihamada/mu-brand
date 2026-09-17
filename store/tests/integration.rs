@@ -87,6 +87,8 @@ fn start_server() -> ServerGuard {
         // Belt-and-braces: keep agents off in case the bin starts any.
         .env("AGENT_KILL_ALL", "1")
         .env("DRY_RUN_ALL", "1")
+        .env("MU_AUTOPILOT", "0")
+        .env("ADMIN_TOKEN", "integration-test-only")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -128,6 +130,48 @@ fn client() -> reqwest::blocking::Client {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .unwrap()
+}
+
+#[test]
+fn prompt_purchase_status_uses_real_schema_and_requires_admin() {
+    use serde_json::{json, Value};
+    let srv = start_server();
+    let http = client();
+    let url = format!("{}/admin/catalog/status", srv.base);
+    assert_eq!(http.get(&url).query(&[("token","wrong-token")]).send().unwrap().status().as_u16(),401);
+    let read_status = || -> Value {
+        let response = http.get(&url).query(&[("token","integration-test-only")]).send().unwrap();
+        assert!(response.status().is_success());
+        response.json::<Value>().unwrap()["prompt_selection"].clone()
+    };
+    let status = read_status();
+    assert_eq!(status["minimum_purchase_uu"],4);
+    assert_eq!(status["patterns"].as_array().unwrap().len(),10);
+    for pattern in status["patterns"].as_array().unwrap() {
+        assert_eq!(pattern["purchase_uu"],0);
+        assert_eq!(pattern["adopted"],false);
+    }
+    let conn = rusqlite::Connection::open(srv._db_dir.path().join("products.db")).unwrap();
+    conn.busy_timeout(Duration::from_secs(5)).unwrap();
+    for n in 0..4 {
+        let id = format!("cs_local_fixture_{n}");
+        let session = json!({"id":id,"livemode":true,"amount_total":4900,"payment_status":"paid",
+            "customer_details":{"email":format!("fixture{n}@example.test")},
+            "payment_intent":{"status":"succeeded","latest_charge":{"paid":true,
+                "captured":true,"status":"succeeded","amount_refunded":0,"refunded":false}}});
+        let meta = json!({"prompt_selection":{"experiment":"design-prompts-v1","pattern_id":"minimal"}});
+        let spec = json!({"lines":[{"sku":"fixture","qty":1,"unit_amount":4900,"meta_json":meta.to_string()}]});
+        conn.execute("INSERT INTO catalog_orders(stripe_session_id,payment_status,session_json,checkout_spec_json,amount_jpy,status)
+            VALUES (?,'paid',?,?,4900,'submitted')",rusqlite::params![id,session.to_string(),spec.to_string()]).unwrap();
+    }
+    let status = read_status();
+    assert_eq!(status["patterns"][0]["purchase_uu"],4);
+    assert_eq!(status["patterns"][0]["adopted"],true);
+    assert!(!status.to_string().contains("example.test"));
+    conn.execute("UPDATE catalog_orders SET payment_status='refunded',status='refunded' WHERE stripe_session_id='cs_local_fixture_3'",[]).unwrap();
+    let status = read_status();
+    assert_eq!(status["patterns"][0]["purchase_uu"],3);
+    assert_eq!(status["patterns"][0]["adopted"],false);
 }
 
 #[test]

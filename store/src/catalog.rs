@@ -3585,6 +3585,8 @@ pub async fn generate_one(
         );
     }
 
+    let prompt_selection = crate::prompt_selection::select(&db.lock().unwrap(), seed)?;
+
     // Budget check + reserve the ¥6 Gemini cost up-front. If the call
     // later fails we leave the spend recorded — better to over-report
     // than under-report. The optimizer cron can reconcile later.
@@ -3634,6 +3636,7 @@ pub async fn generate_one(
             brief = theme.prompt_brief, seed = seed,
         )
     };
+    let prompt = prompt_selection.apply(&prompt);
     let img = crate::gemini::call_gemini(&prompt)
         .await
         .map_err(|e| {
@@ -3665,14 +3668,14 @@ pub async fn generate_one(
         // Human-readable description, not "BJJ 黒帯 · T シャツ" — the
         // theme hook is the marketing line a real visitor reads.
         let desc = format!("{} — {}", theme.display, theme.hook);
-        let _ = conn.execute(
+        conn.execute(
             "INSERT INTO catalog_products (
                 sku, brand, label, description_ja, retail_price_jpy,
                 printful_product_id, printful_variant_id, printful_placement,
                 printful_print_w, printful_print_h,
                 design_file, mockup_main_file, mockup_url_external,
-                is_active, sort_order
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                is_active, sort_order, meta_json
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rusqlite::params![
                 &sku,
                 "auto",
@@ -3689,8 +3692,9 @@ pub async fn generate_one(
                 &url,
                 1,
                 100,
+                prompt_selection.metadata(),
             ],
-        );
+        ).map_err(|e| format!("save generated product: {e}"))?;
         let _ = conn.execute(
             "UPDATE catalog_gen_jobs
              SET status='completed', sku=?, spent_jpy=?, completed_at=datetime('now')
@@ -6188,6 +6192,10 @@ pub async fn admin_nl_add(
                 kind.to_uppercase().replace('_', "-"), seed)
     };
 
+    let prompt_selection = match crate::prompt_selection::select(&db.lock().unwrap(), &seed) {
+        Ok(selection) => selection,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    };
     // Direct-insert (skip generate_one's strict theme lookup since this
     // is an ad-hoc one) with retail_jpy override. The 4 background image
     // tasks fire the same way.
@@ -6225,6 +6233,7 @@ pub async fn admin_nl_add(
             theme_brief, seed
         )
     };
+    let design_prompt = prompt_selection.apply(&design_prompt);
     let img = match crate::gemini::call_gemini(&design_prompt).await {
         Ok(i) => i,
         Err(e) => return (StatusCode::BAD_GATEWAY, format!("gemini image: {}", e)).into_response(),
@@ -6255,14 +6264,14 @@ pub async fn admin_nl_add(
             Some(c) if !c.is_empty() => format!("nl_add_collab_{}", c.to_lowercase()),
             _ => "nl_add".to_string(),
         };
-        let _ = conn.execute(
+        if let Err(e) = conn.execute(
             "INSERT INTO catalog_products (
                 sku, brand, label, description_ja, retail_price_jpy,
                 printful_product_id, printful_variant_id, printful_placement,
                 printful_print_w, printful_print_h,
                 design_file, mockup_main_file, mockup_url_external,
-                is_active, sort_order, status, fulfillment_route, legacy_source
-             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                is_active, sort_order, status, fulfillment_route, legacy_source, meta_json
+             ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             rusqlite::params![
                 &sku, &brand_slug_raw, desc, desc, retail_jpy,
                 spec.printful_product_id, spec.printful_variant_id, spec.placement,
@@ -6272,8 +6281,11 @@ pub async fn admin_nl_add(
                 "live",
                 route_for_kind(kind),
                 &legacy,
+                prompt_selection.metadata(),
             ],
-        );
+        ) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("save generated product: {e}")).into_response();
+        }
     }
     // Spawn the 3 background image tasks (transparent / Printful mockup /
     // lifestyle) so the SKU lands fully-loaded in ~60-90s.
@@ -11452,6 +11464,12 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let seed = format!("mk{:08x}", rand::random::<u32>());
     let slug = { let s: String = display.chars().filter(|c| c.is_ascii_alphanumeric()).take(12).collect::<String>().to_uppercase(); if s.is_empty() { "MAKE".to_string() } else { s } };
     let sku = format!("MAKE-{}-{}-{}", slug, kind.to_uppercase().replace('_', "-"), seed);
+    let prompt_selection = if user_design_url.is_none() {
+        match crate::prompt_selection::select(&db.lock().unwrap(), &seed) {
+            Ok(selection) => Some(selection),
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({"ok":false,"error":e}))).into_response(),
+        }
+    } else { None };
     // ローカル生成・持ち込み画像は API 課金ゼロ → 予算台帳は ¥0 で記録だけ残す(観測のため)。
     let gen_cost = if user_design_url.is_some() || use_local { 0 } else { GEMINI_IMAGE_COST_JPY };
     let charged = { let conn = db.lock().unwrap(); spend_or_refuse(&conn, "ai_image", gen_cost, &format!("public_make sku={} engine={}", sku, if user_design_url.is_some() { "upload" } else if use_local { "local" } else { "gemini" }), Some(&sku)) };
@@ -11537,6 +11555,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                  Variation key: {}.",
                 theme_brief, seed)
         };
+        let design_prompt = prompt_selection.as_ref().expect("generated design selection").apply(&design_prompt);
         let img = match if use_local { local_gen_image(&design_prompt).await } else { crate::gemini::call_gemini(&design_prompt).await } {
             Ok(i) => i,
             Err(e) => return (StatusCode::BAD_GATEWAY, axum::Json(serde_json::json!({"ok":false,"error":format!("デザイン生成に失敗: {}", e)}))).into_response(),
@@ -11666,6 +11685,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
     let edit_token = format!("{:016x}", rand::random::<u64>());
     let meta_json = {
         let mut m = serde_json::Map::new();
+        if let Some(selection) = &prompt_selection { m.insert("prompt_selection".into(), selection.attribution()); }
         if let Some(v) = ab_variant { m.insert("make_variant".into(), serde_json::Value::from(v)); }
         if use_local { m.insert("gen_engine".into(), serde_json::Value::from("local")); }
         if let Some(vis) = ab_visitor { m.insert("make_visitor".into(), serde_json::Value::from(vis)); }
@@ -11710,7 +11730,7 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
         let desc = if let Some(k) = &sound_oto_key {
             format!("{}\n♪ 着ると、この曲が鳴る → https://mu.koe.live/oto.html?s={}", desc, k)
         } else { desc };
-        let _ = conn.execute(
+        if let Err(e) = conn.execute(
             "INSERT INTO catalog_products (
                 sku, brand, label, description_ja, retail_price_jpy,
                 printful_product_id, printful_variant_id, printful_placement,
@@ -11730,7 +11750,9 @@ pub async fn public_make(State(db): State<Db>, headers: axum::http::HeaderMap, Q
                 if is_contrado { "contrado_uk" } else { route_for_kind(kind) },
                 "public_make", meta_json,
             ],
-        );
+        ) {
+            return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(serde_json::json!({"ok":false,"error":format!("save generated product: {e}")}))).into_response();
+        }
         // デザイン依頼の完成: 依頼に result_sku を刻み claimed=1(依頼主の受け取りページが拾う)。
         if let Some(t) = &req_token {
             let _ = conn.execute(
@@ -13004,8 +13026,13 @@ pub async fn admin_status(
         + spend_by_cat.get("ads_meta").copied().unwrap_or(0);
     let gen_spend_jpy = spend_by_cat.get("ai_image").copied().unwrap_or(0);
     let estimated_net_jpy = revenue_jpy - est_cogs_jpy - ad_spend_jpy - gen_spend_jpy;
+    let prompt_selection = match crate::prompt_selection::status(&conn) {
+        Ok(status) => status,
+        Err(e) => serde_json::json!({"error": e}),
+    };
 
     axum::Json(serde_json::json!({
+        "prompt_selection": prompt_selection,
         "budget": {
             "spent_jpy": spent,
             "spent_lifetime_jpy": spent_lifetime,
