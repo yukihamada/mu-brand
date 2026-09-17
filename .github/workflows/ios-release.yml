@@ -56,7 +56,7 @@ jobs:
           grep -E "CURRENT_PROJECT_VERSION|MARKETING_VERSION" project.yml
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" MUWidget/Info.plist
 
-      - name: Archive
+      - name: Archive without issuing a development certificate
         working-directory: ios
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -69,11 +69,7 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/MU.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM=5BV85JW8US
 
       - name: Verify archived binary version
