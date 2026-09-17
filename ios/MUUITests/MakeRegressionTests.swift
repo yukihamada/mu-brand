@@ -65,7 +65,10 @@ final class MakeRegressionTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.staticTexts["make.result.FIXTURE-1"].waitForExistence(timeout: 20))
         XCTAssertEqual(counter("make"), 1, "Cold prompt must issue exactly one creation: \(counterValue)")
-        XCTAssertEqual(counter("delivered"), 1, "Creation response not delivered: \(counterValue)")
+        // The probe refreshes on a timer, so wait for the delivery counter instead
+        // of reading it once right after the result appears.
+        XCTAssertTrue(waitForCounter("delivered", atLeast: 1, timeout: 10),
+                      "Creation response not delivered: \(counterValue)")
         // A hidden automatic second creation would raise this to 2.
         Thread.sleep(forTimeInterval: 6)
         XCTAssertEqual(counter("make"), 1, "Automatic second creation detected: \(counterValue)")
@@ -80,11 +83,13 @@ final class MakeRegressionTests: XCTestCase {
         prompt.typeText("A minimal dojo shirt")
         app.buttons["make.create"].tap()
         XCTAssertTrue(app.staticTexts["make.result.FIXTURE-1"].waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForCounter("make", atLeast: 1, timeout: 10), "Unexpected creation count: \(counterValue)")
         XCTAssertEqual(counter("make"), 1, "Unexpected creation count: \(counterValue)")
         let another = app.buttons["make.another"]
         reveal(another)
         another.tap()
         XCTAssertTrue(app.staticTexts["make.result.FIXTURE-2"].waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForCounter("make", atLeast: 2, timeout: 10), "Second creation was not requested: \(counterValue)")
         XCTAssertEqual(counter("make"), 2, "Second creation was not requested: \(counterValue)")
     }
 

@@ -95,6 +95,8 @@ final class AccountSwitchTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 10), .completed, "AuthGate did not dismiss")
         XCTAssertTrue(app.staticTexts["make.result.FIXTURE-1"].waitForExistence(timeout: 20),
                       "Pending creation did not resume after login: \(counterValue)")
+        XCTAssertTrue(waitForCounter("make", atLeast: 1, timeout: 10),
+                      "Pending creation did not resume after login: \(counterValue)")
         XCTAssertEqual(counter("make"), 1, "Pending intent must resume exactly once: \(counterValue)")
     }
 
