@@ -1,5 +1,14 @@
 # MU storefront renewal — 2026-09-17
 
+## Production release verified
+
+- Owner requested App Store creation links and deployment. Released commit `58555e7f1bb20e9f0efdbc48b398a506436a4026` after rebasing onto `aa2da081` (existing quota changes preserved).
+- Actions https://github.com/yukihamada/mu-brand/actions/runs/35164266427 succeeded; deterministic wait returned success after 1,163 seconds.
+- Final local tests: 207 unit + 4 integration passed; release build passed; both browsers × both languages × four widths passed with App Store destination assertions.
+- `python3 scripts/verify_storefront_live.py`: production Japanese/English × 390/1440 widths; home/shop/PDP rendering and App Store links passed, no `/make` links in these tested surfaces, no overflow or JS exceptions. All 9 homepage image elements decoded. Purchase URL retained, no real payment initiated.
+- Production CSS SHA256 matches source: `9f89581b7912414751ecba2d3e204e610123482dc94cc964724729bce202cf42`. `/healthz` ok=true. Evidence: `store/target/storefront-preview/live-verification.json`.
+- Live: https://wearmu.com/ ; App Store: https://apps.apple.com/app/id6781269252 . Visual judgment and actual revenue lift remain unverified.
+
 ## Preview / scope
 
 - Japanese: http://127.0.0.1:8943/?lang=ja
@@ -73,6 +82,15 @@ Do **not** report `40 / 306` as CVR or event totals as net revenue. Payment even
 - Review after a full 14-day comparable window, and again at 28 days if volume is too low. Segment BJJ traffic and creation traffic; use matched weekdays and source/device mix. Avoid declaring a winner from sparse events.
 - Revenue roadmap: establish purchase completion and fulfillment reliability first, then evaluate the existing optional sticker add-on and repeat purchase. Do not add discounts/ads to compensate for unmeasured checkout or delivery failures.
 
+## Daily trend tracking
+
+- `scripts/record_storefront_metrics.py` — one read-only observation per run, appended to `store/target/storefront-preview/metrics-history.jsonl`. Only `fly ssh console` + `sqlite3 -readonly`; no production writes.
+- `scripts/report_storefront_metrics.py` — prints the table and first→last delta.
+- Registered as launchd `tokyo.hamada.mu-storefront-metrics`, daily 09:30 (verified via `launchctl print`; `runs = 0`, waits for the calendar trigger).
+- First observation 2026-09-17 09:37 JST: cohort landing 1 / product view 0 / intent 0; 24 h events: pageview 25, cta_click 9, checkout_start 71, checkout_paid 2; `catalog_orders` 71 `checkout_pending` with `amount_jpy` 0.
+- Reading rules: `browser_cohort_14d` is a rolling 14-day window of the release cohort, not purchase CVR. `events_24h` counts are event rows, not unique customers or net revenue. `checkout_paid` includes server-synthesised events with unrelated identities. `checkout_pending` rows here carried `amount_jpy` 0, so they are not revenue evidence.
+- Judge after a comparable window. Do not call a winner from single-digit daily events.
+
 ## Restart / reproduce
 
 ```sh
@@ -81,6 +99,8 @@ cargo build --release --manifest-path store/Cargo.toml
 python3 scripts/preview_storefront.py --restart
 python3 scripts/verify_storefront.py
 python3 scripts/audit_storefront.py
+python3 scripts/record_storefront_metrics.py   # production, read-only
+python3 scripts/report_storefront_metrics.py
 ```
 
 On a fresh clone, start once without `--restart`, then restart to apply the existing clean-DB display_name migration. `--seed-public` optionally reads current BJJ/JiuFlow public product fields via authenticated Fly read-only SQLite; it writes only the local preview DB. Prices and products may change between runs.

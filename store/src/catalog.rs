@@ -5959,6 +5959,128 @@ pub async fn admin_translate_en(
 }
 
 #[derive(Deserialize)]
+pub struct EnrichDescQuery {
+    pub token: String,
+    /// SKUs enriched per call (default 10, max 50).
+    pub limit: Option<i64>,
+    /// When 1, generate and report without writing (cost applies).
+    pub dry: Option<i64>,
+    /// Only touch apparel (tee/rashguard/hoodie/crewneck). Default 1.
+    pub apparel: Option<i64>,
+}
+
+/// GET /admin/catalog/enrich_desc?token=…&limit=N&dry=1
+///
+/// Fills in thin `description_ja` for live SKUs. Measured 2026-09-17: of 981
+/// live apparel SKUs, the 490 with <40-char descriptions sold 4 units while
+/// the 491 richer ones sold 10 — buyers cannot judge a tee from
+/// "MU #03 · TEE WHITE · KU". Writes an honest, specific 2-3 sentence
+/// description; never invents scarcity, reviews, discounts or delivery dates.
+///
+/// Safety: admin token required; skips sealed drops (description_ja is
+/// ciphertext); keeps the original text as a prefix so existing copy and
+/// search keywords are preserved; idempotent (already-enriched rows are
+/// skipped). Original text is recoverable — it stays at the start.
+pub async fn admin_enrich_desc(
+    State(db): State<Db>,
+    Query(q): Query<EnrichDescQuery>,
+) -> Response {
+    let expected = env::var("ADMIN_TOKEN").unwrap_or_default();
+    if expected.is_empty() || q.token != expected {
+        return (StatusCode::UNAUTHORIZED, "bad token").into_response();
+    }
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let dry = q.dry == Some(1);
+    let apparel_only = q.apparel.unwrap_or(1) == 1;
+    let kind_sql = if apparel_only {
+        "AND (UPPER(sku) LIKE '%TEE%' OR UPPER(sku) LIKE '%RASH%'
+              OR UPPER(sku) LIKE '%HOODIE%' OR UPPER(sku) LIKE '%CREWNECK%')"
+    } else {
+        ""
+    };
+    let sql = format!(
+        "SELECT sku, label, description_ja, retail_price_jpy FROM catalog_products
+          WHERE status='live' AND is_active=1
+            AND length(description_ja) < 40 AND description_ja <> ''
+            AND (meta_json IS NULL OR meta_json NOT LIKE '%unlock_iso%')
+            AND description_ja NOT LIKE '%。%'
+            {kind_sql}
+          ORDER BY sort_order ASC, rowid DESC LIMIT ?",
+        kind_sql = kind_sql);
+    let rows: Vec<(String, String, String, i64)> = {
+        let conn = db.lock().unwrap();
+        let mut stmt = match conn.prepare(&sql) {
+            Ok(s) => s,
+            Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, format!("prepare: {e}")).into_response(),
+        };
+        stmt.query_map(rusqlite::params![limit], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))
+        })
+        .map(|it| it.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    };
+    let (mut done, mut errs) = (0i64, 0i64);
+    let mut samples: Vec<serde_json::Value> = Vec::new();
+    for (sku, label, ja, price) in rows {
+        let prompt = format!(
+            "You write product descriptions for a Japanese made-to-order apparel store (MU).\n\
+             Rewrite the product title below into a helpful Japanese description of 2-3 sentences (60-140 characters total).\n\
+             Rules:\n\
+             - Keep the existing title text at the start, then add concrete detail.\n\
+             - Describe what the design depicts and who would enjoy wearing it.\n\
+             - Mention it is made to order from one piece only if natural.\n\
+             - NEVER invent: review scores, sales ranks, scarcity/limited counts, discounts, \
+               delivery dates, materials, sizes, or celebrity/brand endorsements.\n\
+             - No emoji, no hashtags, no line breaks. Plain Japanese text only.\n\
+             - Return ONLY the description text.\n\n\
+             Title: {label}\nPrice: ¥{price}\n"
+        );
+        match crate::gemini::call_gemini_text(&prompt).await {
+            Ok(en) if !en.trim().is_empty() => {
+                let enriched = en.trim().replace('\n', " ").to_string();
+                // Guard: reject empty/too-long output and anything that kept
+                // instruction artifacts. Keep the original as the prefix.
+                if enriched.len() < 30 || enriched.len() > 400 {
+                    errs += 1;
+                    continue;
+                }
+                let merged = format!("{} {}", ja.trim(), enriched);
+                samples.push(serde_json::json!({"sku": sku, "before": ja, "after": merged}));
+                if !dry {
+                    let conn = db.lock().unwrap();
+                    match conn.execute(
+                        "UPDATE catalog_products SET description_ja=?, updated_at=datetime('now') WHERE sku=?",
+                        rusqlite::params![merged, sku],
+                    ) {
+                        Ok(_) => done += 1,
+                        Err(_) => errs += 1,
+                    }
+                } else {
+                    done += 1;
+                }
+            }
+            _ => errs += 1,
+        }
+    }
+    let remaining: i64 = {
+        let conn = db.lock().unwrap();
+        let sql = format!(
+            "SELECT COUNT(*) FROM catalog_products
+              WHERE status='live' AND is_active=1
+                AND length(description_ja) < 40 AND description_ja <> ''
+                AND (meta_json IS NULL OR meta_json NOT LIKE '%unlock_iso%')
+                AND description_ja NOT LIKE '%。%' {kind_sql}",
+            kind_sql = kind_sql);
+        conn.query_row(&sql, [], |r| r.get(0)).unwrap_or(-1)
+    };
+    axum::Json(serde_json::json!({
+        "enriched": done, "errors": errs, "remaining": remaining,
+        "dry_run": dry, "samples": samples
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
 pub struct NlAddQuery {
     pub token: String,
     /// Free-form JP/EN description, e.g.

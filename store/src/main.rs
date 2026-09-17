@@ -72510,6 +72510,7 @@ async fn main() {
         .route("/admin/catalog/ticket_issue", get(catalog::admin_ticket_issue))
         .route("/admin/catalog/nl", get(catalog::admin_nl_add))
         .route("/admin/catalog/translate_en", get(catalog::admin_translate_en))
+        .route("/admin/catalog/enrich_desc", get(catalog::admin_enrich_desc))
         .route("/admin/catalog/seal", get(catalog::admin_seal_create))
         .route("/make", get(catalog::make_page))
         .route("/gift", get(catalog::gift_page))
