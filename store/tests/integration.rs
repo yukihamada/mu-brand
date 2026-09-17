@@ -146,6 +146,10 @@ fn prompt_purchase_status_uses_real_schema_and_requires_admin() {
     };
     let status = read_status();
     assert_eq!(status["minimum_purchase_uu"],4);
+    assert_eq!(status["policy"],"explore-20-v1");
+    assert_eq!(status["exploration_percent"],20);
+    assert_eq!(status["adopted_percent"],80);
+    assert_eq!(status["effective_exploration_percent"],100);
     assert_eq!(status["patterns"].as_array().unwrap().len(),10);
     for pattern in status["patterns"].as_array().unwrap() {
         assert_eq!(pattern["purchase_uu"],0);
@@ -167,11 +171,14 @@ fn prompt_purchase_status_uses_real_schema_and_requires_admin() {
     let status = read_status();
     assert_eq!(status["patterns"][0]["purchase_uu"],4);
     assert_eq!(status["patterns"][0]["adopted"],true);
+    assert_eq!(status["effective_exploration_percent"],20);
+    assert_eq!(status["effective_adopted_percent"],80);
     assert!(!status.to_string().contains("example.test"));
     conn.execute("UPDATE catalog_orders SET payment_status='refunded',status='refunded' WHERE stripe_session_id='cs_local_fixture_3'",[]).unwrap();
     let status = read_status();
     assert_eq!(status["patterns"][0]["purchase_uu"],3);
     assert_eq!(status["patterns"][0]["adopted"],false);
+    assert_eq!(status["effective_exploration_percent"],100);
 }
 
 #[test]

@@ -2,10 +2,13 @@
 //! product metadata and is frozen by checkout_catalog_line in the order snapshot.
 use rusqlite::Connection;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 pub const EXPERIMENT: &str = "design-prompts-v1";
 pub const MIN_PURCHASE_UU: usize = 4;
+const POLICY: &str = "explore-20-v1";
+const EXPLORATION_PERCENT: u64 = 20;
 
 pub struct Pattern {
     pub id: &'static str,
@@ -115,17 +118,30 @@ fn metrics(conn: &Connection) -> Result<Metrics, String> {
     Ok(metrics)
 }
 
+fn seed_hash(seed: &str, purpose: &str) -> u64 {
+    let mut hash = Sha256::new();
+    hash.update(POLICY);
+    hash.update([0]);
+    hash.update(purpose);
+    hash.update([0]);
+    hash.update(seed);
+    u64::from_be_bytes(hash.finalize()[..8].try_into().unwrap())
+}
+
 fn choose(metrics: &Metrics, seed: &str) -> usize {
     let adopted: Vec<usize> = (0..PATTERNS.len())
         .filter(|&i| metrics.buyers[i].len() >= MIN_PURCHASE_UU).collect();
-    let candidates: Vec<usize> = if adopted.is_empty() {
-        let min = *metrics.generated.iter().min().unwrap();
-        (0..PATTERNS.len()).filter(|&i| metrics.generated[i] == min).collect()
+    let trial: Vec<usize> = (0..PATTERNS.len())
+        .filter(|&i| metrics.buyers[i].len() < MIN_PURCHASE_UU).collect();
+    let explore = adopted.is_empty() || (!trial.is_empty()
+        && seed_hash(seed, "lane") % 100 < EXPLORATION_PERCENT);
+    let candidates: Vec<usize> = if explore {
+        let min = trial.iter().map(|&i| metrics.generated[i]).min().unwrap();
+        trial.into_iter().filter(|&i| metrics.generated[i] == min).collect()
     } else { adopted };
-    // Stable seed tie-breaker distributes simultaneous requests without another
-    // table or a paid model call. Exploration balances completed SKU counts.
-    let hash = seed.bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
-    candidates[(hash % candidates.len() as u64) as usize]
+    // Independent hashes avoid coupling the exploration lane to pattern choice.
+    // 80/20 is a probability per seed, not an exact quota for each five requests.
+    candidates[(seed_hash(seed, "pattern") % candidates.len() as u64) as usize]
 }
 
 pub struct Selection {
@@ -140,6 +156,7 @@ impl Selection {
 
     pub fn attribution(&self) -> Value {
         json!({"experiment": EXPERIMENT, "pattern_id": PATTERNS[self.pattern].id,
+            "policy": POLICY,
             "phase": if self.adopted { "adopted" } else { "trial" }})
     }
 
@@ -161,7 +178,14 @@ pub fn status(conn: &Connection) -> Result<Value, String> {
         "generated_skus": metrics.generated[i], "purchase_uu": metrics.buyers[i].len(),
         "adopted": metrics.buyers[i].len() >= MIN_PURCHASE_UU,
     })).collect();
+    let adopted_count = metrics.buyers.iter().filter(|buyers| buyers.len() >= MIN_PURCHASE_UU).count();
+    let effective_exploration = if adopted_count == 0 { 100 }
+        else if adopted_count == PATTERNS.len() { 0 } else { EXPLORATION_PERCENT };
     Ok(json!({"experiment": EXPERIMENT, "minimum_purchase_uu": MIN_PURCHASE_UU,
+        "policy": POLICY, "exploration_percent": EXPLORATION_PERCENT,
+        "adopted_percent": 100 - EXPLORATION_PERCENT,
+        "effective_exploration_percent": effective_exploration,
+        "effective_adopted_percent": 100 - effective_exploration,
         "identity": "normalized_buyer_email", "patterns": patterns}))
 }
 
@@ -216,11 +240,14 @@ mod tests {
         order(&conn,"cs_repeat"," BUYER0@example.test ",2);
         assert_eq!(status(&conn).unwrap()["patterns"][2]["purchase_uu"],3);
         order(&conn,"cs_fourth","buyer3@example.test",2);
-        for seed in ["a","b","c"] {
-            let selection = select(&conn,seed).unwrap();
-            assert_eq!(selection.pattern,2);
-            assert!(selection.adopted);
+        let mut phases = HashSet::new();
+        for n in 0..100 {
+            let selection = select(&conn,&n.to_string()).unwrap();
+            assert_eq!(selection.adopted,selection.pattern == 2);
+            phases.insert(selection.adopted);
+            assert_eq!(selection.attribution()["phase"],if selection.adopted { "adopted" } else { "trial" });
         }
+        assert_eq!(phases,HashSet::from([true,false]));
         // A refund reduces eligible UU immediately; adoption is not sticky.
         conn.execute("UPDATE catalog_orders SET payment_status='refunded' WHERE stripe_session_id='cs_fourth'",[]).unwrap();
         assert_eq!(status(&conn).unwrap()["patterns"][2]["adopted"],false);
@@ -284,13 +311,48 @@ mod tests {
     }
 
     #[test]
-    fn multiple_adopted_patterns_are_used_and_unqualified_patterns_are_not() {
+    fn multiple_adopted_patterns_and_trials_both_remain_in_use() {
         let conn = db();
         for i in [0,4] {
             for n in 0..4 { order(&conn,&format!("cs_{i}_{n}"),&format!("buyer{n}@example.test"),i); }
         }
-        let seen: HashSet<usize> = (0..20).map(|n| select(&conn,&n.to_string()).unwrap().pattern).collect();
-        assert_eq!(seen,HashSet::from([0,4]));
+        let seen: HashSet<usize> = (0..1000).map(|n| select(&conn,&n.to_string()).unwrap().pattern).collect();
+        assert_eq!(seen,(0..10).collect());
+    }
+
+    #[test]
+    fn eighty_twenty_distribution_is_stable_and_explores_least_generated_trials() {
+        let mut metrics = Metrics::default();
+        metrics.buyers[0] = (0..4).map(|n| n.to_string()).collect();
+        metrics.generated = [0,3,3,3,3,3,3,3,3,1];
+        let mut explored = 0;
+        for n in 0..10000 {
+            let seed = format!("mk{n:08x}");
+            let selected = choose(&metrics,&seed);
+            assert_eq!(selected,choose(&metrics,&seed));
+            match selected {
+                0 => {},
+                9 => explored += 1,
+                _ => panic!("must exploit adopted or explore least-generated trial"),
+            }
+        }
+        assert!((1800..=2200).contains(&explored),"explored={explored}");
+    }
+
+    #[test]
+    fn zero_or_all_adopted_use_the_available_pool() {
+        let conn = db();
+        let s = status(&conn).unwrap();
+        assert_eq!(s["effective_exploration_percent"],100);
+        for i in 0..10 {
+            for n in 0..4 { order(&conn,&format!("cs_{i}_{n}"),&format!("buyer{n}@example.test"),i); }
+            let s = status(&conn).unwrap();
+            assert_eq!(s["effective_exploration_percent"],if i == 9 { 0 } else { 20 });
+        }
+        for n in 0..100 { assert!(select(&conn,&n.to_string()).unwrap().adopted); }
+        conn.execute("UPDATE catalog_orders SET payment_status='refunded'",[]).unwrap();
+        assert_eq!(status(&conn).unwrap()["effective_exploration_percent"],100);
+        assert!(!select(&conn,"after refunds").unwrap().adopted);
     }
 
     #[test]
@@ -314,9 +376,13 @@ mod tests {
         conn.execute("VACUUM INTO ?",[file.path().to_str().unwrap()]).unwrap();
         let conn = Connection::open(file.path()).unwrap();
         for n in 0..4 { order(&conn,&format!("cs_{n}"),&format!("buyer{n}@example.test"),7); }
+        let before: Vec<usize> = (0..100).map(|n| select(&conn,&n.to_string()).unwrap().pattern).collect();
+        assert!(before.contains(&7));
+        assert!(before.iter().any(|&i| i != 7));
         drop(conn);
         let conn = Connection::open(file.path()).unwrap();
-        assert_eq!(select(&conn,"restart").unwrap().pattern,7);
+        let after: Vec<usize> = (0..100).map(|n| select(&conn,&n.to_string()).unwrap().pattern).collect();
+        assert_eq!(before,after);
         conn.execute("DROP TABLE catalog_orders",[]).unwrap();
         assert!(select(&conn,"db error").is_err());
     }
