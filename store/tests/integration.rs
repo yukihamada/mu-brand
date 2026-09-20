@@ -26,21 +26,9 @@ use std::time::{Duration, Instant};
 /// builds it under target/release/. Falls back to target/debug/ for
 /// plain `cargo test` runs.
 fn locate_binary() -> PathBuf {
-    let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let candidates = [
-        format!("{}/target/release/mu-store", manifest_dir),
-        format!("{}/target/debug/mu-store", manifest_dir),
-    ];
-    for c in &candidates {
-        let p = PathBuf::from(c);
-        if p.exists() {
-            return p;
-        }
-    }
-    panic!(
-        "mu-store binary not found in target/{{release,debug}}/. \
-         Run `cargo build` or `cargo build --release` first."
-    );
+    // Cargo supplies the exact artifact, including custom CARGO_TARGET_DIR.
+    // Never accidentally test a stale release binary from another build.
+    PathBuf::from(env!("CARGO_BIN_EXE_mu-store"))
 }
 
 /// Pick an unused TCP port by binding to 0 then immediately dropping.
