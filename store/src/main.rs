@@ -8,6 +8,7 @@ mod prompt_selection;
 mod storefront;
 mod order_contract;
 mod fulfillment_status;
+mod fulfillment_tracking;
 mod agent_api;
 mod manufacturing_schema;
 mod manufacturing_req;
@@ -23662,7 +23663,17 @@ async fn admin_recent_buyers(
             .map(|it| it.filter_map(|r| r.ok()).collect())
         }).unwrap_or_default()
     };
-    Json(serde_json::json!({ "count": rows.len(), "buyers": rows })).into_response()
+    let mut rows = rows;
+    {
+        let conn = db.lock().unwrap();
+        for row in &mut rows {
+            match fulfillment_tracking::observation(&conn, row["id"].as_i64().unwrap_or(0), row["printful_order_id"].as_str().unwrap_or("")) {
+                Ok(value) => row["fulfillment_observation"] = value.unwrap_or(serde_json::Value::Null),
+                Err(e) => { tracing::warn!(error=%e,"cannot load shipment observation"); row["fulfillment_observation_error"] = serde_json::json!("unavailable"); }
+            }
+        }
+    }
+    ([(header::CACHE_CONTROL,"no-store, private")], Json(serde_json::json!({ "count": rows.len(), "buyers": rows }))).into_response()
 }
 
 /// POST /api/admin/mu_purchase/:id/manual_ship?token=
@@ -71464,6 +71475,8 @@ async fn main() {
     // ── catalog optimizer: 30-min autonomous SKU generator + reporter ──
     // Paid-order recovery must run even when autonomous product generation is disabled.
     tokio::spawn(catalog::run_order_worker(db.clone()));
+    // Vendor GET + local observation only; no LLM, posts, mail or order creation.
+    tokio::spawn(fulfillment_tracking::run(db.clone()));
     // Honours the master MU_AUTOPILOT flag (CI smoke test sets =0).
     // Without GEMINI_API_KEY / R2_* envs the inner generator will refuse
     // work, so the cron stays a no-op reporter until secrets land.
