@@ -7,6 +7,7 @@ mod catalog;
 mod prompt_selection;
 mod storefront;
 mod order_contract;
+mod fulfillment_status;
 mod agent_api;
 mod manufacturing_schema;
 mod manufacturing_req;
@@ -23853,9 +23854,30 @@ async fn admin_mu_purchase_set_pf_id(
     Json(serde_json::json!({ "ok": n>0, "updated_rows": n, "mu_purchase_id": mu_pid, "pf_id": pf_id })).into_response()
 }
 
+/// Read-only shipment evidence. No order creation, email, refund or DB mutation.
+async fn admin_fulfillment_status(
+    Path(id): Path<u64>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    if let Err(r) = require_admin_token(q.get("token")) { return r; }
+    let key = env::var("PRINTFUL_API_KEY").unwrap_or_default();
+    if key.is_empty() { return (StatusCode::SERVICE_UNAVAILABLE, "Printful unavailable").into_response(); }
+    let response = reqwest::Client::new().get(format!("https://api.printful.com/orders/{id}"))
+        .bearer_auth(key).timeout(std::time::Duration::from_secs(20)).send().await;
+    let order = match response {
+        Ok(r) if r.status().is_success() => r.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+    match order.filter(|v| v["result"]["id"].as_u64() == Some(id) && v["result"]["status"].is_string()) {
+        Some(v) => ([(header::CACHE_CONTROL, "no-store, private")], Json(fulfillment_status::summary(&v["result"]))).into_response(),
+        None => (StatusCode::BAD_GATEWAY, "Printful status could not be verified").into_response(),
+    }
+}
+
 /// POST /api/admin/reconcile_printful_status?token=&limit=N — for each
 /// recent mu_purchases row with a printful_order_id whose last_printful_status
-/// is not 'fulfilled', re-poll Printful and write the live status back.
+/// is not canceled, re-poll Printful and write the live status back.
+/// Fulfilled orders still need shipment-level delivery verification.
 /// Default N=50, max 200. Fixes the "kenny mugen#418 stuck at draft" drift.
 async fn admin_reconcile_printful_status(
     State(db): State<Db>,
@@ -23876,9 +23898,8 @@ async fn admin_reconcile_printful_status(
             "SELECT id, COALESCE(printful_order_id,''), COALESCE(last_printful_status,'')
              FROM mu_purchases
              WHERE printful_order_id IS NOT NULL AND printful_order_id != ''
-               AND COALESCE(last_printful_status,'') != 'fulfilled'
                AND COALESCE(last_printful_status,'') != 'canceled'
-             ORDER BY id DESC LIMIT ?"
+             ORDER BY COALESCE(last_status_at,''), id DESC LIMIT ?"
         ).ok().and_then(|mut s| {
             s.query_map(params![limit], |r| Ok((
                 r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
@@ -23896,24 +23917,27 @@ async fn admin_reconcile_printful_status(
     for (pid, pf_id, before) in &pending {
         let url = format!("https://api.printful.com/orders/{}", pf_id);
         let resp = client.get(&url).bearer_auth(&pf_key).send().await;
+        let mut fulfillment = serde_json::Value::Null;
         let status = match resp {
             Ok(r) if r.status().is_success() => {
                 let body: serde_json::Value = r.json().await.unwrap_or_default();
+                fulfillment = fulfillment_status::summary(&body["result"]);
                 body["result"]["status"].as_str().unwrap_or("").to_string()
             }
             Ok(r) => { errors += 1; format!("err_http_{}", r.status().as_u16()) }
             Err(_) => { errors += 1; "err_net".to_string() }
         };
-        if !status.is_empty() && !status.starts_with("err_") && &status != before {
+        if !status.is_empty() && !status.starts_with("err_") {
             let conn = db.lock().unwrap();
             let n = conn.execute(
                 "UPDATE mu_purchases SET last_printful_status=?, last_status_at=? WHERE id=?",
                 params![status, chrono_now(), pid],
             ).unwrap_or(0);
-            if n > 0 { updated += 1; }
+            if n > 0 && &status != before { updated += 1; }
         }
         updates.push(serde_json::json!({
             "id": pid, "pf_id": pf_id, "before": before, "after": status,
+            "fulfillment": fulfillment,
         }));
     }
     Json(serde_json::json!({
@@ -71740,6 +71764,7 @@ async fn main() {
         .route("/api/admin/blob_migrate", get(admin_blob_migrate))
         .route("/api/admin/recent_buyers", get(admin_recent_buyers))
         .route("/api/admin/reconcile_printful_status", post(admin_reconcile_printful_status))
+        .route("/api/admin/fulfillment/:id", get(admin_fulfillment_status))
         .route("/api/admin/backfill_mu_purchases_from_catalog", post(admin_backfill_mu_purchases_from_catalog))
         .route("/api/admin/mu_purchase/:id/manual_ship", post(admin_mu_purchase_manual_ship))
         .route("/api/admin/mu_purchase/:id/set_pf_id", post(admin_mu_purchase_set_pf_id))
@@ -80494,10 +80519,11 @@ async fn agent_purchase_celebrate(db: Db) -> Result<AgentReport, String> {
             let pf_status = j["result"]["status"].as_str().unwrap_or("").to_string();
             if pf_status == *prev_status || pf_status.is_empty() { continue; }
             // Map Printful status → our lifecycle kind.
-            let kind: Option<&str> = match pf_status.as_str() {
-                "inprocess" | "in_production" | "pending"      => Some("production_started"),
-                "fulfilled" | "shipped"                         => Some("shipped"),
-                "delivered"                                     => Some("delivered"),
+            let fulfillment = fulfillment_status::summary(&j["result"]);
+            let kind: Option<&str> = match fulfillment["fulfillment_status"].as_str().unwrap_or("") {
+                "in_production" => Some("production_started"),
+                "shipped" => Some("shipped"),
+                "delivered" => Some("delivered"),
                 _ => None,
             };
             let Some(kind) = kind else {
