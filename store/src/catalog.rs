@@ -15280,9 +15280,9 @@ pub async fn shop_pdp(
     let share_block = format!(
         r##"<div class="share-row" style="display:flex;gap:8px;align-items:center;margin:14px 0 2px;font-size:12.5px;flex-wrap:wrap">
 <span style="opacity:.55">この一枚を広める:</span>
-<a href="{x}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="pdp_share_x" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">𝕏 ポスト</a>
-<a href="{line}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="pdp_share_line" style="color:#f5f5f0;text-decoration:none;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px">LINE</a>
-<button id="shareBtn" data-funnel="share" data-funnel-cta="pdp_share_native" style="background:none;color:#f5f5f0;border:1px solid #3a3a3a;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit">リンクをコピー</button>
+<a href="{x}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="pdp_share_x" class="share-pill" style="text-decoration:none;border:1px solid currentColor;border-radius:99px;padding:6px 14px;opacity:.8">𝕏 ポスト</a>
+<a href="{line}" target="_blank" rel="noopener" data-funnel="share" data-funnel-cta="pdp_share_line" class="share-pill" style="text-decoration:none;border:1px solid currentColor;border-radius:99px;padding:6px 14px;opacity:.8">LINE</a>
+<button id="shareBtn" data-funnel="share" data-funnel-cta="pdp_share_native" class="share-pill" style="background:none;border:1px solid currentColor;border-radius:99px;padding:6px 14px;cursor:pointer;font-size:12.5px;font-family:inherit;opacity:.8">リンクをコピー</button>
 <script>(function(){{var b=document.getElementById('shareBtn');if(!b)return;b.addEventListener('click',function(){{
 if(navigator.share){{navigator.share({{url:location.href}}).catch(function(){{}});}}
 else{{navigator.clipboard.writeText(location.href).then(function(){{b.textContent='✓ コピーしました';}});}}
