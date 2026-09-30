@@ -294,7 +294,7 @@ jobs:
               -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
               -d "$payload" \
               "https://openrouter.ai/api/v1/chat/completions" \
-              > /tmp/gemini-bf.json
+              > /tmp/gemini-bf.json || { echo "Backfill $slug OpenRouter timeout — skipping (non-fatal)"; continue; }
             text=$(jq -r '.choices[0].message.content // ""' /tmp/gemini-bf.json)
             [ -z "$text" ] && { echo "Empty Gemini text for $slug — skipping"; continue; }
             first=$(printf '%s\n' "$text" | head -1)
