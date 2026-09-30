@@ -161,7 +161,7 @@ jobs:
   #   5. On any failure → Telegram alert.
   #
   # Required additional secrets:
-  #   GEMINI_API_KEY      — Generative Language API key (separate from Fly's copy)
+  #   OPENROUTER_API_KEY  — OpenRouter key (Gemini prepaid credits depleted 2026-09-30)
   #   TELEGRAM_BOT_TOKEN  — for the failure-alert step (optional but recommended)
   #
   # Fly's legacy /api/admin/blog_compose endpoint remains as a manual fallback
@@ -175,7 +175,7 @@ jobs:
       || github.event.inputs.target == 'blog_compose'
     runs-on: ubuntu-latest
     env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
     steps:
       - name: Fetch today's stats + prompt + backfill list
@@ -210,35 +210,39 @@ jobs:
         if: steps.stats.outputs.already == 'true'
         run: echo "(${{ steps.stats.outputs.slug }}) already published — skipping."
 
-      - name: Compose + publish today (Gemini + retry + audit)
+      - name: Compose + publish today (OpenRouter + retry + audit)
         if: steps.stats.outputs.already != 'true'
         id: gen
         run: |
           set -euo pipefail
-          : "${GEMINI_API_KEY:?GEMINI_API_KEY secret is required}"
+          : "${OPENROUTER_API_KEY:?OPENROUTER_API_KEY secret is required}"
           : "${MU_ADMIN_TOKEN:?MU_ADMIN_TOKEN secret is required}"
           prompt=$(jq -r .prompt /tmp/stats.json)
           model=$(jq -r .gemini_model /tmp/stats.json)
           stats=$(jq -c .stats /tmp/stats.json)
           slug="${{ steps.stats.outputs.slug }}"
-          payload=$(jq -n --arg p "$prompt" '{contents:[{parts:[{text:$p}]}]}')
+          # Map Gemini model name to OpenRouter equivalent
+          or_model="google/${model}"
+          payload=$(jq -n --arg p "$prompt" --arg m "$or_model" \
+            '{model:$m, messages:[{role:"user", content:$p}]}')
           retry_count=0
           for attempt in 1 2 3; do
             if curl -fsS --max-time 60 \
               -H 'Content-Type: application/json' \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
               -d "$payload" \
-              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}" \
+              "https://openrouter.ai/api/v1/chat/completions" \
               > /tmp/gemini.json; then
               break
             fi
             retry_count=$attempt
             backoff=$((attempt * 10))
-            echo "Gemini attempt $attempt failed — sleeping ${backoff}s"
+            echo "OpenRouter attempt $attempt failed — sleeping ${backoff}s"
             sleep $backoff
           done
-          jq -e '.candidates[0].content.parts[0].text' /tmp/gemini.json > /dev/null \
-            || { echo "Gemini returned no text"; cat /tmp/gemini.json; exit 1; }
-          text=$(jq -r '.candidates[0].content.parts[0].text' /tmp/gemini.json)
+          jq -e '.choices[0].message.content' /tmp/gemini.json > /dev/null \
+            || { echo "OpenRouter returned no text"; cat /tmp/gemini.json; exit 1; }
+          text=$(jq -r '.choices[0].message.content' /tmp/gemini.json)
           first=$(printf '%s\n' "$text" | head -1)
           if [[ "$first" == \#\ * ]]; then
             title=$(printf '%s\n' "$first" | sed 's/^#\s*//')
@@ -276,18 +280,22 @@ jobs:
           BACKFILL_LIST: ${{ steps.stats.outputs.backfill }}
         run: |
           set -euo pipefail
-          : "${GEMINI_API_KEY:?}"
+          : "${OPENROUTER_API_KEY:?}"
           : "${MU_ADMIN_TOKEN:?}"
           stats=$(jq -c .stats /tmp/stats.json)
           prompt=$(jq -r .prompt /tmp/stats.json)
           model=$(jq -r .gemini_model /tmp/stats.json)
+          or_model="google/${model}"
           for slug in $(jq -r '.[]' <<<"$BACKFILL_LIST"); do
             echo "Backfilling $slug..."
-            payload=$(jq -n --arg p "$prompt" '{contents:[{parts:[{text:$p}]}]}')
-            curl -fsS --max-time 60 -H 'Content-Type: application/json' -d "$payload" \
-              "https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}" \
+            payload=$(jq -n --arg p "$prompt" --arg m "$or_model" \
+              '{model:$m, messages:[{role:"user", content:$p}]}')
+            curl -fsS --max-time 60 -H 'Content-Type: application/json' \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -d "$payload" \
+              "https://openrouter.ai/api/v1/chat/completions" \
               > /tmp/gemini-bf.json
-            text=$(jq -r '.candidates[0].content.parts[0].text // ""' /tmp/gemini-bf.json)
+            text=$(jq -r '.choices[0].message.content // ""' /tmp/gemini-bf.json)
             [ -z "$text" ] && { echo "Empty Gemini text for $slug — skipping"; continue; }
             first=$(printf '%s\n' "$text" | head -1)
             if [[ "$first" == \#\ * ]]; then
