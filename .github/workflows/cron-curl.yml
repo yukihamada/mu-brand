@@ -290,7 +290,7 @@ jobs:
             echo "Backfilling $slug..."
             payload=$(jq -n --arg p "$prompt" --arg m "$or_model" \
               '{model:$m, messages:[{role:"user", content:$p}]}')
-            curl -fsS --max-time 60 -H 'Content-Type: application/json' \
+            curl -fsS --max-time 120 -H 'Content-Type: application/json' \
               -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
               -d "$payload" \
               "https://openrouter.ai/api/v1/chat/completions" \
