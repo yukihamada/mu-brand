@@ -156,7 +156,7 @@ jobs:
   # Flow:
   #   1. GET /api/blog/stats_for_today (Fly) → {stats, today_slug, already_published, prompt, model}
   #   2. Short-circuit if already_published.
-  #   3. POST prompt to Google Gemini directly with retry.
+  #   3. POST prompt to Gemini via OpenRouter with retry.
   #   4. POST result to /api/admin/blog_publish (Fly persists to SQLite).
   #   5. On any failure → Telegram alert.
   #
@@ -226,13 +226,16 @@ jobs:
           payload=$(jq -n --arg p "$prompt" --arg m "$or_model" \
             '{model:$m, messages:[{role:"user", content:$p}]}')
           retry_count=0
+          generated=false
           for attempt in 1 2 3; do
             if curl -fsS --max-time 60 \
               -H 'Content-Type: application/json' \
               -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
               -d "$payload" \
               "https://openrouter.ai/api/v1/chat/completions" \
-              > /tmp/gemini.json; then
+              > /tmp/gemini.json &&
+              jq -e '.choices[0].message.content | type == "string" and (length > 0)' /tmp/gemini.json > /dev/null; then
+              generated=true
               break
             fi
             retry_count=$attempt
@@ -240,8 +243,8 @@ jobs:
             echo "OpenRouter attempt $attempt failed — sleeping ${backoff}s"
             sleep $backoff
           done
-          jq -e '.choices[0].message.content' /tmp/gemini.json > /dev/null \
-            || { echo "OpenRouter returned no text"; cat /tmp/gemini.json; exit 1; }
+          [ "$generated" = true ] \
+            || { echo "::error::OpenRouter generation failed after 3 attempts"; exit 1; }
           text=$(jq -r '.choices[0].message.content' /tmp/gemini.json)
           first=$(printf '%s\n' "$text" | head -1)
           if [[ "$first" == \#\ * ]]; then
@@ -272,8 +275,8 @@ jobs:
           jq -e '.ok == true' <<<"$resp" > /dev/null
           echo "title=$title" >> "$GITHUB_OUTPUT"
 
-      # Backfill: if Actions missed yesterday/2-ago/3-ago, generate a brief
-      # for each missing slug too. Idempotent on slug (server-side check).
+      # Backfill requires statistics for the target day. The current API
+      # only returns today's snapshot; never publish it under a past date.
       - name: Backfill missing days
         if: steps.stats.outputs.backfill != '[]' && steps.stats.outputs.backfill != ''
         env:
@@ -287,6 +290,8 @@ jobs:
           model=$(jq -r .gemini_model /tmp/stats.json)
           or_model="google/${model}"
           for slug in $(jq -r '.[]' <<<"$BACKFILL_LIST"); do
+            jq -e --arg day "${slug#auto-}" '.stats.day == $day' /tmp/stats.json > /dev/null \
+              || { echo "::error::Cannot backfill $slug: historical statistics unavailable"; exit 1; }
             echo "Backfilling $slug..."
             payload=$(jq -n --arg p "$prompt" --arg m "$or_model" \
               '{model:$m, messages:[{role:"user", content:$p}]}')
@@ -294,9 +299,10 @@ jobs:
               -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
               -d "$payload" \
               "https://openrouter.ai/api/v1/chat/completions" \
-              > /tmp/gemini-bf.json || { echo "Backfill $slug OpenRouter timeout — skipping (non-fatal)"; continue; }
+              > /tmp/gemini-bf.json || { echo "::error::Backfill $slug OpenRouter request failed"; exit 1; }
             text=$(jq -r '.choices[0].message.content // ""' /tmp/gemini-bf.json)
-            [ -z "$text" ] && { echo "Empty Gemini text for $slug — skipping"; continue; }
+            jq -e '.choices[0].message.content | type == "string" and (length > 0)' /tmp/gemini-bf.json > /dev/null \
+              || { echo "::error::Backfill $slug returned no text"; exit 1; }
             first=$(printf '%s\n' "$text" | head -1)
             if [[ "$first" == \#\ * ]]; then
               title=$(printf '%s\n' "$first" | sed 's/^#\s*//')
@@ -311,9 +317,11 @@ jobs:
               --arg model "$model" \
               '{admin_token:$token, title:$title, body_md:$body, model:($model+"-via-actions"),
                 stats_used:$stats, slug:$slug, origin:"actions-backfill", quiet:true}')
-            curl -fsS -X POST -H 'Content-Type: application/json' \
-              -d "$bf_payload" "${BASE_URL}/api/admin/blog_publish" || echo "Backfill $slug failed (non-fatal)"
-            sleep 3  # space out Gemini calls
+            resp=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+              -d "$bf_payload" "${BASE_URL}/api/admin/blog_publish")
+            jq -e '.ok == true' <<<"$resp" > /dev/null \
+              || { echo "::error::Backfill $slug publish was rejected"; exit 1; }
+            sleep 3  # space out OpenRouter calls
           done
 
       - name: Telegram alert on failure
