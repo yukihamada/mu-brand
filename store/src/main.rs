@@ -1,4 +1,5 @@
 mod gemini;
+mod blog_snapshot;
 mod ito;
 mod nft;
 mod payments;
@@ -49872,34 +49873,34 @@ struct AutoBlogBody {
 /// and the new GitHub-Actions-driven publish path. Keeping it in one place
 /// guarantees the Actions runner sees the same JSON the prompt has always
 /// consumed.
-fn gather_blog_stats(db: &Db) -> serde_json::Value {
+fn gather_blog_stats(db: &Db) -> Result<serde_json::Value, rusqlite::Error> {
     use serde_json::json;
     let conn = db.lock().unwrap();
     let revenue: i64 = conn.query_row(
         "SELECT COALESCE(SUM(price_jpy * sold), 0) FROM products WHERE active=1",
-        [], |r| r.get(0)).unwrap_or(0);
+        [], |r| r.get(0))?;
     let purchases: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0)).unwrap_or(0);
+        "SELECT COUNT(*) FROM mu_purchases", [], |r| r.get(0))?;
     // brand='you' uses you_designs (fixed ¥6,800); other brands use products.
     let real_revenue: i64 = {
         let prod: i64 = conn.query_row(
             "SELECT COALESCE(SUM(p.price_jpy), 0) FROM mu_purchases mp
              JOIN products p ON p.id = mp.product_id
              WHERE mp.brand != 'you'",
-            [], |r| r.get(0)).unwrap_or(0);
+            [], |r| r.get(0))?;
         let you_n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM mu_purchases WHERE brand='you'",
-            [], |r| r.get(0)).unwrap_or(0);
+            [], |r| r.get(0))?;
         prod + you_n * 6_800
     };
     let subs: i64 = conn.query_row(
         "SELECT COUNT(*) FROM you_users WHERE unsubscribed_at IS NULL",
-        [], |r| r.get(0)).unwrap_or(0);
+        [], |r| r.get(0))?;
     let designs: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0)).unwrap_or(0);
+        "SELECT COUNT(*) FROM you_designs", [], |r| r.get(0))?;
     let lifestyle_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM products WHERE lifestyle_url IS NOT NULL AND lifestyle_url != ''",
-        [], |r| r.get(0)).unwrap_or(0);
+        [], |r| r.get(0))?;
     let missing = detect_missing_drops(&conn);
     drop(conn);  // release lock before any heavy compute
     // External signals widen the AI's worldview beyond Teshikaga temperature.
@@ -49932,7 +49933,7 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
         6 | 7 | 8  => "夏",
         _          => "秋",
     };
-    json!({
+    Ok(json!({
         "revenue_shown_jpy": revenue,
         "real_revenue_jpy": real_revenue,
         "purchases": purchases,
@@ -49940,7 +49941,10 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
         "designs_generated": designs,
         "lifestyle_photos": lifestyle_count,
         "missing": missing,
-        "day": jst_today_str(),
+        "day": format!("{year:04}-{month:02}-{day_of_month:02}"),
+        "measurement_basis": "cumulative_and_current_snapshot",
+        "timezone": "Asia/Tokyo",
+        "observed_at_unix": now_secs,
         "signals": {
             "year": year,
             "month": month,
@@ -49950,7 +49954,7 @@ fn gather_blog_stats(db: &Db) -> serde_json::Value {
             "moon_phase": moon,
             "moon_phase_pct": (phase * 100.0).round() as i64,
         },
-    })
+    }))
 }
 
 // ── Learning Loop core ─────────────────────────────────────────────────────
@@ -50267,99 +50271,18 @@ pub fn cleanup_ai_decisions(db: &Db, days_to_keep: i64) -> i64 {
     ).unwrap_or(0) as i64
 }
 
-/// Canonical prompt for the daily Field log. Used by both compose paths so
-/// the output stays consistent whether Gemini is called from Fly or Actions.
+/// Compatibility field for older readers; publication uses the exact template.
 fn blog_prompt(stats: &serde_json::Value) -> String {
-    format!(r#"あなたは MU ブランドの「無人運営 AI 執筆者」です。今日の Field log を Markdown で書いてください。
-
-事実 (JSON、これ以外の数字は捏造禁止):
-{stats}
-
-ブランドビジョン (内側で守ること、引用しない):
-- 季節サイクルはマーケティングの産物。MU には「seasons」はない、weather と hours だけ。
-- 数字は形容詞より強い (Numbers over adjectives)。
-
-書き方:
-- 600〜900 字、3〜4 セクション
-- 顧客視点 + 経営視点 (Bezos 的)、過剰演出は禁止
-- 数字を 1 つは引用 (real_revenue_jpy を優先)
-- "今日動いたもの / 動かなかったもの / 明日へ" の構成
-- 自己卑下や絵文字過剰は禁止
-- 末尾に「— 自動生成 by Gemini 2.5 Pro」と明記
-
-禁止表現 (vision_drift + self_evolve 検出済):
-- 主観的形容詞のみで状態を述べる: "進化" "洞察" "成果" "課題" "華やかに" "革命的" → データ志向の語 (ログ / データ / パフォーマンス / 不整合 / 差分) に置換
-- 季節サイクル示唆: "今シーズン" "春夏新作" "今期トレンド" 等 → 日付/数字 stamp で表現
-- 「すごい」「驚き」感嘆語の連発は禁止
-
-タイトル要件 (machine-tone を保つため):
-- 28 字以内、本文 1 行目に H1 として `# タイトル` を置く
-- 必ず ISO 8601 日付 (YYYY-MM-DD) を含める。`.` 区切り（例: 2026.05.12）や和暦 (2026年5月12日) は禁止
-- 主観形容詞 (進化 / 洞察 / 成果 / 課題) だけでタイトルを構成しない。最低 1 つは事実語 (ログ / 数字 / イベント名 / コード変更) を含める"#,
-        stats = stats)
+    format!("Use the article field verbatim. These statistics are cumulative/current state, \
+        not daily changes. Do not invent causes or future actions. Data: {stats}")
 }
 
 async fn compose_auto_blog(db: &Db) -> Result<(String, String, String, serde_json::Value), String> {
-    use serde_json::json;
-    let key = env::var("GEMINI_API_KEY").map_err(|_| "GEMINI_API_KEY missing".to_string())?;
-    // Budget hard-cap (responsible_entity = 株式会社イネブラ). Skip the call
-    // entirely if the monthly limit would be exceeded.
-    {
-        let conn = db.lock().unwrap();
-        budget_check(&conn, BLOG_GEMINI_MODEL)?;
-    }
-    let stats = gather_blog_stats(db);
-
-    let prompt = blog_prompt(&stats);
-
-    let req_body = json!({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": 4096, "temperature": 0.7}
-    });
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
-        model = BLOG_GEMINI_MODEL, key = key);
-    let resp = reqwest::Client::new().post(&url)
-        .json(&req_body).send().await
-        .map_err(|e| format!("gemini request: {e}"))?;
-    if !resp.status().is_success() {
-        let s = resp.status();
-        let t = resp.text().await.unwrap_or_default();
-        return Err(format!("gemini {}: {}", s, t.chars().take(300).collect::<String>()));
-    }
-    let j: serde_json::Value = resp.json().await.map_err(|e| format!("json: {e}"))?;
-    let text = j["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str().unwrap_or("").to_string();
-    if text.trim().is_empty() {
-        return Err("gemini returned empty text".into());
-    }
-    let mut title = "今日の Field log".to_string();
-    let mut body_md_lines: Vec<String> = Vec::new();
-    for (i, line) in text.lines().enumerate() {
-        if i == 0 && line.trim_start().starts_with("# ") {
-            title = line.trim_start_matches('#').trim().to_string();
-            continue;
-        }
-        body_md_lines.push(line.to_string());
-    }
-    let body_md = body_md_lines.join("\n").trim().to_string();
+    let stats = gather_blog_stats(db).map_err(|e| format!("blog stats: {e}"))?;
+    let article = blog_snapshot::article(&stats)?;
+    let title = article["title"].as_str().ok_or("missing article title")?.to_string();
+    let body_md = article["body_md"].as_str().ok_or("missing article body")?.to_string();
     let body_html = md_to_html_simple(&body_md);
-    // Learning Loop + Budget: append-only audit log of this AI call.
-    {
-        let conn = db.lock().unwrap();
-        let _ = log_ai_decision(
-            &conn,
-            "blog_compose",
-            &stats,
-            &serde_json::json!({"title": title, "body_md_len": body_md.chars().count()}),
-            BLOG_GEMINI_MODEL,
-            0,
-        );
-        // Best-effort token estimate: 4 chars/token Japanese (rough).
-        let in_tok  = (prompt.chars().count() / 4) as i64;
-        let out_tok = (body_md.chars().count() / 4) as i64;
-        let _ = budget_record(&conn, "blog_compose", BLOG_GEMINI_MODEL, in_tok, out_tok);
-    }
     Ok((title, body_html, body_md, stats))
 }
 
@@ -51083,14 +51006,24 @@ async fn admin_blog_compose(
     }
     match compose_auto_blog(&db).await {
         Ok((title, body_html, body_md, stats)) => {
+            let now = match chrono_now().parse::<i64>() {
+                Ok(now) => now,
+                Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "clock unavailable").into_response(),
+            };
+            if let Err(e) = blog_snapshot::validate(&stats, &slug, &title, &body_md, now) {
+                return (StatusCode::SERVICE_UNAVAILABLE, e).into_response();
+            }
             let conn = db.lock().unwrap();
-            let _ = conn.execute(
+            if let Err(e) = conn.execute(
                 "INSERT OR IGNORE INTO auto_blog_posts
                     (slug, title, body_html, body_md, model, stats_json, published, created_at)
                  VALUES (?,?,?,?,?,?,1,?)",
-                params![slug, title, body_html, body_md, BLOG_GEMINI_MODEL,
+                params![slug, title, body_html, body_md, blog_snapshot::MODEL,
                         stats.to_string(), chrono_now()],
-            );
+            ) {
+                eprintln!("[auto-blog] {e}");
+                return (StatusCode::SERVICE_UNAVAILABLE, "blog storage unavailable").into_response();
+            }
             Json(serde_json::json!({"ok": true, "slug": slug, "title": title})).into_response()
         }
         Err(e) => {
@@ -51108,7 +51041,7 @@ async fn admin_blog_compose(
 //   POST /api/admin/blog_publish    — admin, accepts pre-composed markdown
 //                                     and stores it (idempotent on slug)
 //
-// Actions cron orchestrates: fetch stats → call Gemini directly → publish.
+// Actions cron orchestrates: fetch snapshot + exact article → publish.
 // /api/admin/blog_compose stays available as a manual / Fly-side fallback.
 
 /// Per-IP hourly rate limit on the public stats_for_today endpoint.
@@ -51174,8 +51107,14 @@ async fn blog_stats_for_today(
             format!("rate limit: {}/h per IP", BLOG_STATS_RATE_LIMIT_PER_HOUR)).into_response();
     }
 
-    let stats = gather_blog_stats(&db);
-    let slug = format!("auto-{}", jst_today_str());
+    let stats = match gather_blog_stats(&db) {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("[blog-stats] {e}");
+            return (StatusCode::SERVICE_UNAVAILABLE, "blog statistics unavailable").into_response();
+        }
+    };
+    let slug = format!("auto-{}", stats["day"].as_str().unwrap_or(""));
     let (already, backfill): (bool, Vec<String>) = {
         let conn = db.lock().unwrap();
         let already = conn.query_row(
@@ -51186,6 +51125,10 @@ async fn blog_stats_for_today(
         (already, backfill)
     };
     let prompt = blog_prompt(&stats);
+    let article = match blog_snapshot::article(&stats) {
+        Ok(article) => article,
+        Err(e) => return (StatusCode::SERVICE_UNAVAILABLE, e).into_response(),
+    };
     Json(serde_json::json!({
         "stats": stats,
         "today_slug": slug,
@@ -51193,7 +51136,8 @@ async fn blog_stats_for_today(
         "backfill_slugs": backfill, // Actions iterates these too if non-empty
         "prompt": prompt,           // shipped so Actions doesn't drift from server's wording
         "gemini_model": BLOG_GEMINI_MODEL,
-        "endpoint_version": 3,
+        "article": article,
+        "endpoint_version": 4,
         "rate_limit_remaining": (BLOG_STATS_RATE_LIMIT_PER_HOUR - hits).max(0),
     })).into_response()
 }
@@ -51229,7 +51173,7 @@ async fn send_blog_digest(db: &Db, slug: &str, title: &str, body_md: &str) -> Re
     if recipients.is_empty() { return Ok(0); }
     let preview = body_md.lines().take(8).collect::<Vec<_>>().join("\n");
     let body_html = md_to_html_simple(&preview);
-    let url = format!("https://wearmu.com/blog/{slug}");
+    let url = format!("https://wearmu.com/blog/auto/{slug}");
     let html = format!(
         r#"<div style="font-family:-apple-system,sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#222">
         <div style="font-size:11px;letter-spacing:0.3em;text-transform:uppercase;opacity:0.55;margin-bottom:18px">MU FIELD LOG</div>
@@ -51271,7 +51215,7 @@ async fn cross_post_x(slug: &str, title: &str) -> Result<bool, String> {
     // Now uses the real X API v2 via OAuth 2.0 PKCE tokens.
     // Enqueue is preferred (sns_post_queue) — this direct call is kept for
     // synchronous use cases (the legacy admin_blog_publish call).
-    let text = format!("{} https://wearmu.com/blog/{slug}", title);
+    let text = format!("{} https://wearmu.com/blog/auto/{slug}", title);
     match x_post_tweet(&text).await {
         Ok(Some(_id)) => Ok(true),
         Ok(None)      => Ok(false),  // not configured
@@ -52173,6 +52117,17 @@ async fn admin_blog_publish(
             "body looks like a refusal / placeholder").into_response();
     }
     let slug = body.slug.clone().unwrap_or_else(|| format!("auto-{}", jst_today_str()));
+    if slug.starts_with("auto-") {
+        let now = match chrono_now().parse::<i64>() {
+            Ok(now) => now,
+            Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, "clock unavailable").into_response(),
+        };
+        let validation = body.stats_used.as_ref().ok_or_else(|| "snapshot required".to_string())
+            .and_then(|stats| blog_snapshot::validate(stats, &slug, title, body_md, now));
+        if let Err(e) = validation {
+            return (StatusCode::BAD_REQUEST, e).into_response();
+        }
+    }
     let model = body.model.clone().unwrap_or_else(|| format!("{}-via-actions", BLOG_GEMINI_MODEL));
     let origin = body.origin.clone().unwrap_or_else(|| "actions".to_string());
     let retry_count = body.retry_count.unwrap_or(0);
@@ -52190,14 +52145,20 @@ async fn admin_blog_publish(
         if already {
             (false, true)
         } else {
-            let n = conn.execute(
+            let n = match conn.execute(
                 "INSERT OR IGNORE INTO auto_blog_posts
                     (slug, title, body_html, body_md, model, stats_json,
                      origin, retry_count, published, created_at, description, audio_url)
                  VALUES (?,?,?,?,?,?,?,?,1,?,?,?)",
                 params![slug, title, body_html, body_md, model, stats_json,
                         origin, retry_count, chrono_now(), body.description, body.audio_url],
-            ).unwrap_or(0);
+            ) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("[blog-publish] {e}");
+                    return (StatusCode::SERVICE_UNAVAILABLE, "blog storage unavailable").into_response();
+                }
+            };
             (n > 0, false)
         }
     };
@@ -52250,14 +52211,18 @@ async fn admin_blog_publish(
         let blog_context = format!(
             "Blog title: {title}\n\
              Slug: {slug}\n\
-             URL: https://wearmu.com/blog/{slug}\n\
+             URL: https://wearmu.com/blog/auto/{slug}\n\
              First 240 chars of body: {preview}\n\
              Note: This is MU's daily Field log — operational diary the AI itself writes each morning.",
             title = title,
             slug = slug,
             preview = body_md.chars().take(240).collect::<String>());
-        let blog_tweet = compose_x_tweet_via_gemini("blog", &blog_context).await
-            .unwrap_or_else(|| format!("📓 {} — MU Field log\nhttps://wearmu.com/blog/{slug}", title));
+        let plain_tweet = format!("📓 {} — MU Field log\nhttps://wearmu.com/blog/auto/{slug}", title);
+        let blog_tweet = if slug.starts_with("auto-") {
+            plain_tweet
+        } else {
+            compose_x_tweet_via_gemini("blog", &blog_context).await.unwrap_or(plain_tweet)
+        };
         {
             let conn = db.lock().unwrap();
             enqueue_sns_post(&conn, "x", "blog", None, Some(&slug), &blog_tweet, None);
@@ -52275,7 +52240,7 @@ async fn admin_blog_publish(
             let msg = format!(
                 "📓 Blog published — {}\n{}\norigin={origin} retries={retry_count}\n\
                  digest sent → {digest_sent} subs\nX cross-post: {}\n{review_line}\n\
-                 https://wearmu.com/blog/{slug}",
+                 https://wearmu.com/blog/auto/{slug}",
                 title,
                 if x_posted { "✓" } else { "—" },
                 if x_posted { "yes" } else { "no" },
@@ -52297,7 +52262,7 @@ async fn admin_blog_publish(
         "published": inserted,
         "already_existed": already,
         "slug": slug,
-        "url": format!("https://wearmu.com/blog/{slug}"),
+        "url": format!("https://wearmu.com/blog/auto/{slug}"),
         "digest_sent": digest_sent,
         "x_posted": x_posted,
         "review_pass": review.as_ref().map(|(p,_)| *p),
