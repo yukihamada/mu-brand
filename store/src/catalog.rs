@@ -4846,15 +4846,37 @@ pub(crate) async fn resolve_printful_positions(
     client: &reqwest::Client, key: &str, printful_product: i64, printful_variant: i64,
     dims: (u32, u32), custom_pos: Option<serde_json::Value>,
 ) -> Result<Vec<(String, serde_json::Value)>, String> {
-    let position = default_print_position(printful_product, dims, custom_pos);
     let placements = placements_for_product(printful_product);
-    // AOP(301系)は各パネル(front/back/sleeve_*)で printfile 寸法が違うため、
-    // 上で計算した単一 position を全パネルに流用すると下半分が白く残り袖に
-    // タイルされる(旧バグ)。パネルごとに cover-fill 位置を取り直す。
-    // 非AOPは placements=["front"] の1枚なので従来どおり単一 position。
+    resolve_printful_positions_for_placements(client,key,printful_product,printful_variant,
+        dims,custom_pos,placements).await
+}
+
+// Default chest geometry belongs to the default placement only. In particular,
+// front_large/back/sleeve files must query their own variant-specific printfile.
+fn default_position_for_placement(product: i64, placement: &str, dims: (u32,u32),
+    custom: Option<serde_json::Value>) -> Result<Option<serde_json::Value>,String> {
+    if !placements_for_product(product).contains(&placement) {
+        if custom.is_some() { return Err("custom geometry for non-default placement requires verification".into()); }
+        return Ok(None);
+    }
+    Ok(default_print_position(product,dims,custom))
+}
+
+async fn resolve_printful_positions_for_placements(
+    client: &reqwest::Client, key: &str, printful_product: i64, printful_variant: i64,
+    dims: (u32,u32), custom_pos: Option<serde_json::Value>, placements: &[&str],
+) -> Result<Vec<(String,serde_json::Value)>,String> {
+    if placements.is_empty() { return Err("print files missing".into()); }
+    let mut seen = std::collections::HashSet::new();
+    for p in placements {
+        if p.is_empty() || !seen.insert(*p) { return Err("invalid/duplicate print file placement".into()); }
+    }
+    // AOP panels have distinct printfile geometry. Non-default single-panel
+    // placements also need their own geometry rather than the default chest box.
     let is_aop = matches!(printful_product, 301 | 302 | 368 | 369 | 836 | 384 | 594);
     let mut files = Vec::with_capacity(placements.len());
     for p in placements.iter() {
+        let position = default_position_for_placement(printful_product,p,dims,custom_pos.clone())?;
         let pos = if is_aop || position.is_none() {
             printful_fill_position(client, key, printful_product, printful_variant, *p, Some(dims))
                 .await
@@ -17064,7 +17086,13 @@ pub(crate) async fn checkout_catalog_line(db: &Db, sku: &str, qty: i64, unit: i6
             dimensions.insert(url,d); d
         };
         let custom = item["files"][0].get("position").cloned();
-        let positions = resolve_printful_positions(&client,&key,product,vid,dims,custom).await?;
+        // Resolve the exact file types captured with this order, not a fresh
+        // product default (which turns front_large into front and blocks checkout).
+        let placements = item["files"].as_array().ok_or("print files missing")?.iter()
+            .map(|f| f["type"].as_str().ok_or("print placement missing"))
+            .collect::<Result<Vec<_>,_>>()?;
+        let positions = resolve_printful_positions_for_placements(&client,&key,product,vid,
+            dims,custom,&placements).await?;
         let fs = item["files"].as_array_mut().ok_or("print files missing")?;
         if fs.len() != positions.len() { return Err("print placement mismatch".into()); }
         for (f,(placement,pos)) in fs.iter_mut().zip(positions) {
@@ -21653,6 +21681,89 @@ mod printful_item_files_tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["type"].as_str(), Some("front"));
         assert!(files[0].get("placement").is_none());
+    }
+
+    #[test]
+    fn large_front_order_uses_its_own_variant_geometry_not_the_chest_box() {
+        let conn = test_conn();
+        insert_product(&conn,"TEST-LARGE",71,4017,"front_large","printful_dtg",
+            Some("https://example.test/original.png"));
+        let item = build_printful_item(&conn,"TEST-LARGE","4900.00",None,true,1).unwrap();
+        let placement = item["files"][0]["type"].as_str().unwrap();
+        assert_eq!(placement,"front_large");
+        assert!(default_position_for_placement(71,placement,(2250,2700),None).unwrap().is_none());
+        // Distinct sizes deliberately expose accidentally using front or another variant.
+        let data = serde_json::json!({"variant_printfiles":[
+            {"variant_id":4016,"placements":{"front_large":30}},
+            {"variant_id":4017,"placements":{"front":10,"front_large":20}}],
+            "printfiles":[{"printfile_id":10,"width":1800,"height":2400},
+                {"printfile_id":20,"width":2250,"height":2700},
+                {"printfile_id":30,"width":1500,"height":1800}]});
+        let p = print_position_from_printfiles(&data,71,4017,placement,(2250,2700)).unwrap();
+        assert_eq!(p["area_width"],2250);
+        assert_eq!(p["area_height"],2700);
+        let n = |k: &str| p[k].as_i64().unwrap();
+        assert!((n("width") as f64 / n("height") as f64 - 2250.0/2700.0).abs()<0.01);
+        assert!(n("left")>=0 && n("top")>=0);
+        assert!(n("left")+n("width")<=2250 && n("top")+n("height")<=2700);
+        assert!(print_position_from_printfiles(&data,71,9999,placement,(2250,2700)).is_none());
+        assert!(print_position_from_printfiles(&data,71,4017,"sleeve_left",(2250,2700)).is_none());
+    }
+
+    #[test]
+    fn nondefault_placement_never_reuses_custom_front_geometry() {
+        let custom = aspect_fit_position(1800,2400,90,100,900,600,1200);
+        for placement in ["front_large","back","sleeve_left"] {
+            assert!(default_position_for_placement(71,placement,(600,1200),None).unwrap().is_none());
+            assert!(default_position_for_placement(71,placement,(600,1200),Some(custom.clone())).is_err());
+        }
+        let p = default_position_for_placement(71,"front",(600,1200),Some(custom.clone())).unwrap().unwrap();
+        for k in ["width","height","left","top"] { assert_eq!(p[k],custom[k]); }
+    }
+
+    #[test]
+    fn captured_large_front_printfiles_cover_every_checkout_size() {
+        // Subset of authenticated GET /mockup-generator/printfiles/71,
+        // captured from mu-store on 2026-10-04. Artwork dimensions were also
+        // verified against the JF-TEE-01 original (2250 x 2700).
+        let data = serde_json::json!({"variant_printfiles":[
+            {"variant_id":4016,"placements":{"front":1,"front_large":333}},
+            {"variant_id":4017,"placements":{"front":1,"front_large":333}},
+            {"variant_id":4018,"placements":{"front":1,"front_large":333}},
+            {"variant_id":4019,"placements":{"front":1,"front_large":333}},
+            {"variant_id":4020,"placements":{"front":1,"front_large":333}}],
+            "printfiles":[{"printfile_id":333,"width":2250,"height":2700,
+                "dpi":150,"fill_mode":"fit","can_rotate":false}]});
+        let conn = test_conn();
+        insert_product(&conn,"TEST-LARGE",71,4017,"front_large","printful_dtg",
+            Some("https://example.test/original.png"));
+        for size in ["S","M","L","XL","2XL"] {
+            let vid = resolve_apparel_size_variant(71,4017,size).unwrap();
+            let mut item = build_printful_item(&conn,"TEST-LARGE","4800.00",Some(vid),true,1).unwrap();
+            assert!(item["files"][0].get("position").is_none());
+            let placement = item["files"][0]["type"].as_str().unwrap();
+            assert!(default_position_for_placement(71,placement,(2250,2700),None).unwrap().is_none());
+            let pos = print_position_from_printfiles(&data,71,vid,placement,(2250,2700)).unwrap();
+            assert_eq!(pos["area_width"],2250);
+            assert_eq!(pos["area_height"],2700);
+            item["files"][0]["position"] = pos;
+            crate::order_contract::files(&item["files"]).unwrap();
+            assert_eq!(item["variant_id"],vid);
+            assert_eq!(item["files"][0]["type"],"front_large");
+        }
+    }
+
+    #[tokio::test]
+    async fn placement_resolution_rejects_empty_or_duplicate_files_before_api_access() {
+        let client = reqwest::Client::new();
+        for placements in [vec![],vec![""],vec!["front_large","front_large"]] {
+            assert!(resolve_printful_positions_for_placements(&client,"",71,4017,
+                (2250,2700),None,&placements).await.is_err());
+        }
+        let files = resolve_printful_positions_for_placements(&client,"",71,4017,
+            (2250,2700),None,&["front"]).await.unwrap();
+        assert_eq!(files[0].0,"front");
+        assert_eq!(files[0].1["area_width"],1800);
     }
 
     /// Stored non-front placements (embroidery cap) are honored verbatim
