@@ -126,7 +126,7 @@ pub async fn merch_approval_page(
             let img = if mock.is_empty() {
                 String::new()
             } else {
-                format!(r#"<div class="mock"><img loading="lazy" src="{}" alt=""></div>"#, html_attr_escape(mock))
+                format!(r#"<div class="mock"><img loading="lazy" src="{}" alt="" title="クリックで拡大"></div>"#, html_attr_escape(mock))
             };
             body.push_str(&format!(
                 r#"<figure class="card">{img}
@@ -158,22 +158,34 @@ h1{{font-size:19px;margin:0 0 6px;letter-spacing:.04em}}
 .sub{{color:var(--dim);font-size:13px;line-height:1.7}}
 .who{{max-width:1500px;margin:14px auto 0;padding:0 22px}}
 .who input{{background:#141418;border:1px solid #232329;color:var(--fg);border-radius:8px;padding:9px 12px;font:inherit;width:260px;max-width:100%}}
-.sec{{font-size:15px;margin:30px 0 4px;max-width:1500px;padding:0 22px;letter-spacing:.05em}}
-.cnt{{color:var(--dim);font-size:12px}}
-main{{max-width:1500px;margin:0 auto;padding:4px 22px 90px}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px;margin-top:10px}}
-.card{{margin:0;background:var(--card);border:1px solid #232329;border-radius:12px;padding:8px}}
-.mock{{background:#0e0e10;border-radius:8px;overflow:hidden}}
-.mock img{{width:100%;display:block}}
-figcaption{{font-size:12px;color:var(--fg);margin-top:8px}}
-.sku{{font-family:ui-monospace,monospace;font-size:10px;color:var(--dim);margin:2px 0 6px;word-break:break-all}}
-.st{{font-size:11px;margin-bottom:6px}}
+.sec{{font-size:20px;margin:40px 0 2px;max-width:1600px;padding:14px 22px 10px;
+border-top:1px solid #232329;letter-spacing:.06em;background:linear-gradient(#17171c,transparent)}}
+.cnt{{color:var(--dim);font-size:13px;font-weight:400;letter-spacing:0}}
+main{{max-width:1600px;margin:0 auto;padding:4px 22px 90px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-top:12px}}
+.card{{margin:0;background:var(--card);border:1px solid #2a2a31;border-radius:14px;padding:10px;
+transition:border-color .15s,transform .15s}}
+.card:hover{{border-color:#3a3a44;transform:translateY(-2px)}}
+.mock{{background:#0e0e10;border-radius:10px;overflow:hidden;position:relative}}
+.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:1/1;object-fit:cover}}
+.mock::after{{content:"⤢ クリックで拡大";position:absolute;right:8px;bottom:8px;
+background:rgba(0,0,0,.55);color:#eee;font-size:11px;padding:3px 8px;border-radius:20px;
+opacity:0;transition:opacity .15s;pointer-events:none}}
+.mock:hover::after{{opacity:1}}
+figcaption{{font-size:14px;color:var(--fg);margin-top:10px}}
+.sku{{font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin:3px 0 8px;word-break:break-all}}
+.st{{font-size:12px;margin-bottom:8px}}
 .st.ok{{color:var(--ok)}} .st.no{{color:var(--no)}} .st.pending{{color:var(--dim)}}
-.acts{{display:flex;gap:6px}}
-.acts button{{flex:1;cursor:pointer;border:1px solid #232329;border-radius:8px;padding:8px 0;font:inherit;font-size:12px;font-weight:700}}
+.acts{{display:flex;gap:8px}}
+.acts button{{flex:1;cursor:pointer;border:1px solid #232329;border-radius:10px;padding:11px 0;font:inherit;font-size:15px;font-weight:700}}
 .acts .ok{{background:#123a22;color:#bdf5cf;border-color:#2f7d46}}
 .acts .no{{background:#3a1712;color:#f5cfc0;border-color:#7d3a2f}}
 .acts button:disabled{{opacity:.5;cursor:default}}
+#lb{{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;z-index:99;
+align-items:center;justify-content:center;padding:3vmin;cursor:zoom-out}}
+#lb.on{{display:flex}}
+#lb img{{max-width:96vw;max-height:96vh;border-radius:10px;box-shadow:0 10px 60px rgba(0,0,0,.6)}}
+#lb .x{{position:fixed;top:16px;right:22px;color:#eee;font-size:26px;font-weight:700;pointer-events:none}}
 .foot{{color:var(--dim);font-size:12px;margin-top:26px;border-top:1px solid #232329;padding-top:14px;line-height:1.7}}
 </style></head><body>
 <header>
@@ -185,9 +197,17 @@ figcaption{{font-size:12px;color:var(--fg);margin-top:8px}}
 <main>{body}
 <div class="foot">Approval is limited to this product, media, term and the final artwork. Changes require renewed approval. ／ お問い合わせ: info@solun.art</div>
 </main>
+<div id="lb"><span class="x">×</span><img alt=""></div>
 <script>
 (function(){{
  var KEY="__KEY__";
+ // クリックで拡大（ライトボックス）。
+ var lb=document.getElementById('lb'), lbi=lb.querySelector('img');
+ document.querySelectorAll('.mock img').forEach(function(im){{
+  im.addEventListener('click', function(){{ lbi.src=im.src; lb.classList.add('on'); }});
+ }});
+ lb.addEventListener('click', function(){{ lb.classList.remove('on'); lbi.src=''; }});
+ document.addEventListener('keydown', function(e){{ if(e.key==='Escape'){{ lb.classList.remove('on'); lbi.src=''; }} }});
  document.querySelectorAll('.acts button').forEach(function(b){{
   b.addEventListener('click', async function(){{
    var sku=b.getAttribute('data-sku'), decide=b.getAttribute('data-decide');
