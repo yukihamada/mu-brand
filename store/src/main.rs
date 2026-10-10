@@ -11,6 +11,7 @@ mod order_contract;
 mod fulfillment_status;
 mod fulfillment_tracking;
 mod agent_api;
+mod merch_approval;
 mod manufacturing_schema;
 mod manufacturing_req;
 mod spec;
@@ -71665,6 +71666,8 @@ async fn main() {
         .route("/api/admin/ma/cancel_auction", post(admin_ma_cancel_auction))
         .route("/api/admin/db/overview", get(admin_db_overview))
         .route("/admin/db", get(admin_db_page))
+        .route("/merch-approval", get(merch_approval::merch_approval_page))
+        .route("/api/merch/approval", post(merch_approval::merch_approval_decide))
         .route("/admin/bids", get(admin_bids_page))
         .route("/admin/ship", get(admin_ship_page))
         .route("/admin/ship/csv", get(admin_ship_csv))
