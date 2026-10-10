@@ -112,9 +112,14 @@ pub async fn merch_approval_page(
         let Some(items) = by_group.get(g) else { continue };
         let display = GROUP_LABEL.iter().find(|(k, _)| k == g).map(|(_, v)| *v).unwrap_or(g.as_str());
         let approved = items.iter().filter(|r| decisions.get(&r.0).map(|d| d.0 == "approve").unwrap_or(false)).count();
+        let rejected = items.iter().filter(|r| decisions.get(&r.0).map(|d| d.0 == "reject").unwrap_or(false)).count();
+        let pending = items.len() - approved - rejected;
+        let group_id = format!("approval-group-{}", known.iter().position(|x| x == g).unwrap_or(0));
         body.push_str(&format!(
-            r#"<h2 class="sec">{disp} <span class="cnt">{n}案 · 承認 {ap}</span></h2><div class="grid">"#,
-            disp = html_escape(display), n = items.len(), ap = approved));
+            r#"<h2 class="sec" id="{group_id}" data-group-heading="{group_attr}">{disp} <span class="cnt" aria-live="polite">承認 {ap} ・却下 {re} ・未回答 {pending}（計 {n}）</span></h2><div class="grid" data-group="{group_attr}">"#,
+            group_id = group_id,
+            group_attr = html_attr_escape(g),
+            disp = html_escape(display), n = items.len(), ap = approved, re = rejected, pending = pending));
         for (sku, label, mock, status) in items {
             let motif = motif_of(label);
             let dec = decisions.get(sku);
@@ -129,14 +134,16 @@ pub async fn merch_approval_page(
                 format!(r#"<div class="mock"><img loading="lazy" src="{}" alt="" title="クリックで拡大"></div>"#, html_attr_escape(mock))
             };
             body.push_str(&format!(
-                r#"<figure class="card">{img}
+                r#"<figure class="card" data-group="{group_attr}" data-search="{search}">{img}
 <figcaption><b>{motif}</b><div class="sku">{sku}</div>
-<div class="st {cls}">{badge}</div>
+<div class="st {cls}" aria-live="polite">{badge}</div>
 <div class="acts">
-<button class="ok" data-sku="{sku}" data-decide="approve">承認</button>
-<button class="no" data-sku="{sku}" data-decide="reject">却下</button>
+<button class="ok" type="button" data-sku="{sku}" data-decide="approve" aria-label="{motif} を承認">承認</button>
+<button class="no" type="button" data-sku="{sku}" data-decide="reject" aria-label="{motif} を却下">却下</button>
 </div></figcaption></figure>"#,
-                img = img, motif = html_escape(&motif), sku = html_escape(sku), cls = cls, badge = badge));
+                img = img, group_attr = html_attr_escape(g),
+                search = html_attr_escape(&format!("{} {}", motif, sku).to_lowercase()),
+                motif = html_escape(&motif), sku = html_escape(sku), cls = cls, badge = badge));
         }
         body.push_str("</div>");
     }
@@ -150,65 +157,132 @@ pub async fn merch_approval_page(
 <meta name="robots" content="noindex,nofollow,noarchive">
 <title>SOLUNA × ZAMNA — 商品承認</title>
 <style>
-:root{{--bg:#0b0b0d;--card:#141418;--fg:#eee5ce;--dim:#8b8677;--ok:#7ee0a0;--no:#ff8a6a}}
+:root{{--bg:#0b0b0d;--card:#141418;--fg:#eee5ce;--dim:#aaa596;--ok:#7ee0a0;--no:#ff9a83;--line:#303039}}
 *{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--fg);
-font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif}}
-header{{padding:24px 22px 4px;max-width:1500px;margin:0 auto}}
-h1{{font-size:19px;margin:0 0 6px;letter-spacing:.04em}}
-.sub{{color:var(--dim);font-size:13px;line-height:1.7}}
-.who{{max-width:1500px;margin:14px auto 0;padding:0 22px}}
-.who input{{background:#141418;border:1px solid #232329;color:var(--fg);border-radius:8px;padding:9px 12px;font:inherit;width:260px;max-width:100%}}
-.sec{{font-size:20px;margin:40px 0 2px;max-width:1600px;padding:14px 22px 10px;
-border-top:1px solid #232329;letter-spacing:.06em;background:linear-gradient(#17171c,transparent)}}
-.cnt{{color:var(--dim);font-size:13px;font-weight:400;letter-spacing:0}}
-main{{max-width:1600px;margin:0 auto;padding:4px 22px 90px}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px;margin-top:12px}}
-.card{{margin:0;background:var(--card);border:1px solid #2a2a31;border-radius:14px;padding:10px;
-transition:border-color .15s,transform .15s}}
-.card:hover{{border-color:#3a3a44;transform:translateY(-2px)}}
-.mock{{background:#0e0e10;border-radius:10px;overflow:hidden;position:relative}}
-.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:1/1;object-fit:cover}}
-.mock::after{{content:"⤢ クリックで拡大";position:absolute;right:8px;bottom:8px;
-background:rgba(0,0,0,.55);color:#eee;font-size:11px;padding:3px 8px;border-radius:20px;
-opacity:0;transition:opacity .15s;pointer-events:none}}
-.mock:hover::after{{opacity:1}}
+font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif;line-height:1.55}}
+header{{padding:28px 22px 8px;max-width:1500px;margin:0 auto}}
+h1{{font-size:clamp(22px,2.5vw,30px);line-height:1.35;margin:0 0 8px;letter-spacing:.02em}}
+.sub{{color:var(--dim);font-size:14px;line-height:1.8;max-width:900px}}
+.who{{max-width:1500px;margin:12px auto 18px;padding:0 22px}}
+.who label{{display:block;color:var(--dim);font-size:12px;margin-bottom:5px}}
+.who input{{background:#141418;border:1px solid #393942;color:var(--fg);border-radius:9px;padding:10px 12px;font:inherit;width:min(100%,360px);min-height:44px}}
+.who input::placeholder{{color:#878476}}
+.who input:focus-visible,.tool button:focus-visible,.tool input:focus-visible,.tool select:focus-visible,.acts button:focus-visible,.mock img:focus-visible,.jump a:focus-visible{{outline:3px solid #e7c56b;outline-offset:3px}}
+.sec{{font-size:clamp(19px,2vw,24px);line-height:1.35;margin:32px 0 0;max-width:1600px;padding:17px 22px 8px;
+border-top:1px solid var(--line);letter-spacing:.02em;background:linear-gradient(#17171c,transparent);scroll-margin-top:150px}}
+.cnt{{color:var(--dim);font-size:13px;font-weight:400;letter-spacing:0;white-space:nowrap}}
+main{{max-width:1480px;margin:0 auto;padding:0 22px 90px}}
+.tool{{position:sticky;top:0;z-index:20;margin:0 -22px 18px;padding:12px 22px;background:rgba(11,11,13,.97);border-top:1px solid #292930;border-bottom:1px solid #383840;box-shadow:0 8px 24px rgba(0,0,0,.28);backdrop-filter:blur(12px)}}
+.tool-top{{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:9px}}
+.progress{{font-size:14px;font-weight:700}}.progress small{{display:block;color:var(--dim);font-size:12px;font-weight:400}}
+.controls{{display:flex;align-items:center;gap:7px;flex-wrap:wrap}}
+.tool button,.tool input,.tool select{{font:inherit;font-size:13px;color:var(--fg);background:#17171c;border:1px solid #393942;border-radius:9px;min-height:40px;padding:8px 11px}}
+.tool button{{cursor:pointer}}.tool button[aria-pressed="true"]{{color:#101014;background:#e7c56b;border-color:#e7c56b;font-weight:700}}
+.tool input{{flex:1 1 190px;max-width:300px}}.tool input::placeholder{{color:#aaa596}}
+.jump{{display:flex;gap:7px;overflow-x:auto;padding:2px 0 3px;scrollbar-width:thin}}
+.jump a{{flex:0 0 auto;border:1px solid #393942;color:var(--fg);background:#17171c;padding:7px 12px;border-radius:999px;font-size:12px;text-decoration:none}}
+.jump a:hover{{border-color:#e7c56b}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:16px;margin-top:10px}}
+.card{{margin:0;background:var(--card);border:1px solid #303039;border-radius:14px;padding:12px;transition:border-color .15s}}
+.card:hover{{border-color:#555560}}.card[hidden],.sec[hidden]{{display:none!important}}
+.mock{{background:#101014;border-radius:10px;overflow:hidden;position:relative}}
+.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:4/3;object-fit:contain;background:#101014}}
+.mock::after{{content:"⤢ 画像を拡大";position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.75);color:#fff;font-size:11px;padding:4px 8px;border-radius:20px;pointer-events:none}}
 figcaption{{font-size:14px;color:var(--fg);margin-top:10px}}
 .sku{{font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin:3px 0 8px;word-break:break-all}}
-.st{{font-size:12px;margin-bottom:8px}}
+.st{{font-size:12px;line-height:1.6;min-height:19px;margin-bottom:8px}}
 .st.ok{{color:var(--ok)}} .st.no{{color:var(--no)}} .st.pending{{color:var(--dim)}}
 .acts{{display:flex;gap:8px}}
-.acts button{{flex:1;cursor:pointer;border:1px solid #232329;border-radius:10px;padding:11px 0;font:inherit;font-size:15px;font-weight:700}}
-.acts .ok{{background:#123a22;color:#bdf5cf;border-color:#2f7d46}}
-.acts .no{{background:#3a1712;color:#f5cfc0;border-color:#7d3a2f}}
-.acts button:disabled{{opacity:.5;cursor:default}}
+.acts button{{flex:1;cursor:pointer;border:1px solid #393942;border-radius:10px;min-height:46px;padding:10px 8px;font:inherit;font-size:15px;font-weight:700}}
+.acts .ok{{background:#123a22;color:#c9f4d5;border-color:#378451}}
+.acts .no{{background:#3a1712;color:#ffd1c5;border-color:#945043}}
+.acts button:disabled{{opacity:.55;cursor:default}}
 #lb{{position:fixed;inset:0;background:rgba(0,0,0,.92);display:none;z-index:99;
 align-items:center;justify-content:center;padding:3vmin;cursor:zoom-out}}
 #lb.on{{display:flex}}
 #lb img{{max-width:96vw;max-height:96vh;border-radius:10px;box-shadow:0 10px 60px rgba(0,0,0,.6)}}
-#lb .x{{position:fixed;top:16px;right:22px;color:#eee;font-size:26px;font-weight:700;pointer-events:none}}
-.foot{{color:var(--dim);font-size:12px;margin-top:26px;border-top:1px solid #232329;padding-top:14px;line-height:1.7}}
+#lb .x{{position:fixed;top:16px;right:22px;color:#fff;background:#24242a;border:1px solid #666;border-radius:999px;width:44px;height:44px;font-size:26px;font-weight:700;cursor:pointer}}
+.foot{{color:var(--dim);font-size:12px;margin:26px auto 0;max-width:900px;border-top:1px solid #303039;padding-top:14px;line-height:1.8}}
+@media(max-width:640px){{header{{padding:22px 16px 8px}}.who{{padding:0 16px}}main{{padding-left:16px;padding-right:16px}}.tool{{margin-left:-16px;margin-right:-16px;padding:10px 16px}}.tool-top{{align-items:flex-start}}.controls{{width:100%}}.tool input{{max-width:none}}.tool select{{flex:1 1 100%}}.sec{{padding-left:16px;padding-right:16px;margin-top:24px}}.grid{{grid-template-columns:1fr;gap:14px}}.mock img{{aspect-ratio:1/1}}}}
+@media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;transition:none!important}}}}
 </style></head><body>
 <header>
 <h1>SOLUNA × ZAMNA ／ DJコラボT — 商品承認</h1>
 <div class="sub">2026.11.13 · Oʻahu　｜　グループ別に承認/却下を記録できます。<br>
 承認が揃うまで公開・販売しません。無回答は承認ではありません。</div>
 </header>
-<div class="who"><input id="name" placeholder="お名前 / your name（任意）" autocomplete="name"></div>
-<main>{body}
+<div class="who"><label for="name">記録に表示するお名前（任意）／ Name</label><input id="name" placeholder="お名前 / your name（任意）" autocomplete="name"></div>
+<main>
+<section class="tool" aria-label="商品一覧の検索と絞り込み">
+ <div class="tool-top"><div class="progress" id="approval-progress" aria-live="polite"></div>
+  <div class="controls" role="group" aria-label="承認状況で絞り込み">
+   <button type="button" data-filter="all" aria-pressed="true">すべて</button>
+   <button type="button" data-filter="pending" aria-pressed="false">未回答</button>
+   <button type="button" data-filter="approve" aria-pressed="false">承認済み</button>
+   <button type="button" data-filter="reject" aria-pressed="false">却下</button>
+   <input type="search" id="approval-search" placeholder="デザイン名・SKUを検索" aria-label="デザイン名またはSKUで検索">
+   <select id="approval-group-filter" aria-label="グループで絞り込み"><option value="all">すべてのグループ</option></select>
+  </div>
+ </div>
+ <nav class="jump" aria-label="グループへ移動"></nav>
+</section>
+{body}
 <div class="foot">Approval is limited to this product, media, term and the final artwork. Changes require renewed approval. ／ お問い合わせ: info@solun.art</div>
 </main>
-<div id="lb"><span class="x">×</span><img alt=""></div>
+<div id="lb" role="dialog" aria-modal="true" aria-label="商品画像の拡大表示"><button class="x" type="button" aria-label="閉じる" tabindex="-1">×</button><img alt=""></div>
 <script>
 (function(){{
- var KEY="__KEY__";
- // クリックで拡大（ライトボックス）。
- var lb=document.getElementById('lb'), lbi=lb.querySelector('img');
- document.querySelectorAll('.mock img').forEach(function(im){{
-  im.addEventListener('click', function(){{ lbi.src=im.src; lb.classList.add('on'); }});
- }});
- lb.addEventListener('click', function(){{ lb.classList.remove('on'); lbi.src=''; }});
- document.addEventListener('keydown', function(e){{ if(e.key==='Escape'){{ lb.classList.remove('on'); lbi.src=''; }} }});
- document.querySelectorAll('.acts button').forEach(function(b){{
+  var KEY="__KEY__";
+  // クリックで拡大（ライトボックス）。
+  var lb=document.getElementById('lb'), lbi=lb.querySelector('img');
+  document.querySelectorAll('.mock img').forEach(function(im){{
+   var caption=im.closest('.card').querySelector('figcaption b').textContent;
+   im.alt=caption+' のTシャツモックアップ。クリックで拡大';
+   im.tabIndex=0; im.setAttribute('role','button');
+   im.addEventListener('click', function(){{ lastImage=im; lbi.src=im.src; lbi.alt=caption+' の拡大画像'; lb.classList.add('on'); document.body.style.overflow='hidden'; closeButton.focus(); }});
+   im.addEventListener('keydown', function(e){{if(e.key==='Enter'||e.key===' '){{e.preventDefault();im.click();}}}});
+  }});
+  var closeButton=lb.querySelector('.x'), lastImage=null;
+  function closeLightbox(){{lb.classList.remove('on');lbi.src='';lbi.alt='';document.body.style.overflow='';if(lastImage)lastImage.focus();}}
+  closeButton.addEventListener('click',function(e){{e.stopPropagation();closeLightbox();}});
+  lb.addEventListener('click', function(){{ closeLightbox(); }});
+  document.addEventListener('keydown', function(e){{ if(e.key==='Escape'&&lb.classList.contains('on')){{ closeLightbox(); }} }});
+
+  // 商品承認そのものは既存APIへ送り、絞り込みは画面内だけで処理する。
+  var cards=Array.from(document.querySelectorAll('.card'));
+  var headings=Array.from(document.querySelectorAll('.sec'));
+  var groupSelect=document.getElementById('approval-group-filter');
+  var jump=document.querySelector('.jump');
+  headings.forEach(function(h){{
+   var group=h.dataset.groupHeading, label=h.childNodes[0].textContent.trim();
+   var option=document.createElement('option');option.value=group;option.textContent=label;groupSelect.appendChild(option);
+   var link=document.createElement('a');link.href='#'+h.id;link.textContent=label;jump.appendChild(link);
+  }});
+  var activeFilter='all';
+  function decisionOf(card){{var st=card.querySelector('.st');return st.classList.contains('ok')?'approve':st.classList.contains('no')?'reject':'pending';}}
+  function refreshList(){{
+   var query=document.getElementById('approval-search').value.trim().toLowerCase(), group=groupSelect.value;
+   var counts={{approve:0,reject:0,pending:0}}, shown=0;
+   cards.forEach(function(card){{
+    var state=decisionOf(card);counts[state]++;
+    var visible=(activeFilter==='all'||activeFilter===state)&&(group==='all'||card.dataset.group===group)&&(!query||card.dataset.search.indexOf(query)!==-1);
+    card.hidden=!visible;if(visible)shown++;
+   }});
+   headings.forEach(function(h){{
+    var grid=h.nextElementSibling, groupCards=Array.from(grid.querySelectorAll('.card'));
+    h.hidden=!groupCards.some(function(card){{return !card.hidden;}});
+    var groupCounts={{approve:0,reject:0,pending:0}};
+    groupCards.forEach(function(card){{groupCounts[decisionOf(card)]++;}});
+    h.querySelector('.cnt').textContent='承認 '+groupCounts.approve+' ・却下 '+groupCounts.reject+' ・未回答 '+groupCounts.pending+'（計 '+groupCards.length+'）';
+   }});
+   var total=cards.length, done=counts.approve+counts.reject;
+   document.getElementById('approval-progress').innerHTML='承認の進捗　'+done+' / '+total+' 件回答済み<small>承認 '+counts.approve+' ・却下 '+counts.reject+' ・未回答 '+counts.pending+'　｜　表示 '+shown+' 件</small>';
+  }}
+  document.querySelectorAll('[data-filter]').forEach(function(btn){{btn.addEventListener('click',function(){{activeFilter=btn.dataset.filter;document.querySelectorAll('[data-filter]').forEach(function(other){{other.setAttribute('aria-pressed',String(other===btn));}});refreshList();}});}});
+  document.getElementById('approval-search').addEventListener('input',refreshList);
+  groupSelect.addEventListener('change',refreshList);
+  refreshList();
+  document.querySelectorAll('.acts button').forEach(function(b){{
   b.addEventListener('click', async function(){{
    var sku=b.getAttribute('data-sku'), decide=b.getAttribute('data-decide');
    var name=(document.getElementById('name').value||'').trim();
@@ -219,9 +293,10 @@ align-items:center;justify-content:center;padding:3vmin;cursor:zoom-out}}
      body:JSON.stringify({{sku:sku,decision:decide,name:name}})}});
     var j=await r.json();
     if(!(r.ok&&j.ok)) throw new Error(j.error||('HTTP '+r.status));
-    var st=b.closest('figcaption').querySelector('.st');
-    st.className='st '+(decide==='approve'?'ok':'no');
-    st.textContent=(decide==='approve'?'✓ 承認':'却下')+(name?(' / '+name):'');
+     var st=b.closest('figcaption').querySelector('.st');
+     st.className='st '+(decide==='approve'?'ok':'no');
+      st.textContent=(decide==='approve'?'✓ 承認':'却下')+(name?(' / '+name):'');
+     refreshList();
    }}catch(e){{ acts.querySelectorAll('button').forEach(function(x){{x.disabled=false;}});
     alert('記録できませんでした: '+e.message); }}
   }});
