@@ -4,7 +4,7 @@
 //! `is_trusted_design_host`). New file + a single `mod` line in agent_api.rs
 //! keeps it out of the way of in-flight WIP.
 
-use super::{assess_product_risk, is_trusted_design_host, kind_from_sku, store_write_allowed};
+use super::{admin_token_present, assess_product_risk, is_trusted_design_host, kind_from_sku, store_write_allowed};
 
 // ── store collaborator write-access gate ─────────────────────────────────────
 
@@ -193,4 +193,28 @@ fn position_gating_is_dtg_front_print_only() {
     for pp in [301, 302, 19, 358, 1, 99, 601, 0, -1] {
         assert!(!crate::catalog::position_editable_product(pp), "pp={} must NOT be editable", pp);
     }
+}
+
+#[test]
+fn admin_token_present_matches_from_any_source() {
+    // Regression: an agent request carries the agent key in Authorization, so
+    // the ADMIN_TOKEN may arrive via ?token= / X-Admin-Token. Detection must
+    // not stop at the first (non-admin) Authorization candidate.
+    std::env::set_var("ADMIN_TOKEN", "secret-admin-xyz");
+    let mut h = axum::http::HeaderMap::new();
+    h.insert("authorization", "Bearer agent-key-not-admin".parse().unwrap());
+    h.insert("x-admin-token", "secret-admin-xyz".parse().unwrap());
+    assert!(admin_token_present(&h, None), "X-Admin-Token must match despite agent Bearer");
+
+    let mut q = std::collections::HashMap::new();
+    q.insert("token".to_string(), "secret-admin-xyz".to_string());
+    assert!(admin_token_present(&h, Some(&q)), "?token= must match despite agent Bearer");
+
+    let mut bad = std::collections::HashMap::new();
+    bad.insert("token".to_string(), "wrong".to_string());
+    let mut h2 = axum::http::HeaderMap::new();
+    h2.insert("authorization", "Bearer agent-key-not-admin".parse().unwrap());
+    assert!(!admin_token_present(&h2, Some(&bad)), "no source matches → false");
+
+    std::env::remove_var("ADMIN_TOKEN");
 }

@@ -1095,8 +1095,10 @@ pub async fn agent_create_product(
         return json_err(StatusCode::FORBIDDEN, "you do not own this store");
     }
 
-    // Per-email rate limit.
-    if !agent_rate_ok(&conn, &email) {
+    // Per-email rate limit. ADMIN_TOKEN holders (the operator doing a bulk,
+    // legitimate catalog load) are exempt — the token is a secret, so this
+    // does not open the limiter to anonymous/agent traffic.
+    if !admin_token_present(&headers, Some(&q)) && !agent_rate_ok(&conn, &email) {
         return json_err(StatusCode::TOO_MANY_REQUESTS,
             "rate limit: 20 products/hour per email");
     }
@@ -1302,7 +1304,8 @@ pub async fn agent_preview_mockup(
     }
     {
         let conn = db.lock().unwrap();
-        if !agent_preview_rate_ok(&conn, &email) {
+        // ADMIN_TOKEN holders are exempt (operator bulk load; see agent_rate_ok note).
+        if !admin_token_present(&headers, Some(&q)) && !agent_preview_rate_ok(&conn, &email) {
             return json_err(StatusCode::TOO_MANY_REQUESTS,
                 &format!("rate limit: {} previews/hour per email", AGENT_PREVIEWS_PER_HOUR));
         }
@@ -1952,29 +1955,27 @@ fn admin_token_present(headers: &HeaderMap, q: Option<&HashMap<String, String>>)
     if expected.is_empty() {
         return false;
     }
-    let mut cand: Option<String> = None;
+    // 全ソース(Bearer / X-Admin-Token / ?token / ?admin_token)のいずれかが
+    // ADMIN_TOKEN と一致すれば true。エージェントリクエストは Authorization に
+    // エージェントキーを載せるため、Bearer だけ見て早期確定してはいけない。
+    let mut cands: Vec<String> = Vec::new();
     if let Some(a) = headers.get("authorization").and_then(|v| v.to_str().ok()) {
         if let Some(t) = a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer ")) {
-            cand = Some(t.trim().to_string());
+            cands.push(t.trim().to_string());
         }
     }
-    if cand.is_none() {
-        if let Some(t) = headers.get("x-admin-token").and_then(|v| v.to_str().ok()) {
-            cand = Some(t.trim().to_string());
+    if let Some(t) = headers.get("x-admin-token").and_then(|v| v.to_str().ok()) {
+        cands.push(t.trim().to_string());
+    }
+    if let Some(qq) = q {
+        if let Some(t) = qq.get("token").or_else(|| qq.get("admin_token")) {
+            cands.push(t.trim().to_string());
         }
     }
-    if cand.is_none() {
-        if let Some(qq) = q {
-            cand = qq.get("token").or_else(|| qq.get("admin_token")).cloned();
-        }
-    }
-    match cand {
-        Some(t) => {
-            t.len() == expected.len()
-                && t.bytes().zip(expected.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0
-        }
-        None => false,
-    }
+    cands.iter().any(|t| {
+        t.len() == expected.len()
+            && t.bytes().zip(expected.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0
+    })
 }
 
 // ─── Own-catalog management (mu-mcp ツールが呼ぶ REST 面) ────────────────
@@ -2114,9 +2115,11 @@ pub async fn agent_upload_design(
     let email = match require_email(&db, &headers, Some(&q)) { Ok(e) => e, Err(r) => return r };
     // Cap uploads per email/hour to bound R2 storage + egress cost now that
     // any agent can self-register anonymously (public MCP registry listing).
+    // ADMIN_TOKEN holders are exempt (operator bulk load).
     {
         let conn = db.lock().unwrap();
-        if !crate::rate_limit_hit_ok(&conn, &format!("upload:{}", email), 60) {
+        if !admin_token_present(&headers, Some(&q))
+            && !crate::rate_limit_hit_ok(&conn, &format!("upload:{}", email), 60) {
             return json_err(StatusCode::TOO_MANY_REQUESTS, "upload rate limit reached; try again in an hour");
         }
     }
