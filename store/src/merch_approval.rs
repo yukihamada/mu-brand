@@ -182,11 +182,11 @@ main{{max-width:1480px;margin:0 auto;padding:0 22px 90px}}
 .jump{{display:flex;gap:7px;overflow-x:auto;padding:2px 0 3px;scrollbar-width:thin}}
 .jump a{{flex:0 0 auto;border:1px solid #393942;color:var(--fg);background:#17171c;padding:7px 12px;border-radius:999px;font-size:12px;text-decoration:none}}
 .jump a:hover{{border-color:#e7c56b}}
-.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,260px),1fr));gap:16px;margin-top:10px}}
+.grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,380px),1fr));gap:18px;margin-top:10px}}
 .card{{margin:0;background:var(--card);border:1px solid #303039;border-radius:14px;padding:12px;transition:border-color .15s}}
 .card:hover{{border-color:#555560}}.card[hidden],.sec[hidden]{{display:none!important}}
 .mock{{background:#101014;border-radius:10px;overflow:hidden;position:relative}}
-.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:4/3;object-fit:contain;background:#101014}}
+.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:1/1;object-fit:contain;background:#101014}}
 .mock::after{{content:"⤢ 画像を拡大";position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.75);color:#fff;font-size:11px;padding:4px 8px;border-radius:20px;pointer-events:none}}
 figcaption{{font-size:14px;color:var(--fg);margin-top:10px}}
 .sku{{font-family:ui-monospace,monospace;font-size:11px;color:var(--dim);margin:3px 0 8px;word-break:break-all}}
@@ -203,7 +203,7 @@ align-items:center;justify-content:center;padding:3vmin;cursor:zoom-out}}
 #lb img{{max-width:96vw;max-height:96vh;border-radius:10px;box-shadow:0 10px 60px rgba(0,0,0,.6)}}
 #lb .x{{position:fixed;top:16px;right:22px;color:#fff;background:#24242a;border:1px solid #666;border-radius:999px;width:44px;height:44px;font-size:26px;font-weight:700;cursor:pointer}}
 .foot{{color:var(--dim);font-size:12px;margin:26px auto 0;max-width:900px;border-top:1px solid #303039;padding-top:14px;line-height:1.8}}
-@media(max-width:640px){{header{{padding:22px 16px 8px}}.who{{padding:0 16px}}main{{padding-left:16px;padding-right:16px}}.tool{{margin-left:-16px;margin-right:-16px;padding:10px 16px}}.tool-top{{align-items:flex-start}}.controls{{width:100%}}.tool input{{max-width:none}}.tool select{{flex:1 1 100%}}.sec{{padding-left:16px;padding-right:16px;margin-top:24px}}.grid{{grid-template-columns:1fr;gap:14px}}.mock img{{aspect-ratio:1/1}}}}
+@media(max-width:640px){{header{{padding:22px 16px 8px}}.who{{padding:0 16px}}main{{padding-left:16px;padding-right:16px}}.tool{{margin-left:-16px;margin-right:-16px;padding:10px 16px}}.tool-top{{align-items:flex-start}}.controls{{width:100%}}.tool input{{max-width:none}}.tool select{{flex:1 1 100%}}.sec{{padding-left:16px;padding-right:16px;margin-top:24px}}.grid{{grid-template-columns:1fr;gap:14px}}}}
 @media(prefers-reduced-motion:reduce){{*,*::before,*::after{{scroll-behavior:auto!important;transition:none!important}}}}
 </style></head><body>
 <header>
