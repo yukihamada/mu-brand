@@ -186,7 +186,7 @@ main{{max-width:1480px;margin:0 auto;padding:0 22px 90px}}
 .card{{margin:0;background:var(--card);border:1px solid #303039;border-radius:14px;padding:16px;transition:border-color .15s}}
 .card:hover{{border-color:#555560}}.card[hidden],.sec[hidden]{{display:none!important}}
 .mock{{background:#101014;border-radius:10px;overflow:hidden;position:relative}}
-.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:1/1;object-fit:contain;background:#101014}}
+.mock img{{width:100%;display:block;cursor:zoom-in;aspect-ratio:1/1;object-fit:contain;background:#101014;transform:scale(1.5);transform-origin:50% 42%}}
 .mock::after{{content:"⤢ 画像を拡大";position:absolute;right:8px;bottom:8px;background:rgba(0,0,0,.75);color:#fff;font-size:11px;padding:4px 8px;border-radius:20px;pointer-events:none}}
 figcaption{{font-size:16px;color:var(--fg);margin-top:12px}}
 .sku{{font-family:ui-monospace,monospace;font-size:12px;color:var(--dim);margin:4px 0 10px;word-break:break-all}}
@@ -211,6 +211,7 @@ align-items:center;justify-content:center;padding:3vmin;cursor:zoom-out}}
 <header>
 <h1>SOLUNA × ZAMNA ／ DJコラボT — 商品承認</h1>
 <div class="sub">2026.11.13 · Oʻahu　｜　グループ別に承認/却下を記録できます。<br>
+一覧画像はTシャツの胸元を拡大表示しています（画像を押すと全体表示）。プリントの実寸は変更していません。<br>
 承認が揃うまで公開・販売しません。無回答は承認ではありません。</div>
 </header>
 <div class="who"><label for="name">記録に表示するお名前（任意）／ Name</label><input id="name" placeholder="お名前 / your name（任意）" autocomplete="name"></div>
