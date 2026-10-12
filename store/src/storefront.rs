@@ -33,7 +33,7 @@ fn picks(conn: &Connection) -> rusqlite::Result<Vec<Pick>> {
                     (UPPER(p.sku) LIKE '%TEE%') DESC,
                     (UPPER(p.sku) LIKE '%TEE-BLACK') DESC, p.sort_order, p.sku) AS variant
            FROM catalog_products p JOIN catalog_brands b ON b.slug=p.brand
-           WHERE p.status='live' AND p.is_active=1 AND b.is_active=1
+           WHERE p.status='live' AND b.is_active=1
              AND p.retail_price_jpy>0 AND p.sku NOT LIKE 'PROPOSAL-%'
              AND (UPPER(p.sku) LIKE '%TEE%' OR UPPER(p.sku) LIKE '%-RASH%'
                   OR UPPER(p.sku) LIKE '%HOODIE%' OR UPPER(p.sku) LIKE '%CREWNECK%')
@@ -160,16 +160,18 @@ mod tests {
               ('BJJ-TEE-1','Tap','bjj','https://wearmu.com/tee.jpg',4800,1,'live',1),
               ('BJJ-TEE-2','Tap','bjj','https://wearmu.com/tee-white.jpg',4800,2,'live',1),
               ('BJJ-TEE-DRAFT','Draft','bjj','https://wearmu.com/draft.jpg',4800,0,'draft',1),
-              ('BJJ-TEE-INACTIVE','Inactive','bjj','https://wearmu.com/inactive.jpg',4800,0,'live',0),
+              ('BJJ-TEE-INACTIVE','Inactive','bjj','https://wearmu.com/inactive.jpg',4800,0,'review',0),
+              ('BJJ-TEE-ALIAS','Alias','bjj','https://wearmu.com/alias.jpg',4800,0,'live',0),
               ('HIDDEN-TEE','Hidden','hidden','https://wearmu.com/hidden.jpg',4800,0,'live',1),
+              ('HIDDEN-TEE-INACTIVE','HiddenInactive','hidden','https://wearmu.com/hidden-inactive.jpg',4800,0,'live',0),
               ('BJJ-TEE-TEMP','Temporary','bjj','https://printful-upload.s3.com/a.jpg',4800,0,'live',1),
               ('BJJ-TEE-FREE','Zero','bjj','https://wearmu.com/free.jpg',0,0,'live',1),
               ('PROPOSAL-TEE','Proposal','bjj','https://wearmu.com/proposal.jpg',4800,0,'live',1),
               ('BJJ-HOUSE','House','bjj','https://wearmu.com/house.jpg',900000,0,'live',1);").unwrap();
         let selected = picks(&conn).unwrap();
-        assert_eq!(selected.len(), 1);
-        assert_eq!(selected[0].sku, "BJJ-TEE-1");
-        assert_eq!(picks(&conn).unwrap()[0].sku, selected[0].sku);
+        let skus: Vec<&str> = selected.iter().map(|p| p.sku.as_str()).collect();
+        assert_eq!(skus, ["BJJ-TEE-ALIAS", "BJJ-TEE-1"]);
+        assert_eq!(picks(&conn).unwrap().len(), selected.len());
     }
 
     #[test]
