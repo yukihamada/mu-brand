@@ -3218,7 +3218,7 @@ fn stripe_checkout_form_jp(f: StripeCheckoutFields) -> Vec<(String, String)> {
 /// Returns true if the named env var is set to a truthy value, OR (when unset)
 /// falls back to `default_on`. Truthy = "1" / "true" / "yes" (case-insensitive).
 /// Explicitly "0" / "false" / "no" disables.
-fn env_flag_enabled(var: &str, default_on: bool) -> bool {
+pub(crate) fn env_flag_enabled(var: &str, default_on: bool) -> bool {
     match env::var(var).ok().map(|s| s.trim().to_ascii_lowercase()) {
         Some(s) if s == "1" || s == "true" || s == "yes" || s == "on" => true,
         Some(s) if s == "0" || s == "false" || s == "no" || s == "off" => false,

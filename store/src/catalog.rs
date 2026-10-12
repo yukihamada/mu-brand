@@ -16572,6 +16572,18 @@ pub async fn shop_checkout(
         ("metadata[kind]", "catalog".into()),
         ("metadata[catalog_sku]", sku.clone()),
     ];
+    // JP CVR repair for the catalog path (2026-10-13): production sessions
+    // were observed via Stripe API with locale=null (JP buyers see an English
+    // checkout) and no phone collection. The legacy /api/checkout path got
+    // the same fix on 2026-05-11 (611107f3) but this catalog path never did.
+    // ~97% of recent sessions expired unpaid. Env-gated for rollback parity
+    // with the legacy path (STRIPE_LOCALE_JA / STRIPE_PHONE_COLLECTION).
+    if crate::env_flag_enabled("STRIPE_LOCALE_JA", true) {
+        form.push(("locale", "ja".into()));
+    }
+    if crate::env_flag_enabled("STRIPE_PHONE_COLLECTION", true) {
+        form.push(("phone_number_collection[enabled]", "true".into()));
+    }
     // Size picker inside Stripe Checkout for made-to-order apparel (tee /
     // hoodie / crewneck / rashguard / long-sleeve). Previously this dropdown
     // was gated on `is_bulk_brand` (nouns only), so every other apparel SKU
@@ -22118,5 +22130,37 @@ mod make_quota_tests {
         assert_eq!(MAKE_PAID_JPY, 100, "本人指示: ¥100/枚");
         assert!(MAKE_DAILY_CAP_PER_MAKER > MAKE_FREE_PER_DAY,
             "無料枠より上限が小さいと課金枠が存在しない");
+    }
+}
+
+#[cfg(test)]
+mod catalog_checkout_jp_tests {
+    // Regression guard for the 2026-10-13 fix: the catalog checkout path
+    // (/api/shop/checkout) went out with locale=null and no phone collection
+    // while the legacy path had the JP CVR repair since 2026-05-11.
+    // These tests mutate process-global env vars; serialize them with a
+    // local lock (mirrors stripe_cvr_tests in main.rs).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn catalog_checkout_defaults_to_ja_locale_and_phone() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("STRIPE_LOCALE_JA");
+        std::env::remove_var("STRIPE_PHONE_COLLECTION");
+        assert!(crate::env_flag_enabled("STRIPE_LOCALE_JA", true),
+            "locale=ja must default ON — JP buyers otherwise see an English Stripe page");
+        assert!(crate::env_flag_enabled("STRIPE_PHONE_COLLECTION", true),
+            "phone collection must default ON (JP delivery reachability)");
+    }
+
+    #[test]
+    fn catalog_checkout_flags_can_be_disabled() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("STRIPE_LOCALE_JA", "0");
+        std::env::set_var("STRIPE_PHONE_COLLECTION", "0");
+        assert!(!crate::env_flag_enabled("STRIPE_LOCALE_JA", true));
+        assert!(!crate::env_flag_enabled("STRIPE_PHONE_COLLECTION", true));
+        std::env::remove_var("STRIPE_LOCALE_JA");
+        std::env::remove_var("STRIPE_PHONE_COLLECTION");
     }
 }
