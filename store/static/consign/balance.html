@@ -1,0 +1,78 @@
+<!doctype html><html lang="ja"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>残高 — MU 出品代行 | wearmu.com</title>
+<meta name="description" content="出品代行で受け取った残高。MU内のお買い物に使えます。付与日から6ヶ月有効。現金での払い戻し・換金はできません。">
+<meta name="robots" content="noindex">
+<script defer src="https://enabler-analytics.fly.dev/t.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0a0a;color:#f5f5f0;font-family:'Helvetica Neue','Hiragino Sans',Arial,sans-serif;line-height:1.7;min-height:100dvh}
+nav{padding:16px 24px;border-bottom:1px solid rgba(255,255,255,.08);display:flex;justify-content:space-between;align-items:center}
+nav a{color:#f5f5f0;text-decoration:none;font-size:11px;letter-spacing:.3em;text-transform:uppercase;opacity:.85}
+nav .brand{font-weight:900;letter-spacing:.4em}
+.wrap{max-width:640px;margin:0 auto;padding:48px 22px 100px}
+h1{font-size:28px;font-weight:800;margin-bottom:6px}
+.sub{color:rgba(245,245,240,.6);font-size:14px;margin-bottom:28px}
+
+/* メール照会フォーム（未ログイン時） */
+.lookup{display:__LOOKUP_DISPLAY__;background:#121212;border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:18px}
+.lookup input{width:100%;background:#141414;border:1px solid rgba(255,255,255,.14);color:#f5f5f0;border-radius:10px;padding:13px 15px;font-size:15px;margin-bottom:10px}
+.lookup input:focus{outline:none;border-color:#ffd700}
+.lookup button{width:100%;background:#ffd700;color:#0a0a0a;border:0;border-radius:10px;padding:13px;font-size:15px;font-weight:800;cursor:pointer}
+.lookup .small{font-size:12px;color:rgba(245,245,240,.5);margin-top:8px;line-height:1.6}
+
+/* 残高サマリ */
+.bigbox{background:linear-gradient(160deg,#1a1407,#121212);border:1px solid rgba(255,215,0,.28);border-radius:16px;padding:24px;margin-bottom:18px}
+.bigbox .lbl{font-size:12px;letter-spacing:.2em;color:rgba(245,245,240,.55);text-transform:uppercase}
+.bigbox .amt{font-size:44px;font-weight:800;color:#ffd700;margin:4px 0}
+.bigbox .use{display:inline-block;margin-top:8px;background:#ffd700;color:#0a0a0a;text-decoration:none;font-weight:800;padding:11px 22px;border-radius:9px;font-size:14px}
+
+/* 有効期限つきロット一覧 */
+h2{font-size:14px;letter-spacing:.12em;color:rgba(245,245,240,.55);text-transform:uppercase;margin:26px 0 10px}
+.lot{display:flex;justify-content:space-between;align-items:center;background:#141414;border:1px solid rgba(255,255,255,.1);border-radius:10px;padding:13px 15px;margin-bottom:8px}
+.lot .li{font-size:14px}
+.lot .li .src{font-size:11.5px;color:rgba(245,245,240,.5);margin-top:2px}
+.lot .ramt{font-size:16px;font-weight:800;color:#f5f5f0}
+.lot .exp{font-size:11.5px;color:rgba(245,245,240,.55);text-align:right;margin-top:2px}
+.lot.soon{border-color:rgba(255,140,90,.4)}
+.lot.soon .exp{color:#ff8a5a}
+.lot.expired{opacity:.45}
+.lot.expired .ramt{text-decoration:line-through}
+
+.empty{color:rgba(245,245,240,.5);font-size:14px;padding:18px 0}
+.note{font-size:11.5px;color:rgba(245,245,240,.5);line-height:1.8;margin-top:24px;background:#0d0d0d;border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:13px 15px}
+.note b{color:rgba(255,215,0,.75)}
+.foot{margin-top:24px;font-size:11.5px;color:rgba(245,245,240,.45)}
+.foot a{color:rgba(255,215,0,.75)}
+</style></head><body>
+<nav><a class="brand" href="/">MU</a><a href="/consign">出品する →</a></nav>
+<div class="wrap">
+  <h1>残高</h1>
+  <p class="sub">出品代行で受け取った残高です。MU内のお買い物に使えます。</p>
+
+  <!-- 未照会時はメール入力フォーム（__LOOKUP_DISPLAY__ = block / none をサーバ注入） -->
+  <div class="lookup">
+    <form method="get" action="/consign/balance">
+      <input type="email" name="email" placeholder="受け取りに使ったメールアドレス" required>
+      <button type="submit">残高をみる</button>
+      <div class="small">出品時に入力したメールアドレスで照会します。※ 現金での払い戻し・換金はできません。</div>
+    </form>
+  </div>
+
+  <!-- __BALANCE_BLOCK__ : 照会済みのとき、合計＋ロット一覧をサーバ注入。未照会なら空文字。 -->
+  __BALANCE_BLOCK__
+
+  <div class="note">
+    <b>この残高について</b><br>
+    ・MU（wearmu.com）内のお買い物にのみ使えます。<br>
+    ・<b>現金での払い戻し・他者への送付・換金はできません。</b><br>
+    ・各ロットは<b>付与日から6ヶ月で失効</b>します（古いロットから優先的に使われます）。<br>
+    ・有効期限の近いロットはオレンジ色で表示しています。
+  </div>
+  <div class="foot">
+    <a href="/consign">出品する</a> ·
+    <a href="/consign/sellers">販売業者情報（取引DPF法）</a> ·
+    <a href="/consign/tokushoho">特定商取引法に基づく表記</a>
+  </div>
+</div>
+</body></html>
