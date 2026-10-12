@@ -1,0 +1,4 @@
+# ROLL brand page (roll-brand.html) — migaku loop
+# target ≥95 (web-only mode, local header+gzip server :8920)
+round1 baseline : 96.0/S  (security20 ux15 seo15 i18n10 a11y5 perf7) — 弱点=static assets cache-control
+round2 fix-perf : 100.0/S (favicon.svg/.ico を immutable cache で配信→perf 10/10) ✅全8軸満点
