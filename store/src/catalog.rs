@@ -117,8 +117,13 @@ pub fn ensure_schema(conn: &rusqlite::Connection) {
             status                 TEXT,
             created_at             TEXT DEFAULT (datetime('now'))
          );
-         CREATE INDEX IF NOT EXISTS idx_catorders_session
-             ON catalog_orders(stripe_session_id);
+          CREATE INDEX IF NOT EXISTS idx_catorders_session
+              ON catalog_orders(stripe_session_id);
+          -- /shop の商品カードが sku ごとに売上件数・MUスコアを相関サブクエリで
+          -- 引くため、(sku, status) に索引がないと商品数×全件走査になり 8〜15秒
+          -- かかっていた。索引追加でサブクエリを索引走査に変える。
+          CREATE INDEX IF NOT EXISTS idx_catorders_sku_status
+              ON catalog_orders(sku, status);
          CREATE TABLE IF NOT EXISTS catalog_founder_cards (
             number              INTEGER PRIMARY KEY,  -- 1..100
             stripe_session_id   TEXT UNIQUE NOT NULL,
