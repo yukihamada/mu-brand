@@ -35,10 +35,13 @@ on:
     # Every 6h :30 — konbini-reminder (poke buyers with unpaid Konbini sessions
     # before the 3-day expiry, two buckets: 24h-old and ~24h-before-expiry)
     - cron: '30 */6 * * *'
-    # REMOVED 2026-08-21: MUGEN hourly (:25) — was duplicating the local cron job
-    # (generate.py mugen), causing 2x Gemini image cost. Local cron continues.
-    # See: /Users/yuki/workspace/tasks/human-gates.md 00d3
-    # - cron: '25 * * * *'
+    # MUGEN hourly (:25). Was removed 2026-08-21 because the local cron
+    # duplicated it (2x image cost), but the local cron machine (m5) is
+    # unreachable since 2026-10-25 → generation stalled 12h+ and the Fly
+    # watchdog alerted. Re-enable GitHub Actions as the authoritative
+    # hourly generator. generate.py dedups via /api/admin/next_drop, so
+    # if the local cron ever comes back they cannot double-generate.
+    - cron: '25 * * * *'
     # 6-hourly :40 — EN copy backfill for new SKUs (SEO: PDP ?lang=en body).
     - cron: '40 */6 * * *'
     # Every 5 min — external uptime watcher. Pings /healthz from outside Fly
@@ -357,6 +360,11 @@ jobs:
           MU_ADMIN_TOKEN:     ${{ secrets.MU_ADMIN_TOKEN }}
           HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
           MU_STORE_URL:       https://wearmu.com
+          # 2026-10-25: generate.py は 2026-08-21 以降 teai優先→OpenRouter
+          # フォールバックの画像生成経路。両方のキーを渡さないと
+          # "No image API key available" で毎回失敗する (実障害)。
+          TEAI_API_KEY:       ${{ secrets.TEAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: python3 generate.py mugen
       - name: Notify Telegram on failure
         if: failure()
