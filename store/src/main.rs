@@ -79792,6 +79792,10 @@ async fn agent_watchdog(db: Db) -> Result<AgentReport, String> {
         for def in AGENT_REGISTRY {
             // Skip the watchdog itself — we're running right now.
             if def.name == "watchdog" { continue; }
+            // Skip agents explicitly killed via env var (intentional stop,
+            // not a failure). Without this the watchdog would forever
+            // force-run + alert on agents the operator meant to keep off.
+            if agent_killed(def.name).is_some() { continue; }
             let last = agent_last_run_secs(&conn, def.name);
             if last == 0 {
                 // Never ran — treat as stuck if registry is > 1h old.
