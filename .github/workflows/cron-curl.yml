@@ -42,6 +42,11 @@ on:
     # hourly generator. generate.py dedups via /api/admin/next_drop, so
     # if the local cron ever comes back they cannot double-generate.
     - cron: '25 * * * *'
+    # MUON daily 00:45 UTC = JST 09:45. ローカル cron(generate.py muon)の
+    # マシンが 2026-10-17 以降動いておらず MUON が 10/17〜 毎日欠けた。
+    # GitHub Actions を正本にする。generate.py が本番の "MUON YYYY.MM.DD"
+    # を確認してから作るので、ローカル cron が復帰しても二重出品しない。
+    - cron: '45 0 * * *'
     # 6-hourly :40 — EN copy backfill for new SKUs (SEO: PDP ?lang=en body).
     - cron: '40 */6 * * *'
     # Every 5 min — external uptime watcher. Pings /healthz from outside Fly
@@ -74,6 +79,8 @@ on:
           - sample_grow_force
           - konbini_reminder
           - mugen_generate
+          - muon_generate
+          - muon_dry_run
           - uptime_ping
           - db_backup
 
@@ -376,6 +383,53 @@ jobs:
             curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
               -d "chat_id=${TG_CHAT}" \
               -d "text=⚠️ mugen_generate cron failed (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Fly watchdog will alert again if this persists."
+          fi
+
+  muon_generate:
+    # Daily JST 09:45 — today's MUON drop (1 day = 1 drop, edition size =
+    # Hokkaido temperature). Same pipeline as mugen_generate. muon_dry_run
+    # prints drop#/name/qty/price/dedup only (no image API, no Printful,
+    # no import) — safe to dispatch for verification.
+    if: >-
+      github.event.schedule == '45 0 * * *' ||
+      github.event.inputs.target == 'muon_generate' ||
+      github.event.inputs.target == 'muon_dry_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install deps
+        run: pip install --quiet google-genai pillow requests numpy qrcode openai
+      - name: Generate today's MUON
+        env:
+          # ローカルでは 0–8h ランダムに眠るが、CI では timeout を超えると
+          # job ごと cancelled=欠番になるので 5 分に丸める (mugen と同じ)。
+          MAX_DELAY_SECS: "300"
+          MU_DRY_RUN:         ${{ github.event.inputs.target == 'muon_dry_run' && '1' || '' }}
+          GEMINI_API_KEY:     ${{ secrets.GEMINI_API_KEY }}
+          PRINTFUL_API_KEY:   ${{ secrets.PRINTFUL_API_KEY }}
+          MU_ADMIN_TOKEN:     ${{ secrets.MU_ADMIN_TOKEN }}
+          HELIUS_API_KEY:     ${{ secrets.HELIUS_API_KEY }}
+          MU_STORE_URL:       https://wearmu.com
+          TEAI_API_KEY:       ${{ secrets.TEAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python3 generate.py muon
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT:  ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+            curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              -d "chat_id=${TG_CHAT}" \
+              -d "text=⚠️ muon_generate cron failed (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Fly watchdog will alert again if this persists."
           fi
 
   uptime_ping:

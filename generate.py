@@ -5,7 +5,7 @@ MA: weekly (Mon) × 1piece, 7-day auction from ¥30k | MUON: daily × temp°C pi
 """
 
 import os, sys, json, random, sqlite3, requests, base64, hashlib, time, io, struct
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -877,8 +877,37 @@ Design rules:
     return name, prompt
 
 
+JST = timezone(timedelta(hours=9))
+
+
+def jst_today() -> date:
+    """MUON は「JST の 1 日 = 1 ドロップ」。CI ランナー(UTC)でもローカル Mac
+    (JST)でも同じ日付になるよう、date.today() ではなく JST で決める。"""
+    return datetime.now(JST).date()
+
+
+def muon_already_dropped(day: date) -> bool | None:
+    """本番に MUON <day> が既にあるか。True/False、確認不能なら None。
+
+    GitHub Actions とローカル cron が同じ日に両方走っても二重出品しないための
+    冪等ガード(MUGEN は /api/admin/next_drop で採番するが、MUON は日付が
+    主キー相当なのでこちらで判定する)。ICE 版の名前 "MUON ICE <day>" も含む。
+    """
+    stamp = day.strftime('%Y.%m.%d')
+    try:
+        r = requests.get(f"{STORE_URL}/api/products/muon", timeout=15)
+        r.raise_for_status()
+        rows = r.json()
+        if isinstance(rows, dict):
+            rows = rows.get("products") or rows.get("items") or []
+        return any(str(p.get("name", "")).endswith(stamp) for p in rows)
+    except Exception as e:
+        print(f"  muon dedup check failed ({e})")
+        return None
+
+
 def prompt_muon(weather: dict, drop_num: int) -> tuple[str, str, int, bool]:
-    today = date.today()
+    today = jst_today()
     temp = weather["temp_c"]
 
     # ICE Edition: temperature at or below 0°C
@@ -1265,7 +1294,23 @@ def random_delay(brand: str):
 
 
 def run(brand: str):
-    random_delay(brand)
+    # MU_DRY_RUN=1: 採番・天気・名前/数量/価格・重複判定までを表示して終了。
+    # 画像生成(有料API)・Printful・本番 import は一切しない。
+    dry_run = os.environ.get("MU_DRY_RUN") == "1"
+
+    if brand == "muon":
+        day = jst_today()
+        exists = muon_already_dropped(day)
+        if exists:
+            print(f"[MUON] MUON {day.strftime('%Y.%m.%d')} は本番に既にあるのでスキップ (冪等)")
+            return None
+        if exists is None and not dry_run:
+            # 確認できないまま作ると二重出品になり得る。失敗扱いで通知させる。
+            print("[MUON] 本番の既存ドロップを確認できないので中止")
+            sys.exit(2)
+
+    if not dry_run:
+        random_delay(brand)
 
     con = init_db()
     drop_num = next_drop_num(con, brand)
@@ -1338,6 +1383,10 @@ def run(brand: str):
         sys.exit(1)
 
     print(f"  name: {name}, qty: {quantity}, price: ¥{price:,}")
+
+    if dry_run:
+        print("  DRY RUN: 画像生成・Printful・本番 import をせずに終了")
+        return drop_num
 
     # Steer toward proven sellers in this brand: top 3 by (sold*10 + bids*3 +
     # current_bid/1000). On cold start the list is empty and we keep the
