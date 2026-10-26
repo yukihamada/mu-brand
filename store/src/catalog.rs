@@ -9248,9 +9248,11 @@ async function runMake(){
       +(eng==='local'?'&engine=local':'')+(window.MU_REQ?'&req='+encodeURIComponent(window.MU_REQ):'')+att,{method:'POST'});
     const j=await r.json();
     genDone();
-    if(myRun!==RUNSEQ) return; // stop this run's timers even when superseded
-    if(r.status===401&&j.need_register){
+    if(myRun!==RUNSEQ){ MAKING=false;syncMakeButton(); return; } // stop this run's timers even when superseded
+    if(r.status===401){
       // 2026-08-28: 作るには登録必須。ここでメール認証を済ませたら自動で再送する。
+      // 2026-10-26: need_register の真偽に依存せず 401 は常に登録ゲートを出す
+      // (プロキシ等で need_register が欠落/変換されても無音失敗を防ぐ)。
       $('#out').innerHTML=registerGateHtml();
       wireRegisterGate();
     }
@@ -9266,7 +9268,8 @@ async function runMake(){
       }
       quotaLoad();
     }
-    else if(!j.ok){ $('#out').innerHTML='<div class=err>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
+    else if(r.status>=500){ $('#out').innerHTML='<div class=err role=alert>サーバーが混み合っています。少し時間をおいてもう一度お試しください。</div>'; }
+    else if(!j.ok){ $('#out').innerHTML='<div class=err role=alert>'+(j.error||'うまく作れませんでした。もう一度お試しください。')+'</div>'; }
     else{
       // 添付は1作品で消費(次の作成に紛れ込まない)。
       if(ATT===attachment && ATTSEQ===attachmentSeq){ATT=null;attF.value='';attRender();}
@@ -9278,7 +9281,7 @@ async function runMake(){
       // 旧mu_make_okクッキー判定(生成後にメール認証を求める名義化ゲート)は不要になった。
       renderResult(j,p,true);
     }
-  }catch(e){ genDone(); if(myRun!==RUNSEQ) return; $('#out').innerHTML='<div class=err>通信エラー。もう一度お試しください。</div>'; }
+  }catch(e){ genDone(); if(myRun!==RUNSEQ){ MAKING=false;syncMakeButton(); return; } $('#out').innerHTML='<div class=err role=alert>通信エラー。もう一度お試しください。</div>'; }
   MAKING=false;syncMakeButton();
 }
 // 生成済みの結果カードを描画。ok は旧仕様(生成後メール認証)の名残り —
@@ -9383,10 +9386,10 @@ async function muRemix(e,sku){
 // claimCardHtml と同じ見た目・同じ6桁コードの仕組み(/api/collab/auth/*)。
 // 認証が済むと mu_collab_session cookie が付き、runMake() を自動で再送する。
 function registerGateHtml(){
-  return '<div class="card gate">'
+  return '<div class="card gate" role="alert">'
     +'<div class=gatebody>'
     +'<div class=gateh>まず、<b>メールで登録</b>。</div>'
-    +'<div class=gatesub>6桁コード・10秒で完了。無断使用/著作権侵害を防ぐための本人確認です。1日に作れるのは<b>5点まで</b>。メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>。</div>'
+    +'<div class=gatesub>6桁コード・10秒で完了。無断使用/著作権侵害を防ぐための本人確認です。<b>1日3枚まで無料</b>で作れます（上限1日5点）。メールの扱いは<a href="/privacy" target="_blank" style="color:#ffd700">プライバシー</a>。</div>'
     +'<div id=rStep1><div class=saverow><input id=rEmail type=email placeholder="you@example.com" autocomplete=email inputmode=email><button id=rSend>コードを送る</button></div></div>'
     +'<div id=rStep2 style="display:none"><div class=saverow><input id=rCode type=text placeholder="6桁コード" inputmode=numeric autocomplete=one-time-code maxlength=6 style="letter-spacing:.3em;text-align:center;font-family:monospace"><button id=rVerify>登録して作る</button></div><button id=rBack class=gback>メールアドレスを入れ直す</button></div>'
     +'<div class=savemsg id=rMsg></div>'
@@ -10630,7 +10633,21 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
     const remix=e.c.muRemix({preventDefault(){},target:f},'A'),make=e.c.runMake();
     e.reply(1,{ok:true,sku:'B'});await make;e.reply(0,{ok:true,sku:'old-remix'});await remix;
     assert.deepEqual(e.rendered,['B']);assert.equal(e.c.MAKING,false);}
-  console.log('7 browser race regressions passed');
+  // ── 401 / error handling regressions (2026-10-26) ──
+  {const e=env();const run=e.c.runMake();e.reply(0,{ok:false,need_register:true,error:'作るには登録(メールでログイン)が必要です。'},401);await run;
+    assert.equal(e.el('#out').innerHTML,'register','401 must show register gate');assert.equal(e.c.MAKING,false);}
+  {const e=env();const run=e.c.runMake();e.reply(0,{ok:false,need_register:true},401);await run;
+    assert.equal(e.el('#out').innerHTML,'register','401 without error field must still show register gate');assert.equal(e.c.MAKING,false);}
+  {const e=env();const run=e.c.runMake();e.reply(0,{ok:false,error:'server error'},500);await run;
+    assert.ok(e.el('#out').innerHTML.includes('role=alert'),'500 must show alert');assert.ok(e.el('#out').innerHTML.includes('混み合っています'),'500 must show busy message');assert.equal(e.c.MAKING,false);}
+  {const e=env();const run=e.c.runMake();e.reply(0,{ok:false,error:'bad request'},400);await run;
+    assert.ok(e.el('#out').innerHTML.includes('role=alert'),'400 must show alert');assert.ok(e.el('#out').innerHTML.includes('bad request'),'400 must show server error');assert.equal(e.c.MAKING,false);}
+  {const e=env();const run=e.c.runMake();e.reply(0,{ok:false},402);await run;
+    assert.ok(e.el('#out').innerHTML.includes('role=alert')||e.el('#out').innerHTML.includes('class=err'),'402 must show error');assert.equal(e.c.MAKING,false);}
+  {const e=env();const a=e.c.runMake(),b=e.c.runMake();e.reply(1,{ok:true,sku:'B'});await b;
+    e.reply(0,{ok:false,need_register:true},401);await a;assert.deepEqual(e.rendered,['B']);
+    assert.equal(e.c.MAKING,false,'MAKING must reset after superseded 401');}
+  console.log('13 browser race+error regressions passed');
 })().catch(e=>{console.error(e);process.exitCode=1});
 "###;
         let output = std::process::Command::new("node").arg("-e").arg(script)

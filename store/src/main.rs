@@ -50027,7 +50027,7 @@ pub fn validate_vision_hard(text: &str) -> Vec<String> {
         if text.contains(emoji) { violations.push(format!("hype emoji '{}'", emoji)); }
     }
     // 2. Excessive exclamations
-    let excl_count = text.chars().filter(|c| *c == '!' || *c == '!').count();
+    let excl_count = text.chars().filter(|c| *c == '!').count();
     if excl_count > 1 { violations.push(format!("excessive '!' x{}", excl_count)); }
     // 3. Forbidden adjectives (Vision §1 numbers over adjectives)
     for word in ["斬新", "素晴らしい", "最強", "革命", "圧倒的", "神", "驚異的", "話題沸騰"] {

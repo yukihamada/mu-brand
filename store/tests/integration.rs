@@ -266,3 +266,36 @@ fn merch_category_renders_with_empty_db() {
         s
     );
 }
+
+/// /api/make without registration must return 401 + need_register JSON.
+/// The frontend uses this to render the email-registration gate instead of
+/// failing silently. Regression for BUG-001 (2026-10-26).
+#[test]
+fn make_api_unauthenticated_returns_401_with_need_register() {
+    let srv = start_server();
+    let resp = client()
+        .post(format!("{}/api/make?prompt=test", srv.base))
+        .send()
+        .expect("POST /api/make");
+    assert_eq!(resp.status().as_u16(), 401, "expected 401 for unauthenticated /api/make");
+    let j: serde_json::Value = resp.json().expect("JSON body");
+    assert_eq!(j["ok"].as_bool().unwrap_or(true), false, "ok must be false");
+    assert_eq!(j["need_register"].as_bool().unwrap_or(false), true, "need_register must be true");
+    assert!(j["error"].as_str().unwrap_or("").contains("登録"), "error must mention registration");
+}
+
+/// /make page must contain the register gate JS and role=alert markup so
+/// 401 responses surface a visible registration prompt (not a silent fail).
+#[test]
+fn make_page_contains_register_gate_and_alert_role() {
+    let srv = start_server();
+    let body = client()
+        .get(format!("{}/make", srv.base))
+        .send()
+        .expect("GET /make")
+        .text()
+        .expect("body");
+    assert!(body.contains("registerGateHtml"), "/make must ship registerGateHtml JS");
+    assert!(body.contains("role=\"alert\"") || body.contains("role=alert"), "/make must include role=alert for error/register surfaces");
+    assert!(body.contains("id=\"go\""), "/make must include the go button");
+}
