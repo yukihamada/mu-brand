@@ -8572,9 +8572,24 @@ pub async fn make_page(State(db): State<Db>, headers: axum::http::HeaderMap, Que
         let s = if *v == sel { " selected" } else { "" };
         let availability = kind_availability(v, Some("JP"));
         let disabled = if availability.available { "" } else { " disabled" };
-        let reason = availability.unavailable_reason_ja.map(|r| format!(" — {r}")).unwrap_or_default();
-        kind_options.push_str(&format!("      <option value=\"{}\"{}{}>{}{}</option>\n",
-            v, s, disabled, html_text(label), html_text(&reason)));
+        // 選択肢には短い注記だけ出す。長い理由文はUIを崩すので title 属性へ。
+        // (2026-10-26 BUG-002: 「配送できません。配送可能国をご確認ください。」全文が
+        //  <option> テキストに混入しコンボボックスを崩していた)
+        let reason = if availability.available {
+            String::new()
+        } else {
+            match availability.unavailable_reason {
+                Some("shipping_country_unavailable") => "（配送不可）".to_string(),
+                Some("variant_out_of_stock") => "（在庫切れ）".to_string(),
+                Some("vendor_product_mismatch") | Some("multipage_design_required")
+                | Some("vendor_mapping_unavailable") => "（準備中）".to_string(),
+                _ => "（利用不可）".to_string(),
+            }
+        };
+        let title = availability.unavailable_reason_ja
+            .map(|r| format!(" title=\"{}\"", html_text(r))).unwrap_or_default();
+        kind_options.push_str(&format!("      <option value=\"{}\"{}{}{}>{}{}</option>\n",
+            v, s, disabled, title, html_text(label), html_text(&reason)));
     }
     let price_hint = if use_all {
         "作れる物理グッズ：<b>Tシャツ ¥4,900〜・パーカー ¥8,800〜・スウェット ¥7,800〜・ラッシュガード ¥9,800〜・ステッカー ¥800〜・マグ ¥2,200〜・スマホケース ¥4,900〜・ポスター ¥4,900〜</b>。1点から受注生産・買わなくてもOK。権利リスクがあるものだけ人が確認、あとは自動で公開。"
