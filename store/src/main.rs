@@ -35433,12 +35433,13 @@ async fn admin_create_discard(
 ///   AND ip_owner NOT LIKE 'Personal%'  (filters out /me self-issued slugs)
 ///   AND slug NOT LIKE 'personal-%'     (defense in depth)
 /// Used by /proposals (static HTML) to render the public collab grid.
+/// ip_owner contains partner names / internal notes — not for public API.
 async fn public_proposals_list(
     State(db): State<Db>,
 ) -> Response {
     let conn = db.lock().unwrap();
     let mut stmt = match conn.prepare(
-        "SELECT p.slug, p.name, p.ip_owner, p.approved_at,
+        "SELECT p.slug, p.name, p.approved_at,
                 (SELECT COUNT(*) FROM proposal_skus s WHERE s.slug=p.slug) AS sku_count,
                 (SELECT COUNT(*) FROM products pr WHERE pr.brand LIKE p.slug||'_%' AND pr.active=1) AS active
          FROM proposals p
@@ -35452,10 +35453,9 @@ async fn public_proposals_list(
         Ok(serde_json::json!({
             "slug": r.get::<_, String>(0)?,
             "name": r.get::<_, String>(1)?,
-            "ip_owner": r.get::<_, String>(2)?,
-            "approved_at": r.get::<_, Option<String>>(3)?,
-            "sku_count": r.get::<_, i64>(4)?,
-            "products_active": r.get::<_, i64>(5)?,
+            "approved_at": r.get::<_, Option<String>>(2)?,
+            "sku_count": r.get::<_, i64>(3)?,
+            "products_active": r.get::<_, i64>(4)?,
         }))
     }).map(|i| i.flatten().collect()).unwrap_or_default();
     let mut resp = Json(serde_json::json!({ "proposals": rows })).into_response();
@@ -72648,13 +72648,23 @@ async fn main() {
         }
     });
 
-    // CORS — allow any origin to read public APIs + embed.js.
-    // Restricted to GET/OPTIONS so write endpoints (POST /api/checkout etc.)
-    // are NOT exposed cross-origin. Frontends must redirect users to wearmu.com
-    // for Checkout instead of POSTing from the embed page directly.
+    // CORS — restrict to known frontends. The embed widget runs on partner
+    // sites (jiuflow.com, takezo.jiuflow.com, etc.) so those origins need
+    // GET access. Everything else is same-origin from wearmu.com itself.
+    // GET/OPTIONS only: write endpoints (POST /api/checkout etc.) are NOT
+    // exposed cross-origin. Frontends must redirect users to wearmu.com.
     use tower_http::cors::{Any, CorsLayer};
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin([
+            "https://wearmu.com".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://www.wearmu.com".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://jiuflow.com".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://www.jiuflow.com".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://takezo.jiuflow.com".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://ukemi.jiuflow.com".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://bim.house".parse::<axum::http::HeaderValue>().unwrap(),
+            "https://teai.io".parse::<axum::http::HeaderValue>().unwrap(),
+        ])
         .allow_methods([axum::http::Method::GET, axum::http::Method::OPTIONS])
         .allow_headers(Any)
         .max_age(std::time::Duration::from_secs(86400));
