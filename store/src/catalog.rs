@@ -13900,12 +13900,13 @@ pub async fn shop_index(
   </div>
 </div>"##.to_string()
     } else {
-        let (heading, note, production, payment) = if lang == "en" {
-            ("Find your next favourite.", "Tees, rashguards and collaborations. Pick a design, then check the details and sizing.", "Made to order, from one piece", "Review shipping & total before payment")
+        let (heading, note, production, payment, ai_note) = if lang == "en" {
+            ("Find your next favourite.", "Tees, rashguards and collaborations. Pick a design, then check the details and sizing.", "Made to order, from one piece", "Review shipping & total before payment", "AI × Human co-creation — every design is unique, made just for you")
         } else {
-            ("好きな一着を、見つけよう。", "Tシャツ、ラッシュガード、コラボウェア。デザインを選んで、仕様・サイズを確認。", "1着から受注生産", "送料・合計はお支払い前に確認")
+            ("好きな一着を、見つけよう。", "Tシャツ、ラッシュガード、コラボウェア。デザインを選んで、仕様・サイズを確認。", "1着から受注生産", "送料・合計はお支払い前に確認", "AI × 人の共創 — すべてのデザインが一点もの、あなただけのために")
         };
-        format!(r##"<div class="hero"><h1>{heading}</h1><p>{note}</p><div class="trust"><span>{production}</span><span>{payment}</span></div></div>"##)
+        format!(r##"<div class="hero"><h1>{heading}</h1><p>{note}</p><p class="hero-ai">{ai_note}</p><div class="trust"><span>{production}</span><span>{payment}</span></div></div>"##,
+            heading = heading, note = note, production = production, payment = payment, ai_note = ai_note)
     };
     // スクロール誘導FAB: グリッドが視界に入る深さまでスクロールしたら
     // 「自分でも作れる」導線を下からスライドイン。表示/クリック/閉じるは
@@ -13941,6 +13942,7 @@ nav .brand{{font-weight:900;letter-spacing:0.4em}}
 .hero{{padding:40px 24px 18px;max-width:1180px;margin:0 auto}}
 .hero h1{{font-size:28px;font-weight:900;letter-spacing:-0.01em;margin-bottom:8px}}
 .hero p{{color:rgba(245,245,240,0.62);font-size:13px;line-height:1.85;max-width:640px;margin-bottom:14px}}
+.hero-ai{{color:#e6c449;font-size:12px;font-weight:600;letter-spacing:0.05em;margin-bottom:14px;padding:8px 12px;background:rgba(230,196,73,0.08);border-left:3px solid #e6c449;border-radius:0 6px 6px 0}}
 .trust{{display:flex;flex-wrap:wrap;gap:8px 16px;font-size:11px;color:rgba(245,245,240,0.72);padding-top:8px;border-top:1px solid rgba(255,255,255,0.06)}}
 .trust span{{display:inline-flex;align-items:center;gap:5px}}
 .trust span:before{{content:"✓";color:#ffd700;font-weight:700;font-size:13px}}
@@ -14731,25 +14733,41 @@ pub async fn shop_pdp(
         let l = l.to_lowercase();
         l == "design" || l == "concept_design" || l == "print"
     };
-    let lifestyle_imgs: Vec<&String> = extras_rows
-        .iter()
-        .filter(|(l, u)| is_lifestyle(l) && !u.is_empty())
-        .map(|(_, u)| u)
-        .take(3)
-        .collect();
     let other_imgs: Vec<&String> = extras_rows
         .iter()
         .filter(|(l, u)| !is_lifestyle(l) && !is_artwork(l) && !u.is_empty())
         .map(|(_, u)| u)
         .collect();
 
-    let lifestyle_html = if lifestyle_imgs.is_empty() {
+    let lifestyle_imgs: Vec<&String> = extras_rows
+        .iter()
+        .filter(|(l, u)| is_lifestyle(l) && !u.is_empty())
+        .map(|(_, u)| u)
+        .take(3)
+        .collect();
+    // ラッシュガードで lifestyle 画像がない場合、デフォルトの着用イメージを表示
+    let is_rashguard = matches!(kind_guess, "rashguard_ls" | "rashguard_black" | "rashguard_contrado");
+    let default_rashguard_lifestyle: Vec<String> = if is_rashguard && lifestyle_imgs.is_empty() {
+        vec![
+            "https://mockups.wearmu.com/catalog/lifestyle/rashguard_default_1.jpg".to_string(),
+            "https://mockups.wearmu.com/catalog/lifestyle/rashguard_default_2.jpg".to_string(),
+        ]
+    } else {
+        Vec::new()
+    };
+    let lifestyle_html = if lifestyle_imgs.is_empty() && default_rashguard_lifestyle.is_empty() {
         String::new()
     } else {
         let mut s = String::from(
             r#"<div class="wear"><h3 class="wear-h">着用イメージ</h3><div class="wear-grid">"#,
         );
         for u in &lifestyle_imgs {
+            s.push_str(&format!(
+                r#"<img src="{}" alt="着用イメージ" loading="lazy">"#,
+                html_attr(u)
+            ));
+        }
+        for u in &default_rashguard_lifestyle {
             s.push_str(&format!(
                 r#"<img src="{}" alt="着用イメージ" loading="lazy">"#,
                 html_attr(u)
