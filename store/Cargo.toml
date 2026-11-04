@@ -47,7 +47,7 @@ png = "0.17"
 # Apple Wallet pass (.pkpass) packaging — pkpass is just a stored-mode zip
 # of pass.json + manifest.json + signature + icons. We construct it
 # in-memory and stream the bytes via Axum.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 # Embed store/partner_specs/*.json into the binary at compile time.
 # New partners go through spec.json (unified ③ path) instead of being
 # hard-coded as const arrays in main.rs.
