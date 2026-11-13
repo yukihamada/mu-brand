@@ -94,11 +94,23 @@ pub fn cron_db_ref() -> Option<Db> {
 /// contains "PLACEHOLDER" / "REPLACE"). Used by /api/payment_methods and
 /// /health to gate crypto checkout until real secrets are deployed.
 fn is_placeholder(key: &str) -> bool {
-    let v = env::var(key).unwrap_or_default();
+    is_placeholder_value(&env::var(key).unwrap_or_default())
+}
+
+/// True if a raw secret string is unset or a known dummy value. Used to
+/// gate webhook auth so a deployed PLACEHOLDER_* string can never be
+/// accepted as a valid signing key (fail-closed).
+fn is_placeholder_value(v: &str) -> bool {
     if v.is_empty() { return true; }
     let up = v.to_ascii_uppercase();
     up.contains("PLACEHOLDER") || up.contains("REPLACE_ME") || up.contains("REPLACE_VIA")
         || v == "0x0000000000000000000000000000000000000000"
+}
+
+/// Return the env var only when it is a real (non-placeholder) secret.
+fn env_secret(key: &str) -> String {
+    let v = env::var(key).unwrap_or_default();
+    if is_placeholder_value(&v) { String::new() } else { v }
 }
 
 /// Phase 3.6: webhook-free settlement detection. When CRYPTO_POLL_ENABLED=1
@@ -789,7 +801,7 @@ pub async fn helius_webhook(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    let expected = env::var("HELIUS_WEBHOOK_AUTH").unwrap_or_default();
+    let expected = env_secret("HELIUS_WEBHOOK_AUTH");
     let got = headers.get("authorization")
         .and_then(|h| h.to_str().ok()).unwrap_or("");
     if expected.is_empty() || !ct_eq(got, &expected) {
@@ -1704,6 +1716,19 @@ mod tests {
     }
 
     #[test]
+    fn placeholder_values_are_rejected_as_secrets() {
+        // Deployed PLACEHOLDER_* strings must never count as a real key.
+        assert!(is_placeholder_value(""));
+        assert!(is_placeholder_value("PLACEHOLDER_REPLACE_VIA_HELIUS_DASHBOARD"));
+        assert!(is_placeholder_value("placeholder"));
+        assert!(is_placeholder_value("REPLACE_ME_WITH_MU_SOL_ADDRESS"));
+        assert!(is_placeholder_value("0x0000000000000000000000000000000000000000"));
+        // Real-looking secrets pass.
+        assert!(!is_placeholder_value("a2baf39621a70ace"));
+        assert!(!is_placeholder_value("2esK1VR5someRealSolanaAddress"));
+    }
+
+    #[test]
     fn csv_escape_blocks_formula_injection() {
         // Excel/Sheets formula sentinels must be prefixed with ' and quoted.
         assert_eq!(csv_escape("=SUM(A1:A10)"), "\"'=SUM(A1:A10)\"");
@@ -1923,7 +1948,7 @@ pub async fn alchemy_webhook(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    let key = env::var("ALCHEMY_WEBHOOK_SIGNING_KEY").unwrap_or_default();
+    let key = env_secret("ALCHEMY_WEBHOOK_SIGNING_KEY");
     if key.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE, "alchemy webhook key not set").into_response();
     }
@@ -2096,9 +2121,10 @@ pub async fn stripe_identity_webhook(
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
-    let secret = env::var("STRIPE_IDENTITY_WEBHOOK_SECRET")
-        .or_else(|_| env::var("STRIPE_WEBHOOK_SECRET"))
-        .unwrap_or_default();
+    let secret = {
+        let own = env_secret("STRIPE_IDENTITY_WEBHOOK_SECRET");
+        if own.is_empty() { env_secret("STRIPE_WEBHOOK_SECRET") } else { own }
+    };
     if secret.is_empty() {
         return (StatusCode::SERVICE_UNAVAILABLE,
             "STRIPE_IDENTITY_WEBHOOK_SECRET not set").into_response();
