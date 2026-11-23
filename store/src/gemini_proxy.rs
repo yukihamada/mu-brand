@@ -259,11 +259,12 @@ async fn fallback(model: &str, body: &Bytes) -> Result<Response, String> {
     // teai が 4xx (モデル非対応など) を返した時だけ — タイムアウトでは重ねない。
     let first_timeout = if model == "gemini-2.5-flash" { 90 } else { 40 };
     let mut res = crate::gemini::teai_chat_messages(messages.clone(), model, temperature, max_tokens, first_timeout).await;
-    let is_4xx = matches!(&res, Err(e) if e.starts_with("teai 4"));
-    if is_4xx && model != "gemini-2.5-flash" {
+    // 元モデルが 4xx / 時間切れ / 空応答なら、flash で 1 回だけ短く (30 秒) 再試行。
+    // 最悪 40+30=70 秒で呼び出し側の多く (60〜150 秒) に収まる。
+    if res.is_err() && model != "gemini-2.5-flash" {
         tracing::warn!("[gemini-proxy] teai {} failed ({:?}), retry flash", model, res.as_ref().err());
         used = "gemini-2.5-flash".into();
-        res = crate::gemini::teai_chat_messages(messages, "gemini-2.5-flash", temperature, max_tokens, 60).await;
+        res = crate::gemini::teai_chat_messages(messages, "gemini-2.5-flash", temperature, max_tokens, 30).await;
     }
     let mut text = res?;
     if json_mode {
