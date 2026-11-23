@@ -328,7 +328,35 @@ pub(crate) async fn teai_chat_messages(
     max_tokens: u32,
     timeout_secs: u64,
 ) -> Result<String, String> {
-    let k = teai_key().ok_or("TEAI_API_KEY not set")?;
+    // teai → OpenRouter の順。teai の無料枠 (30回/日) 切れでも止まらないように。
+    let mut errs: Vec<String> = Vec::new();
+    if let Some(k) = teai_key() {
+        match post_chat_text(&teai_base(), &k, &messages, model, temperature, max_tokens, timeout_secs).await {
+            Ok(t) => return Ok(t),
+            Err(e) => errs.push(e),
+        }
+    } else {
+        errs.push("TEAI_API_KEY not set".into());
+    }
+    if let Some(k) = or_key() {
+        let or_model = if model.contains('/') { model.to_string() } else { format!("google/{}", model) };
+        match post_chat_text(&or_base(), &k, &messages, &or_model, temperature, max_tokens, timeout_secs).await {
+            Ok(t) => return Ok(t),
+            Err(e) => errs.push(e.replacen("teai", "openrouter", 1)),
+        }
+    }
+    Err(errs.join(" / "))
+}
+
+async fn post_chat_text(
+    base: &str,
+    key: &str,
+    messages: &[serde_json::Value],
+    model: &str,
+    temperature: f64,
+    max_tokens: u32,
+    timeout_secs: u64,
+) -> Result<String, String> {
     let client = http_client(timeout_secs)?;
     let body = json!({
         "model": model,
@@ -337,8 +365,8 @@ pub(crate) async fn teai_chat_messages(
         "max_tokens": max_tokens,
     });
     let resp = client
-        .post(format!("{}/chat/completions", teai_base()))
-        .bearer_auth(k)
+        .post(format!("{}/chat/completions", base))
+        .bearer_auth(key)
         .json(&body)
         .send()
         .await
