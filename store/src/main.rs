@@ -1,4 +1,6 @@
 mod gemini;
+mod gemini_proxy;
+use gemini_proxy::GEMINI_API_BASE;
 mod blog_snapshot;
 mod ito;
 mod nft;
@@ -21983,7 +21985,7 @@ BODY (markdown):
         body = "---",
     );
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}",
         key);
     let resp = reqwest::Client::new().post(&url)
         .json(&json!({
@@ -40661,7 +40663,7 @@ Rules:
         }))).into_response(),
     };
     let g_url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}",
         key);
     let resp = reqwest::Client::new().post(&g_url)
         .json(&serde_json::json!({
@@ -46374,7 +46376,7 @@ async fn generate_ma_gift_design(token: String, brief: String, db: Db) {
         brief
     );
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
         key
     );
     let body = serde_json::json!({
@@ -47313,7 +47315,7 @@ async fn generate_ma_lineage_design(
         brief = brief, seq = seq, short = &ma_token[..6.min(ma_token.len())],
     );
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
         key
     );
     let body = serde_json::json!({
@@ -50141,7 +50143,7 @@ pub async fn critic_check(
         - reason は 1 行、機械的に");
     let req = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let client_res = reqwest::Client::new().post(&url)
         .timeout(std::time::Duration::from_secs(20))
@@ -50809,7 +50811,7 @@ async fn gemini_collab_proposal(
         "generationConfig": {"temperature": 0.85, "maxOutputTokens": 2400}
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}",
         key);
     let resp = reqwest::Client::new().post(&url)
         .json(&req_body).send().await
@@ -50942,7 +50944,7 @@ async fn gemini_feedback_reply(message: &str, is_lifetime: bool, is_ma_council: 
 "#);
     let req_body = json!({"contents": [{"parts": [{"text": prompt}]}]});
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = reqwest::Client::new().post(&url)
         .json(&req_body).send().await
@@ -55481,7 +55483,7 @@ async fn compose_x_tweet_via_gemini(kind: &str, context: &str) -> Option<String>
         }
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = reqwest::Client::new().post(&url).json(&body).send().await.ok()?;
     if !resp.status().is_success() { return None; }
@@ -61373,7 +61375,7 @@ async fn api_collab_apply(
         if key.is_empty() { "(Gemini API 未設定のため、自動提案は生成されませんでした。濱田から手動で連絡します。)".to_string() }
         else {
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+                "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
                 key
             );
             let req = serde_json::json!({
@@ -63829,7 +63831,7 @@ async fn admin_council_compose(
 
     let req_body = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = match reqwest::Client::new().post(&url).json(&req_body).send().await {
         Ok(r) => r,
@@ -64543,7 +64545,7 @@ async fn generate_council_brief_via_gemini(
     let prompt = format!("あなたは MU ブランドの議題集計 AI です。週次 MA Council Brief を以下のフォーマットで生成してください。\n\n週ラベル: {week_label}\n\n過去 30 日のお客様フィードバック (上位 40 件、Council 優先):\n{context}\n\n出力フォーマット (JSON のみ、コードフェンス不要):\n{{\n  \"title\": \"MA Council Brief — {week_label} (タイトルは 28 字以内)\",\n  \"body_md\": \"## 1. 今週のテーマ\\n## 2. お客様の声 (要約)\\n## 3. 議題\",\n  \"agendas\": [\n    {{\"id\": \"a1\", \"q\": \"次月の MUGEN 価格レンジを変更すべきか？\", \"options\": [\"¥4,000–6,000 (現行)\", \"¥5,000–8,000\", \"¥6,000–10,000\"]}},\n    {{\"id\": \"a2\", \"q\": \"新カテゴリ (sweat / longsleeve) を投入するか？\", \"options\": [\"sweat 優先\", \"longsleeve 優先\", \"T シャツ集中\"]}}\n  ]\n}}\n\nルール:\n- 議題は 2〜4 件\n- 各議題の options は 2〜4 個\n- お客様の生の声を 3 件以上 body_md に引用 (短く)\n- 捏造禁止 — フィードバックに無い議題は出さない\n- 末尾に「— 集計: Gemini 2.5 / 投票: MA Council メンバー」");
     let req_body = serde_json::json!({"contents": [{"parts": [{"text": prompt}]}]});
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = reqwest::Client::new()
         .post(&url).json(&req_body)
@@ -72278,6 +72280,8 @@ async fn main() {
         .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
+        .route(gemini_proxy::PROXY_PATH, post(gemini_proxy::proxy)
+            .layer(axum::extract::DefaultBodyLimit::max(26 * 1024 * 1024)))
         .route("/api/home/ab", get(api_home_ab))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
@@ -73636,7 +73640,7 @@ Customer message:
 {}"#, message.chars().take(2000).collect::<String>());
 
     let resp = reqwest::Client::new()
-        .post(format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}", gemini_key))
+        .post(format!("{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}", gemini_key))
         .json(&serde_json::json!({
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0.2}
@@ -74662,7 +74666,7 @@ async fn agent_vision_drift(db: Db) -> Result<AgentReport, String> {
         },
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = match reqwest::Client::new().post(&url).json(&body).send().await {
         Ok(r) if r.status().is_success() => r,
@@ -74865,7 +74869,7 @@ Hard limit: max 3 proposals. If MU is already optimal, proposals=[]."#,
         },
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
+        "{GEMINI_API_BASE}/v1beta/models/{model}:generateContent?key={key}",
         model = SELF_EVOLVE_GEMINI_MODEL, key = key);
     let resp = match reqwest::Client::new().post(&url).json(&body).send().await {
         Ok(r) if r.status().is_success() => r,
@@ -75081,7 +75085,7 @@ async fn agent_journal_embedder(db: Db) -> Result<AgentReport, String> {
     for (jid, agent_name, summary) in &candidates {
         let text = format!("[{}] {}", agent_name, summary);
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{}:embedContent?key={}",
+            "{GEMINI_API_BASE}/v1beta/models/{}:embedContent?key={}",
             model, key,
         );
         let req = serde_json::json!({
@@ -75608,7 +75612,7 @@ risk_if_wrong and ship it."#,
         },
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/{}:generateContent?key={}",
         SELF_EVOLVE_GEMINI_MODEL, key);
     let resp = reqwest::Client::new().post(&url).json(&req).send().await
         .map_err(|e| format!("gemini http: {e}"))?;
@@ -76515,7 +76519,7 @@ Respond as STRICT JSON: {{"text": "<the post body>"}}"#,
     );
 
     let url_g = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
         key);
     let resp = reqwest::Client::new().post(&url_g)
         .json(&serde_json::json!({
@@ -78110,7 +78114,7 @@ async fn agent_email_critic(db: Db) -> Result<AgentReport, String> {
                 },
             });
             let url = format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+                "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
                 key);
 
             // Accumulate runs: per_persona_runs[persona_idx] = Vec<(score, verdict, suggestion)>.
@@ -78342,7 +78346,7 @@ async fn agent_bounty_triage(db: Db) -> Result<AgentReport, String> {
             },
         });
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+            "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
             key);
         let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -78642,7 +78646,7 @@ async fn agent_email_rewriter(db: Db) -> Result<AgentReport, String> {
             },
         });
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+            "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}",
             key);
         let resp = match reqwest::Client::new().post(&url).json(&req).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -79038,7 +79042,7 @@ async fn agent_mention_responder(db: Db) -> Result<AgentReport, String> {
             },
         });
         let u = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
+            "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-flash:generateContent?key={}",
             key);
         let r = match reqwest::Client::new().post(&u).json(&req).send().await {
             Ok(r) if r.status().is_success() => r,
@@ -79296,7 +79300,7 @@ async fn agent_itto_tshirt_designer(db: Db) -> Result<AgentReport, String> {
     }
 
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
         key);
     let body = serde_json::json!({
         "contents": [{"parts":[{"text": prompt}]}],
@@ -79556,7 +79560,7 @@ async fn agent_tshirt_factory(db: Db) -> Result<AgentReport, String> {
     // Gemini 3 Pro Image generate.
     let prompt = TSHIRT_DESIGN_PROMPT_TPL.replace("{brief}", &brief);
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-3-pro-image-preview:generateContent?key={}",
         key);
     let body = serde_json::json!({
         "contents": [{"parts":[{"text": prompt}]}],
@@ -80661,7 +80665,7 @@ JSON のみ:
             "responseMimeType": "application/json",
         },
     });
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}", gemini_key);
+    let url = format!("{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}", gemini_key);
     let resp = reqwest::Client::new().post(&url).json(&req).send().await
         .map_err(|e| format!("gemini http: {e}"))?;
     if !resp.status().is_success() {
@@ -80759,7 +80763,7 @@ JSON のみ。前置きや説明なし:
         },
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}",
         gemini_key);
     let resp = reqwest::Client::new().post(&url).json(&req).send().await
         .map_err(|e| format!("gemini http: {e}"))?;
@@ -80910,7 +80914,7 @@ JSON 配列のみ出力。前置きや説明禁止。
             "responseMimeType": "application/json",
         },
     });
-    let url = format!("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key={}", gemini_key);
+    let url = format!("{GEMINI_API_BASE}/v1beta/models/gemini-2.5-pro:generateContent?key={}", gemini_key);
     let resp = reqwest::Client::new().post(&url).json(&req).send().await
         .map_err(|e| format!("gemini http: {e}"))?;
     if !resp.status().is_success() {
@@ -81227,7 +81231,7 @@ async fn founder_review(db: Db, founder: &str, persona_prompt: &str) -> Result<A
             "responseMimeType": "application/json"},
     });
     let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+        "{GEMINI_API_BASE}/v1beta/models/{}:generateContent?key={}",
         SELF_EVOLVE_GEMINI_MODEL, key);
     let resp = reqwest::Client::new().post(&url).json(&req).send().await
         .map_err(|e| format!("gemini http: {e}"))?;

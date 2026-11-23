@@ -1789,7 +1789,10 @@ async fn fetch_pyth_rates(db: Db) -> Result<(), String> {
         .timeout(std::time::Duration::from_secs(10))
         .send().await.map_err(|e| format!("net: {}", e))?;
     if !resp.status().is_success() {
-        return Err(format!("status {}", resp.status()));
+        // 2026-11 から Hermes 公開 API が 401 (鍵必須化)。鍵不要の CoinGecko で代替する。
+        let pyth_err = format!("status {}", resp.status());
+        return fetch_coingecko_rates(&db).await
+            .map_err(|e| format!("pyth {} / coingecko {}", pyth_err, e));
     }
     let arr: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
     let arr = arr.as_array().ok_or("not array")?;
@@ -1825,6 +1828,53 @@ async fn fetch_pyth_rates(db: Db) -> Result<(), String> {
         eth_usd.map(|e| e * jpy_per_usd),
     );
     Ok(())
+}
+
+/// Pyth が使えない時の代替: CoinGecko simple/price (鍵不要)。
+/// SOL・ETH の JPY/USD 建て価格から JPY/USD を逆算する。
+async fn fetch_coingecko_rates(db: &Db) -> Result<(), String> {
+    let url = "https://api.coingecko.com/api/v3/simple/price?ids=solana,ethereum&vs_currencies=jpy,usd";
+    let resp = reqwest::Client::new()
+        .get(url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send().await.map_err(|e| format!("net: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("status {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    let (sol_jpy, sol_usd, eth_jpy) = parse_coingecko(&v).ok_or("missing fields")?;
+    let jpy_per_usd = sol_jpy / sol_usd;
+    write_setting(db, "JPY_PER_USD", &format!("{:.4}", jpy_per_usd));
+    write_setting(db, "JPY_PER_SOL", &format!("{:.4}", sol_jpy));
+    if let Some(e) = eth_jpy {
+        write_setting(db, "JPY_PER_ETH", &format!("{:.4}", e));
+    }
+    tracing::info!("[rates] refreshed via coingecko: JPY/USD={:.2} JPY/SOL={:.0} JPY/ETH={:?}",
+        jpy_per_usd, sol_jpy, eth_jpy);
+    Ok(())
+}
+
+fn parse_coingecko(v: &serde_json::Value) -> Option<(f64, f64, Option<f64>)> {
+    let sol_jpy = v["solana"]["jpy"].as_f64().filter(|x| x.is_finite() && *x > 0.0)?;
+    let sol_usd = v["solana"]["usd"].as_f64().filter(|x| x.is_finite() && *x > 0.0)?;
+    // 異常値ガード: JPY/USD が 50〜400 の外なら採用しない
+    let r = sol_jpy / sol_usd;
+    if !(50.0..=400.0).contains(&r) { return None; }
+    let eth_jpy = v["ethereum"]["jpy"].as_f64().filter(|x| x.is_finite() && *x > 0.0);
+    Some((sol_jpy, sol_usd, eth_jpy))
+}
+
+#[cfg(test)]
+mod coingecko_tests {
+    #[test]
+    fn parses_and_guards() {
+        let v = serde_json::json!({"solana":{"jpy":11516.1,"usd":72.39},"ethereum":{"jpy":274018.0,"usd":1722.45}});
+        let (sj, su, ej) = super::parse_coingecko(&v).unwrap();
+        assert!((sj / su - 159.08).abs() < 0.1);
+        assert_eq!(ej, Some(274018.0));
+        let bad = serde_json::json!({"solana":{"jpy":1.0,"usd":72.39}});
+        assert!(super::parse_coingecko(&bad).is_none());
+    }
 }
 
 async fn sweep_expired_pending(db: Db, ttl_min: i64) {
