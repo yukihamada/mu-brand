@@ -326,9 +326,10 @@ pub(crate) async fn teai_chat_messages(
     model: &str,
     temperature: f64,
     max_tokens: u32,
+    timeout_secs: u64,
 ) -> Result<String, String> {
     let k = teai_key().ok_or("TEAI_API_KEY not set")?;
-    let client = http_client(180)?;
+    let client = http_client(timeout_secs)?;
     let body = json!({
         "model": model,
         "messages": messages,
