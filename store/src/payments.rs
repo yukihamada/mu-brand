@@ -1834,8 +1834,10 @@ async fn fetch_pyth_rates(db: Db) -> Result<(), String> {
 /// SOL・ETH の JPY/USD 建て価格から JPY/USD を逆算する。
 async fn fetch_coingecko_rates(db: &Db) -> Result<(), String> {
     let url = "https://api.coingecko.com/api/v3/simple/price?ids=solana,ethereum&vs_currencies=jpy,usd";
+    // CoinGecko は User-Agent なしを 403 で拒否する (2026-11-23 実測)
     let resp = reqwest::Client::new()
         .get(url)
+        .header("user-agent", "mu-store/1.0 (+https://wearmu.com)")
         .timeout(std::time::Duration::from_secs(10))
         .send().await.map_err(|e| format!("net: {}", e))?;
     if !resp.status().is_success() {
@@ -1846,8 +1848,9 @@ async fn fetch_coingecko_rates(db: &Db) -> Result<(), String> {
     let jpy_per_usd = sol_jpy / sol_usd;
     write_setting(db, "JPY_PER_USD", &format!("{:.4}", jpy_per_usd));
     write_setting(db, "JPY_PER_SOL", &format!("{:.4}", sol_jpy));
-    if let Some(e) = eth_jpy {
-        write_setting(db, "JPY_PER_ETH", &format!("{:.4}", e));
+    match eth_jpy {
+        Some(e) => write_setting(db, "JPY_PER_ETH", &format!("{:.4}", e)),
+        None => tracing::warn!("[rates] coingecko: ETH missing, JPY_PER_ETH left unchanged"),
     }
     tracing::info!("[rates] refreshed via coingecko: JPY/USD={:.2} JPY/SOL={:.0} JPY/ETH={:?}",
         jpy_per_usd, sol_jpy, eth_jpy);
@@ -1938,10 +1941,11 @@ pub fn start_crons(db: Db) {
                     let n = PYTH_FAIL_STREAK
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     tracing::warn!("[rates] fetch failed (streak={}): {}", n, e);
-                    if n == 3 {
+                    // 3 回目と、その後は 6 時間ごと (5 分 × 72) に再通知 — 黙って古い値を使い続けない
+                    if n == 3 || (n > 3 && n % 72 == 0) {
                         tg_alert(&format!(
-                            "Pyth rate fetch failed 3 times in a row. Last error: {}. \
-                             Rates will fall through to env vars / defaults.", e));
+                            "Crypto rate fetch failed {} times in a row. Last error: {}. \
+                             Checkout keeps using the last stored rate (now ~{} min old).", n, e, n * 5));
                     }
                 }
             }
