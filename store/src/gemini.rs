@@ -50,9 +50,12 @@ fn http_client(secs: u64) -> Result<reqwest::Client, String> {
 /// POST {base}/images/generations (OpenAI 互換)。b64 画像を返す。
 async fn post_images_generate(base: &str, key: &str, prompt: &str) -> Result<GeneratedImage, String> {
     let client = http_client(180)?;
+    // teai は prompt に vector/logo/icon/svg 等があると Recraft(SVG を返す)へ
+    // 振り分ける。MU は PNG 前提で保存・印刷するので、送る前に言い換える。
+    let prompt_sent = raster_safe_prompt(prompt);
     let body = json!({
         "model": image_model(),
-        "prompt": prompt,
+        "prompt": prompt_sent,
         "size": "1024x1024",
         "response_format": "b64_json",
     });
@@ -75,7 +78,85 @@ async fn post_images_generate(base: &str, key: &str, prompt: &str) -> Result<Gen
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
         .map_err(|e| format!("b64 decode: {}", e))?;
-    Ok(GeneratedImage { bytes, mime: "image/png".into() })
+    // 中身で形式を判定する。SVG 等のラスタ以外は保存すると表示も印刷も壊れるので拒否。
+    let mime = sniff_raster_mime(&bytes)
+        .ok_or_else(|| format!("images: non-raster response ({})",
+            String::from_utf8_lossy(&bytes[..bytes.len().min(12)])))?;
+    Ok(GeneratedImage { bytes, mime: mime.into() })
+}
+
+/// PNG / JPEG / WebP の時だけ mime を返す。
+pub(crate) fn sniff_raster_mime(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if b.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if b.len() > 12 && &b[0..4] == b"RIFF" && &b[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+/// teai の画像ルーターが「ベクター」扱いする語を、ラスタ向けの言い回しに置き換える。
+pub(crate) fn raster_safe_prompt(prompt: &str) -> String {
+    const SWAPS: &[(&str, &str)] = &[
+        ("vector", "flat-graphic"), ("svg", "flat graphic"),
+        ("logo", "emblem"), ("icon", "symbol"),
+        ("ロゴ", "エンブレム"), ("アイコン", "シンボル"), ("ベクター", "フラット"),
+    ];
+    let mut out = prompt.to_string();
+    for (from, to) in SWAPS {
+        // ASCII は大文字小文字を区別せず置換
+        if from.is_ascii() {
+            let mut res = String::with_capacity(out.len());
+            let lower = out.to_ascii_lowercase();
+            let mut i = 0;
+            while let Some(pos) = lower[i..].find(from) {
+                res.push_str(&out[i..i + pos]);
+                res.push_str(to);
+                i += pos + from.len();
+            }
+            res.push_str(&out[i..]);
+            out = res;
+        } else {
+            out = out.replace(from, to);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod raster_tests {
+    use super::*;
+
+    #[test]
+    fn prompt_has_no_vector_triggers() {
+        let p = raster_safe_prompt("clean Vector-style shapes, LOGO and icon, SVG look, ロゴ アイコン ベクター");
+        let l = p.to_ascii_lowercase();
+        for w in ["vector", "logo", "icon", "svg"] { assert!(!l.contains(w), "{w} in {p}"); }
+        assert!(!p.contains("ロゴ") && !p.contains("アイコン") && !p.contains("ベクター"));
+        assert!(p.contains("flat-graphic-style shapes"));
+    }
+
+    #[test]
+    fn big_png_is_shrunk() {
+        let img = image::RgbImage::from_fn(1600, 1600, |x, y| image::Rgb([(x % 251) as u8, (y % 241) as u8, ((x * y) % 239) as u8]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let png = png.into_inner();
+        assert!(png.len() > 700 * 1024);
+        let (out, mime) = shrink_for_upload(png, "image/png");
+        assert_eq!(mime, "image/jpeg");
+        assert!(out.len() < 700 * 1024);
+    }
+
+    #[test]
+    fn sniff_rejects_svg() {
+        assert_eq!(sniff_raster_mime(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
+        assert_eq!(sniff_raster_mime(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(sniff_raster_mime(b"<svg version=\"1.1\">"), None);
+    }
 }
 
 /// テキストプロンプトのみの画像生成: teai 優先 → OpenRouter フォールバック。
@@ -192,14 +273,29 @@ async fn fetch_image_b64(client: &reqwest::Client, url: &str) -> Result<(String,
     if !resp.status().is_success() {
         return Err(format!("fetch image {}: status {}", url, resp.status()));
     }
-    let mime = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or("image/png").trim().to_string())
-        .unwrap_or_else(|| "image/png".to_string());
     let bytes = resp.bytes().await.map_err(|e| format!("read image: {}", e))?;
-    Ok((mime, base64::engine::general_purpose::STANDARD.encode(&bytes)))
+    // content-type は信用せず中身で判定 (PNG を名乗る SVG で上流が 400 になった実例あり)
+    let mime = sniff_raster_mime(&bytes)
+        .ok_or_else(|| format!("fetch image {}: not a raster image", url))?;
+    let (bytes, mime) = shrink_for_upload(bytes.to_vec(), mime);
+    Ok((mime.to_string(), base64::engine::general_purpose::STANDARD.encode(&bytes)))
+}
+
+/// 参照画像が大きいと teai 側で本文が切れて 400 になる (1.2MB で実測)。
+/// 700KB を超えたら長辺 1024px の JPEG に縮める。失敗したら元のまま。
+fn shrink_for_upload(bytes: Vec<u8>, mime: &'static str) -> (Vec<u8>, &'static str) {
+    const LIMIT: usize = 700 * 1024;
+    if bytes.len() <= LIMIT || mime == "image/webp" {
+        return (bytes, mime);
+    }
+    let Ok(img) = image::load_from_memory(&bytes) else { return (bytes, mime) };
+    let small = img.resize(1024, 1024, image::imageops::FilterType::Triangle).to_rgb8();
+    let mut out = std::io::Cursor::new(Vec::new());
+    if image::DynamicImage::ImageRgb8(small).write_to(&mut out, image::ImageFormat::Jpeg).is_ok() {
+        (out.into_inner(), "image/jpeg")
+    } else {
+        (bytes, mime)
+    }
 }
 
 /// 画像1枚 + テキスト → テキスト (vision)。teai chat + data URI。
