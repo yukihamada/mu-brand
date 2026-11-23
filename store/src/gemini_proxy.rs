@@ -133,12 +133,16 @@ pub async fn proxy(
                 }
                 skip_direct_for(if st == 402 { SKIP_AFTER_402_SECS } else { SKIP_AFTER_TRANSIENT_SECS });
                 direct_err = format!("google {}", st);
-                // 失敗時の本文は呼び出し元に返す可能性があるので保持
-                if let Ok(resp) = fallback(model, &body).await {
-                    note_fallback(model, &direct_err);
-                    return resp;
+                match fallback(model, &body).await {
+                    Ok(resp) => {
+                        note_fallback(model, &direct_err);
+                        return resp;
+                    }
+                    Err(e) => {
+                        tracing::warn!("[gemini-proxy] {} fallback failed: {} / {}", model, direct_err, e);
+                        return passthrough(st, txt);
+                    }
                 }
-                return passthrough(st, txt);
             }
             Err(e) => {
                 if !can_fallback {
