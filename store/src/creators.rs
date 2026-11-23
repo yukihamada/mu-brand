@@ -152,13 +152,7 @@ pub async fn start_page(State(db): State<Db>, headers: HeaderMap) -> Response {
     if crate::collab_session_email(&db, &headers).is_some() {
         return Redirect::temporary("/studio").into_response();
     }
-    let prefill = headers.get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
-        .and_then(|v| urlencoding::decode(v).ok())
-        .map(|s| s.trim().to_lowercase())
-        .filter(|s| s.contains('@') && s.len() <= 254)
-        .unwrap_or_default();
+    let prefill = crate::catalog::verified_make_email_cookie(&headers).unwrap_or_default();
     Html(START_HTML.replace("__PREFILL__", &crate::html_escape(&prefill))).into_response()
 }
 

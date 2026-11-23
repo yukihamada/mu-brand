@@ -6689,14 +6689,69 @@ pub(crate) const MAKE_PAID_JPY: i64 = 100;
 /// 旧 /make メール認証だけ済ませた端末は mu_make_email cookie にフォールバック。
 fn resolve_maker_email(db: &Db, headers: &axum::http::HeaderMap) -> Option<String> {
     crate::bearer_or_session_email(db, headers, None)
-        .or_else(|| {
-            headers.get(axum::http::header::COOKIE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
-                .and_then(|v| urlencoding::decode(v).ok())
-                .map(|s| s.trim().to_lowercase())
-                .filter(|s| s.contains('@') && s.len() <= 254)
-        })
+        .or_else(|| verified_make_email_cookie(headers))
+}
+
+// ── mu_make_email cookie の署名 (2026-11-24) ─────────────────────────────
+// 以前は cookie の値 (メール) を署名なしで信じていたため、誰でも
+// `mu_make_email=他人のメール` を名乗れば登録を飛ばし、その人の MUクレジット
+// (4枚目以降 ¥100/枚) で生成できた。値を `email.署名` にし、署名を検証する。
+// 鍵は ADMIN_TOKEN から導出 (未設定なら全て拒否 = 安全側)。
+
+fn make_cookie_sig(email: &str) -> Option<String> {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let secret = std::env::var("ADMIN_TOKEN").ok().filter(|s| !s.is_empty())?;
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(secret.as_bytes()).ok()?;
+    mac.update(b"mu_make_email:v1:");
+    mac.update(email.as_bytes());
+    let out = mac.finalize().into_bytes();
+    Some(out.iter().take(16).map(|b| format!("{:02x}", b)).collect())
+}
+
+/// Set-Cookie に入れる値 (`urlencode(email).署名`)。鍵が無ければ None。
+pub(crate) fn signed_make_email_value(email: &str) -> Option<String> {
+    let e = email.trim().to_lowercase();
+    make_cookie_sig(&e).map(|sig| format!("{}.{}", urlencoding::encode(&e), sig))
+}
+
+/// 署名を検証できた時だけメールを返す。署名なし (旧形式) や改ざんは None。
+pub(crate) fn verify_make_email_value(raw: &str) -> Option<String> {
+    let (enc, sig) = raw.trim().rsplit_once('.')?;
+    let email = urlencoding::decode(enc).ok()?.trim().to_lowercase();
+    if !email.contains('@') || email.len() > 254 {
+        return None;
+    }
+    let want = make_cookie_sig(&email)?;
+    let ok = want.len() == sig.len()
+        && want.bytes().zip(sig.bytes()).fold(0u8, |a, (x, y)| a | (x ^ y)) == 0;
+    ok.then_some(email)
+}
+
+pub(crate) fn verified_make_email_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers.get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|c| c.split(';').find_map(|p| p.trim().strip_prefix("mu_make_email=")))
+        .and_then(verify_make_email_value)
+}
+
+#[cfg(test)]
+mod make_cookie_tests {
+    use super::*;
+
+    #[test]
+    fn signed_cookie_roundtrip_and_forgery_rejected() {
+        std::env::set_var("ADMIN_TOKEN", "test-admin-token");
+        let v = signed_make_email_value("Maker@Example.com").unwrap();
+        assert_eq!(verify_make_email_value(&v).as_deref(), Some("maker@example.com"));
+        // 旧形式 (署名なし) は拒否
+        assert!(verify_make_email_value("victim%40example.com").is_none());
+        // 署名を別メールに付け替えても拒否
+        let sig = v.rsplit_once('.').unwrap().1;
+        assert!(verify_make_email_value(&format!("victim%40example.com.{}", sig)).is_none());
+        // 改ざんした署名は拒否
+        assert!(verify_make_email_value(&format!("{}0", v)).is_none());
+    }
 }
 
 /// 商品作成の入り口ゲート: 未登録は 401(need_register=true)。クライアントは
@@ -7454,11 +7509,12 @@ pub async fn make_verify_check(State(db): State<Db>, axum::Json(q): axum::Json<M
     // 帰属の連続性: mu_make_ok 持ちは次回からゲートをスキップするため、ここで
     // 認証済みメールも cookie に残し、以降の /api/make 生成へ maker_email を
     // 自動で刻めるようにする(無いと2作目以降が無帰属=報酬が消える)。
-    if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
-        "mu_make_email={}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly",
-        urlencoding::encode(&email)
-    )) {
-        resp.headers_mut().append(axum::http::header::SET_COOKIE, v);
+    if let Some(val) = signed_make_email_value(&email) {
+        if let Ok(v) = axum::http::HeaderValue::from_str(&format!(
+            "mu_make_email={}; Path=/; Max-Age=2592000; SameSite=Lax; HttpOnly; Secure", val
+        )) {
+            resp.headers_mut().append(axum::http::header::SET_COOKIE, v);
+        }
     }
     resp
 }
