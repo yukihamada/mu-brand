@@ -109,7 +109,8 @@ pub async fn proxy(
     if !(can_fallback && direct_skipped()) {
         let url = format!("{}/v1beta/models/{}?key={}", GOOGLE_BASE, op, key);
         let res = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(300))
+            // 画像は時間がかかるので長め、テキストは短めに打ち切って予備経路へ
+            .timeout(std::time::Duration::from_secs(if model.contains("image") { 240 } else { 60 }))
             .build()
             .map_err(|e| e.to_string());
         let res = match res {
@@ -226,11 +227,18 @@ async fn fallback(model: &str, body: &Bytes) -> Result<Response, String> {
     if wants_image {
         let prompt = format!("{}{}", system, all_text);
         let img = crate::gemini::generate_image_with_refs(&prompt, &refs).await?;
-        // 呼び出し側は image/png 前提で保存するので PNG に揃える
-        let png = to_png(&img.bytes)?;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+        // 呼び出し側は image/png 前提で保存するので PNG に揃える。
+        // 変換できない形式 (webp 等) は生成を失敗させず元の画像と本来の mime を返す。
+        let (bytes, mime) = match to_png(&img.bytes) {
+            Ok(png) => (png, "image/png".to_string()),
+            Err(e) => {
+                tracing::warn!("[gemini-proxy] png convert skipped ({}): {}", img.mime, e);
+                (img.bytes, img.mime)
+            }
+        };
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
         let out = json!({"candidates": [{"content": {"role": "model", "parts": [
-            {"inlineData": {"mimeType": "image/png", "data": b64}}
+            {"inlineData": {"mimeType": mime, "data": b64}}
         ]}, "finishReason": "STOP"}], "modelVersion": "teai-fallback/image"});
         return Ok((StatusCode::OK, axum::Json(out)).into_response());
     }
@@ -247,11 +255,15 @@ async fn fallback(model: &str, body: &Bytes) -> Result<Response, String> {
     let max_tokens = gc["maxOutputTokens"].as_u64().unwrap_or(4096).clamp(2048, 8192) as u32;
     // 元のモデル (2.5-pro 等) を先に試し、使えなければ flash
     let mut used = model.to_string();
-    let mut res = crate::gemini::teai_chat_messages(messages.clone(), model, temperature, max_tokens).await;
-    if res.is_err() && model != "gemini-2.5-flash" {
+    // 1 回目は短く (呼び出し側の待ち時間 20〜150 秒に収める)。flash への再試行は
+    // teai が 4xx (モデル非対応など) を返した時だけ — タイムアウトでは重ねない。
+    let first_timeout = if model == "gemini-2.5-flash" { 90 } else { 40 };
+    let mut res = crate::gemini::teai_chat_messages(messages.clone(), model, temperature, max_tokens, first_timeout).await;
+    let is_4xx = matches!(&res, Err(e) if e.starts_with("teai 4"));
+    if is_4xx && model != "gemini-2.5-flash" {
         tracing::warn!("[gemini-proxy] teai {} failed ({:?}), retry flash", model, res.as_ref().err());
         used = "gemini-2.5-flash".into();
-        res = crate::gemini::teai_chat_messages(messages, "gemini-2.5-flash", temperature, max_tokens).await;
+        res = crate::gemini::teai_chat_messages(messages, "gemini-2.5-flash", temperature, max_tokens, 60).await;
     }
     let mut text = res?;
     if json_mode {

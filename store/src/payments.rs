@@ -63,11 +63,20 @@ pub const CRYPTO_PAYMENT_TTL_MIN: i64 = 15;
 fn env_rate(key: &str, default: f64) -> f64 {
     if let Some(db) = CRON_DB.get() {
         if let Ok(conn) = db.lock() {
-            let v: Result<String, _> = conn.query_row(
-                "SELECT value FROM crypto_settings WHERE key=?",
-                params![key], |r| r.get(0)
+            let v: Result<(String, String), _> = conn.query_row(
+                "SELECT value, COALESCE(updated_at,'') FROM crypto_settings WHERE key=?",
+                params![key], |r| Ok((r.get(0)?, r.get(1)?))
             );
-            if let Ok(s) = v {
+            if let Ok((s, updated_at)) = v {
+                // 古いレートで決済させていないかを見えるようにする (5 分毎更新が正常)
+                if let Ok(t) = updated_at.parse::<i64>() {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                    let age_min = (now - t) / 60;
+                    if age_min > 60 {
+                        tracing::warn!("[rates] {} is stale: {} min old", key, age_min);
+                    }
+                }
                 if let Ok(n) = s.parse::<f64>() {
                     if n.is_finite() && n > 0.0 { return n; }
                 }
