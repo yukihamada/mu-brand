@@ -302,6 +302,59 @@ pub async fn call_gemini_with_image(
     post_chat_image(&or_base(), &k, prompt, &refs).await
 }
 
+/// gemini_proxy 用: 参照画像 (mime, base64) つき/なしの画像生成。teai → OpenRouter。
+pub(crate) async fn generate_image_with_refs(
+    prompt: &str,
+    refs: &[(String, String)],
+) -> Result<GeneratedImage, String> {
+    if refs.is_empty() {
+        return gen_image(prompt).await;
+    }
+    if let Some(k) = teai_key() {
+        match post_chat_image(&teai_base(), &k, prompt, refs).await {
+            Ok(img) => return Ok(img),
+            Err(e) => tracing::warn!("teai chat-image failed, fallback to openrouter: {}", e),
+        }
+    }
+    let k = or_key().ok_or("no image API key (TEAI_API_KEY / OPENROUTER_API_KEY)")?;
+    post_chat_image(&or_base(), &k, prompt, refs).await
+}
+
+/// gemini_proxy 用: OpenAI 形式 messages をそのまま teai に投げる。
+pub(crate) async fn teai_chat_messages(
+    messages: Vec<serde_json::Value>,
+    model: &str,
+    temperature: f64,
+    max_tokens: u32,
+) -> Result<String, String> {
+    let k = teai_key().ok_or("TEAI_API_KEY not set")?;
+    let client = http_client(180)?;
+    let body = json!({
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    });
+    let resp = client
+        .post(format!("{}/chat/completions", teai_base()))
+        .bearer_auth(k)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("send: {}", e))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let txt = resp.text().await.unwrap_or_default();
+        return Err(format!("teai {}: {}", status, txt.chars().take(200).collect::<String>()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| format!("parse: {}", e))?;
+    v["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "no content in teai chat response".into())
+}
+
 /// Brand spec for `/api/proposal/:slug/extras/order` — partner-flavoured
 /// product mockup generation. Used by the background worker that turns
 /// 1 job → N SKU mockups via Gemini 3 Pro Image. The output style mirrors
