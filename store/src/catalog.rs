@@ -14801,16 +14801,11 @@ pub async fn shop_pdp(
         .map(|(_, u)| u)
         .take(3)
         .collect();
-    // ラッシュガードで lifestyle 画像がない場合、デフォルトの着用イメージを表示
-    let is_rashguard = matches!(kind_guess, "rashguard_ls" | "rashguard_black" | "rashguard_contrado");
-    let default_rashguard_lifestyle: Vec<String> = if is_rashguard && lifestyle_imgs.is_empty() {
-        vec![
-            "https://mockups.wearmu.com/catalog/lifestyle/rashguard_default_1.jpg".to_string(),
-            "https://mockups.wearmu.com/catalog/lifestyle/rashguard_default_2.jpg".to_string(),
-        ]
-    } else {
-        Vec::new()
-    };
+    // 以前はラッシュガードに共通の「着用イメージ」(rashguard_default_1/2.jpg)を
+    // 出していたが、その画像は R2 に一度も置かれておらず 123 商品で壊れた画像に
+    // なっていた (2026-11-24 全件点検)。商品と違う絵柄の写真を「着用イメージ」と
+    // して見せるのも誤解を招くので、実際の lifestyle 画像がある時だけ表示する。
+    let default_rashguard_lifestyle: Vec<String> = Vec::new();
     let lifestyle_html = if lifestyle_imgs.is_empty() && default_rashguard_lifestyle.is_empty() {
         String::new()
     } else {

@@ -55787,7 +55787,9 @@ async fn dynamic_sitemap(State(db): State<Db>) -> Response {
     let catalog_skus: Vec<(String, Option<String>)> = {
         let conn = db.lock().unwrap();
         conn.prepare(
+            // 非公開ブランド(catalog_brands.is_active=0: 運営の検証用など)は載せない
             "SELECT sku, mockup_url_external FROM catalog_products WHERE is_active=1 \
+             AND COALESCE((SELECT b.is_active FROM catalog_brands b WHERE b.slug=catalog_products.brand),1)=1 \
              ORDER BY rowid DESC LIMIT 5000",
         )
         .ok()
