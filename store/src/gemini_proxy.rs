@@ -17,14 +17,19 @@
 
 use axum::{
     body::Bytes,
-    extract::{Path, Query},
+    extract::{Path, Query, Request},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use base64::Engine;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+/// main が listen を始めたら true。それまでは Google 直を使う (自分への接続拒否を避ける)。
+pub static LISTENING: AtomicBool = AtomicBool::new(false);
+/// 中継が teai に切り替えた回数 (起動から)。
+pub static FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 
 const GOOGLE_BASE: &str = "https://generativelanguage.googleapis.com";
 pub const PROXY_PATH: &str = "/__internal/gemini/v1beta/models/:op";
@@ -36,7 +41,9 @@ pub const GEMINI_API_BASE: GeminiBase = GeminiBase;
 
 impl std::fmt::Display for GeminiBase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if std::env::var("MU_GEMINI_PROXY").map(|v| v == "0").unwrap_or(false) {
+        if !LISTENING.load(Ordering::Relaxed)
+            || std::env::var("MU_GEMINI_PROXY").map(|v| v == "0").unwrap_or(false)
+        {
             return f.write_str(GOOGLE_BASE);
         }
         let port = std::env::var("PORT").unwrap_or_else(|_| "3000".into());
@@ -44,9 +51,11 @@ impl std::fmt::Display for GeminiBase {
     }
 }
 
-/// Google が 402 を返した時刻 (unix 秒)。0 = 未発生。
-static DIRECT_BLOCKED_AT: AtomicU64 = AtomicU64::new(0);
-const SKIP_DIRECT_SECS: u64 = 30 * 60;
+/// Google 直を飛ばす期限 (unix 秒)。402 → 30 分、429/5xx/通信失敗 → 5 分。
+static DIRECT_SKIP_UNTIL: AtomicU64 = AtomicU64::new(0);
+const SKIP_AFTER_402_SECS: u64 = 30 * 60;
+const SKIP_AFTER_TRANSIENT_SECS: u64 = 5 * 60;
+const MAX_BODY: usize = 26 * 1024 * 1024;
 
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
@@ -56,8 +65,16 @@ fn now_secs() -> u64 {
 }
 
 fn direct_skipped() -> bool {
-    let t = DIRECT_BLOCKED_AT.load(Ordering::Relaxed);
-    t != 0 && now_secs().saturating_sub(t) < SKIP_DIRECT_SECS
+    now_secs() < DIRECT_SKIP_UNTIL.load(Ordering::Relaxed)
+}
+
+fn skip_direct_for(secs: u64) {
+    DIRECT_SKIP_UNTIL.fetch_max(now_secs() + secs, Ordering::Relaxed);
+}
+
+/// 一定時間比較 (長さ違いは即 false で可: 長さは秘密ではない)。
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 fn key_ok(k: &str) -> bool {
@@ -67,18 +84,23 @@ fn key_ok(k: &str) -> bool {
     ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
         .iter()
         .filter_map(|n| std::env::var(n).ok())
-        .any(|v| !v.is_empty() && v == k)
+        .any(|v| !v.is_empty() && ct_eq(v.as_bytes(), k.as_bytes()))
 }
 
 pub async fn proxy(
     Path(op): Path<String>,
     Query(q): Query<HashMap<String, String>>,
-    body: Bytes,
+    req: Request,
 ) -> Response {
+    // 鍵の確認を本文の読み込みより先に行う (鍵なしで大きな本文を読ませない)
     let key = q.get("key").cloned().unwrap_or_default();
     if !key_ok(&key) {
         return (StatusCode::FORBIDDEN, "forbidden").into_response();
     }
+    let body: Bytes = match axum::body::to_bytes(req.into_body(), MAX_BODY).await {
+        Ok(b) => b,
+        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "too large").into_response(),
+    };
     let (model, method) = op.split_once(':').unwrap_or((op.as_str(), ""));
     let can_fallback = method == "generateContent";
 
@@ -108,13 +130,11 @@ pub async fn proxy(
                 if !fallback_worthy || !can_fallback {
                     return passthrough(st, txt);
                 }
-                if st == 402 {
-                    DIRECT_BLOCKED_AT.store(now_secs(), Ordering::Relaxed);
-                }
+                skip_direct_for(if st == 402 { SKIP_AFTER_402_SECS } else { SKIP_AFTER_TRANSIENT_SECS });
                 direct_err = format!("google {}", st);
                 // 失敗時の本文は呼び出し元に返す可能性があるので保持
                 if let Ok(resp) = fallback(model, &body).await {
-                    tracing::info!("[gemini-proxy] {} → teai fallback ok ({})", model, direct_err);
+                    note_fallback(model, &direct_err);
                     return resp;
                 }
                 return passthrough(st, txt);
@@ -123,6 +143,7 @@ pub async fn proxy(
                 if !can_fallback {
                     return (StatusCode::BAD_GATEWAY, format!("gemini proxy: {}", e)).into_response();
                 }
+                skip_direct_for(SKIP_AFTER_TRANSIENT_SECS);
                 direct_err = format!("net {}", e);
             }
         }
@@ -131,7 +152,7 @@ pub async fn proxy(
     // 2) teai
     match fallback(model, &body).await {
         Ok(resp) => {
-            tracing::info!("[gemini-proxy] {} → teai fallback ok ({})", model, direct_err);
+            note_fallback(model, &direct_err);
             resp
         }
         Err(e) => {
@@ -140,6 +161,11 @@ pub async fn proxy(
                 .into_response()
         }
     }
+}
+
+fn note_fallback(model: &str, why: &str) {
+    let n = FALLBACK_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::warn!("[gemini-proxy] {} → teai fallback ok ({}) total={}", model, why, n);
 }
 
 fn passthrough(st: u16, txt: String) -> Response {
@@ -200,10 +226,12 @@ async fn fallback(model: &str, body: &Bytes) -> Result<Response, String> {
     if wants_image {
         let prompt = format!("{}{}", system, all_text);
         let img = crate::gemini::generate_image_with_refs(&prompt, &refs).await?;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&img.bytes);
+        // 呼び出し側は image/png 前提で保存するので PNG に揃える
+        let png = to_png(&img.bytes)?;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
         let out = json!({"candidates": [{"content": {"role": "model", "parts": [
-            {"inlineData": {"mimeType": img.mime, "data": b64}}
-        ]}, "finishReason": "STOP"}]});
+            {"inlineData": {"mimeType": "image/png", "data": b64}}
+        ]}, "finishReason": "STOP"}], "modelVersion": "teai-fallback/image"});
         return Ok((StatusCode::OK, axum::Json(out)).into_response());
     }
 
@@ -215,15 +243,33 @@ async fn fallback(model: &str, body: &Bytes) -> Result<Response, String> {
         messages.insert(0, json!({"role": "system", "content": system.trim()}));
     }
     let temperature = gc["temperature"].as_f64().unwrap_or(0.7);
-    let max_tokens = gc["maxOutputTokens"].as_u64().unwrap_or(4096).clamp(256, 8192);
-    let mut text = crate::gemini::teai_chat_messages(
-        messages, "gemini-2.5-flash", temperature, max_tokens as u32).await?;
+    // 上流が思考に枠を使っても本文が残るよう下限を 2048 に
+    let max_tokens = gc["maxOutputTokens"].as_u64().unwrap_or(4096).clamp(2048, 8192) as u32;
+    // 元のモデル (2.5-pro 等) を先に試し、使えなければ flash
+    let mut used = model.to_string();
+    let mut res = crate::gemini::teai_chat_messages(messages.clone(), model, temperature, max_tokens).await;
+    if res.is_err() && model != "gemini-2.5-flash" {
+        tracing::warn!("[gemini-proxy] teai {} failed ({:?}), retry flash", model, res.as_ref().err());
+        used = "gemini-2.5-flash".into();
+        res = crate::gemini::teai_chat_messages(messages, "gemini-2.5-flash", temperature, max_tokens).await;
+    }
+    let mut text = res?;
     if json_mode {
         text = strip_fences(&text);
     }
     let out = json!({"candidates": [{"content": {"role": "model", "parts": [{"text": text}]},
-        "finishReason": "STOP"}]});
+        "finishReason": "STOP"}], "modelVersion": format!("teai-fallback/{}", used)});
     Ok((StatusCode::OK, axum::Json(out)).into_response())
+}
+
+fn to_png(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    if bytes.starts_with(b"\x89PNG") {
+        return Ok(bytes.to_vec());
+    }
+    let img = image::load_from_memory(bytes).map_err(|e| format!("decode: {}", e))?;
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).map_err(|e| format!("png: {}", e))?;
+    Ok(out.into_inner())
 }
 
 fn strip_fences(s: &str) -> String {
@@ -246,6 +292,9 @@ mod tests {
     #[test]
     fn base_respects_kill_switch() {
         std::env::set_var("PORT", "3000");
+        LISTENING.store(false, Ordering::Relaxed);
+        assert_eq!(format!("{GEMINI_API_BASE}"), "https://generativelanguage.googleapis.com");
+        LISTENING.store(true, Ordering::Relaxed);
         std::env::remove_var("MU_GEMINI_PROXY");
         assert_eq!(format!("{GEMINI_API_BASE}/v1beta"), "http://127.0.0.1:3000/__internal/gemini/v1beta");
         std::env::set_var("MU_GEMINI_PROXY", "0");
@@ -259,5 +308,15 @@ mod tests {
         assert!(key_ok("k-test"));
         assert!(!key_ok("other"));
         assert!(!key_ok(""));
+        assert!(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"ab", b"abc"));
+    }
+
+    #[test]
+    fn jpeg_becomes_png() {
+        let img = image::RgbImage::new(2, 2);
+        let mut jpg = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img).write_to(&mut jpg, image::ImageFormat::Jpeg).unwrap();
+        let png = to_png(&jpg.into_inner()).unwrap();
+        assert!(png.starts_with(b"\x89PNG"));
     }
 }

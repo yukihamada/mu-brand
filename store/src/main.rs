@@ -72280,8 +72280,7 @@ async fn main() {
         .route("/admin/email-rewrites/:id/decide", post(admin_email_rewrites_decide))
         .route("/webhooks/resend", post(webhook_resend))
         .route("/api/v1/event", post(api_funnel_event))
-        .route(gemini_proxy::PROXY_PATH, post(gemini_proxy::proxy)
-            .layer(axum::extract::DefaultBodyLimit::max(26 * 1024 * 1024)))
+        .route(gemini_proxy::PROXY_PATH, post(gemini_proxy::proxy))
         .route("/api/home/ab", get(api_home_ab))
         .route("/admin/auth_log", get(admin_auth_log_view))
         .route("/healthz", get(healthz))
@@ -72774,6 +72773,7 @@ async fn main() {
     let addr = format!("0.0.0.0:{}", port);
     println!("mu-store listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    gemini_proxy::LISTENING.store(true, std::sync::atomic::Ordering::Relaxed);
     axum::serve(listener, app).await.unwrap();
 }
 
