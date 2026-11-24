@@ -72516,7 +72516,7 @@ async fn main() {
         .route("/brands", get(brands_index))
         .route("/collabs", get(brands_index))
         .route("/shop/:sku", get(catalog::shop_pdp))
-        .route("/api/shop/checkout", get(catalog::shop_checkout))
+        .route("/api/shop/checkout", get(catalog::shop_checkout_gate).post(catalog::shop_checkout))
         .route("/api/shop/feed.json", get(catalog::shop_feed_json))
         .route("/api/shop/related", get(catalog::shop_related))
         // Gift to an MU account: handle existence check (PDP), the giftee's

@@ -16309,6 +16309,75 @@ fn looks_like_email(s: &str) -> bool {
     }
 }
 
+/// True for crawlers / link previews / browser prefetch — clients that must
+/// never mint a Stripe session. False positive cost = landing on the PDP.
+fn checkout_client_is_bot(headers: &axum::http::HeaderMap) -> bool {
+    let ua_raw = headers.get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    // ブラウザのプリフェッチ/プリレンダは専用ヘッダで「ユーザー操作ではない」と明示する。
+    // bot UAリストを掻い潜る通常UAのプリフェッチ(残存セッション量産の主因)をここで弾く。
+    let hv = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
+    let is_prefetch = {
+        let secp = hv("sec-purpose");        // Chrome: "prefetch" / "prefetch;prerender"
+        let purpose = hv("purpose");          // 一般: "prefetch"
+        let xpurpose = hv("x-purpose");       // Safari: "preview"
+        let xmoz = hv("x-moz");               // Firefox: "prefetch"
+        secp.contains("prefetch") || secp.contains("prerender")
+            || purpose.contains("prefetch") || xpurpose.contains("preview")
+            || xmoz.contains("prefetch")
+    };
+    let ua = ua_raw.to_lowercase();
+    let is_bot = is_prefetch || ua.is_empty() || [
+        "bot", "crawl", "spider", "slurp", "bingpreview", "facebookexternalhit",
+        "embedly", "quora link preview", "outbrain", "pinterest", "developers.google.com",
+        "headless", "phantom", "python-requests", "curl/", "wget", "go-http-client",
+        "node-fetch", "axios", "scrapy", "preview", "monitor", "uptime", "pingdom",
+        // 2026-07-09: AI agents + HTTP client libs whose UA carries no
+        // "bot"/"crawl" token. False positive cost is still just the PDP.
+        "anthropic", "claude-", "openai", "chatgpt", "perplexity",
+        "meta-external", "cohere", "httpx", "aiohttp", "okhttp",
+        "java/", "libwww", "python-urllib",
+    ].iter().any(|b| ua.contains(b));
+    is_bot
+}
+
+/// GET /api/shop/checkout — the shareable buy link (PDP buttons, brand LPs,
+/// agent `checkout_url`s, emails). It no longer mints a Stripe session by
+/// itself: a crawler with a clean browser UA followed these links 24/7 and
+/// created ~3,600 unpaid sessions in 19 days (11-06→11-24, 19 with an email,
+/// 1 paid), polluting catalog_orders and the checkout_start funnel. Humans get
+/// a tiny page whose script POSTs the same query to `shop_checkout`; JS-less
+/// fetchers stop here. Bots/prefetch still go straight to the PDP.
+pub async fn shop_checkout_gate(
+    headers: axum::http::HeaderMap,
+    axum::extract::RawQuery(raw): axum::extract::RawQuery,
+    Query(q): Query<CheckoutQuery>,
+) -> Response {
+    if checkout_client_is_bot(&headers) {
+        return Redirect::to(&format!("/shop/{}", urlencoding::encode(&q.sku))).into_response();
+    }
+    let mut resp = axum::response::Html(checkout_gate_html(raw.as_deref().unwrap_or(""), &q.sku)).into_response();
+    let h = resp.headers_mut();
+    h.insert(axum::http::header::CACHE_CONTROL, axum::http::HeaderValue::from_static("no-store"));
+    h.insert("x-robots-tag", axum::http::HeaderValue::from_static("noindex, nofollow"));
+    resp
+}
+
+fn gate_html_escape(v: &str) -> String {
+    v.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;").replace('>', "&gt;").replace('\'', "&#39;")
+}
+
+/// Auto-submitting POST form. bfcache/back-button restores show the button
+/// instead of re-submitting, so going back from Stripe never mints a 2nd session.
+fn checkout_gate_html(raw_query: &str, sku: &str) -> String {
+    let action = gate_html_escape(&format!("/api/shop/checkout?{raw_query}"));
+    let back = gate_html_escape(&format!("/shop/{}", urlencoding::encode(sku)));
+    format!(r#"<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>決済ページへ移動中 — MU</title>
+<style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0b0b;color:#eee;font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",sans-serif}}main{{text-align:center;padding:24px}}p{{color:#aaa;font-size:14px}}button{{margin-top:14px;padding:14px 28px;font-size:16px;font-weight:600;border:0;border-radius:6px;background:#d4b26a;color:#111;cursor:pointer}}a{{color:#aaa;font-size:13px}}</style></head>
+<body><main><form id="go" method="post" action="{action}"><h1 style="font-size:18px;font-weight:600">決済ページへ移動しています…</h1><p>Stripe の安全な決済ページが開きます。</p><button id="btn" type="submit">決済へ進む</button></form><p><a href="{back}">商品ページに戻る</a></p></main>
+<script>(function(){{var f=document.getElementById('go');var k='mu_gate:'+location.search;function auto(){{try{{if(sessionStorage.getItem(k))return;sessionStorage.setItem(k,'1')}}catch(e){{}}document.getElementById('btn').textContent='移動中…';f.submit()}}f.addEventListener('submit',function(){{try{{sessionStorage.setItem(k,'1')}}catch(e){{}}}});window.addEventListener('pageshow',function(e){{if(e.persisted){{document.getElementById('btn').textContent='決済へ進む'}}}});auto()}})();</script></body></html>"#)
+}
+
 pub async fn shop_checkout(
     State(db): State<Db>,
     headers: axum::http::HeaderMap,
@@ -16336,30 +16405,7 @@ pub async fn shop_checkout(
     // 転換率の分母汚染 + 無駄なセッション生成)。bot UA は購入せずセッションも作らせず PDP へ送る。
     // 誤検知しても商品ページに着くだけで実害なし(そこで再度 buy できる)。
     {
-        // ブラウザのプリフェッチ/プリレンダは専用ヘッダで「ユーザー操作ではない」と明示する。
-        // bot UAリストを掻い潜る通常UAのプリフェッチ(残存セッション量産の主因)をここで弾く。
-        let hv = |k: &str| headers.get(k).and_then(|v| v.to_str().ok()).unwrap_or("").to_lowercase();
-        let is_prefetch = {
-            let secp = hv("sec-purpose");        // Chrome: "prefetch" / "prefetch;prerender"
-            let purpose = hv("purpose");          // 一般: "prefetch"
-            let xpurpose = hv("x-purpose");       // Safari: "preview"
-            let xmoz = hv("x-moz");               // Firefox: "prefetch"
-            secp.contains("prefetch") || secp.contains("prerender")
-                || purpose.contains("prefetch") || xpurpose.contains("preview")
-                || xmoz.contains("prefetch")
-        };
-        let ua = ua_raw.to_lowercase();
-        let is_bot = is_prefetch || ua.is_empty() || [
-            "bot", "crawl", "spider", "slurp", "bingpreview", "facebookexternalhit",
-            "embedly", "quora link preview", "outbrain", "pinterest", "developers.google.com",
-            "headless", "phantom", "python-requests", "curl/", "wget", "go-http-client",
-            "node-fetch", "axios", "scrapy", "preview", "monitor", "uptime", "pingdom",
-            // 2026-07-09: AI agents + HTTP client libs whose UA carries no
-            // "bot"/"crawl" token. False positive cost is still just the PDP.
-            "anthropic", "claude-", "openai", "chatgpt", "perplexity",
-            "meta-external", "cohere", "httpx", "aiohttp", "okhttp",
-            "java/", "libwww", "python-urllib",
-        ].iter().any(|b| ua.contains(b));
+        let is_bot = checkout_client_is_bot(&headers);
         if is_bot {
             tracing::info!("[shop/checkout] bot_blocked sku={} ip={} ua={:?}", sku, client_ip, ua_raw);
             return Redirect::to(&format!("/shop/{}", urlencoding::encode(&sku))).into_response();
@@ -22270,3 +22316,28 @@ mod catalog_checkout_jp_tests {
         std::env::remove_var("STRIPE_PHONE_COLLECTION");
     }
 }
+
+#[cfg(test)]
+mod checkout_gate_tests {
+    use super::*;
+
+    #[test]
+    fn gate_posts_same_query_and_escapes() {
+        let html = checkout_gate_html("sku=A%26B&gift=1&x=\"><script>", "A&B");
+        assert!(html.contains(r#"method="post" action="/api/shop/checkout?sku=A%26B&amp;gift=1&amp;x=&quot;&gt;&lt;script&gt;""#));
+        assert!(html.contains(r#"href="/shop/A%26B""#));
+        assert!(!html.contains("x=\"><script>"));
+        assert!(html.contains("noindex"));
+    }
+
+    #[test]
+    fn bot_detection_covers_prefetch_and_empty_ua() {
+        let mut h = axum::http::HeaderMap::new();
+        assert!(checkout_client_is_bot(&h));
+        h.insert(axum::http::header::USER_AGENT, "Mozilla/5.0 (iPhone) Safari/604.1".parse().unwrap());
+        assert!(!checkout_client_is_bot(&h));
+        h.insert("sec-purpose", "prefetch;prerender".parse().unwrap());
+        assert!(checkout_client_is_bot(&h));
+    }
+}
+
