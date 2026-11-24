@@ -75,7 +75,7 @@ fn render(items: &[Pick], en: bool) -> String {
         ("hero_caption", "PRODUCT PREVIEW / 商品イメージ", "PRODUCT PREVIEW"),
         ("detail", "商品を見る", "View product"),
         ("trust1", "注文を受けてからつくります", "Made when you order"),
-        ("trust2", "送料・合計はお支払い前に確認", "Review shipping & total before payment"),
+        ("trust2", "送料込み・国内は約1週間でお届け", "Shipping included · about a week in Japan"),
         ("trust3", "サイズ・返品条件を事前に確認", "Check sizing & returns before you buy"),
         ("categories", "今日は、何を着よう。", "Find your everyday favourite."),
         ("tee", "Tシャツ", "T-shirts"),

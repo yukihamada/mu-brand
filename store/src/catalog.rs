@@ -13825,11 +13825,11 @@ pub async fn shop_index(
             format!("{name} x MU collab apparel ({n} items). Made to order from one piece. Review sizing, shipping and total before payment.", name = brand_name, n = total_active)
         }
     } else if brand_filter.is_empty() {
-        format!("MUのアパレル・コラボコレクション {total}件。Tシャツ、柔術ラッシュガードなどを1着から受注生産。サイズ・送料・合計金額をお支払い前にご確認ください。", total = total_active)
+        format!("MUのアパレル・コラボコレクション {total}件。Tシャツ、柔術ラッシュガードなどを1着から受注生産。送料込み、国内は約1週間でお届け。", total = total_active)
     } else if self_collab {
-        format!("{name} の商品 {n}件。1着から受注生産。サイズ・送料・合計金額をお支払い前にご確認ください。", name = brand_name, n = total_active)
+        format!("{name} の商品 {n}件。1着から受注生産。送料込み、国内は約1週間でお届け。", name = brand_name, n = total_active)
     } else {
-        format!("{name} × MU のコラボ商品 {n}件。1着から受注生産。サイズ・送料・合計金額をお支払い前にご確認ください。", name = brand_name, n = total_active)
+        format!("{name} × MU のコラボ商品 {n}件。1着から受注生産。送料込み、国内は約1週間でお届け。", name = brand_name, n = total_active)
     };
     // canonical drops ?sort= — sorted views are duplicates of the same list.
     // brand + page survive (each is distinct content).
@@ -13957,9 +13957,9 @@ pub async fn shop_index(
 </div>"##.to_string()
     } else {
         let (heading, note, production, payment, ai_note) = if lang == "en" {
-            ("Find your next favourite.", "Tees, rashguards and collaborations. Pick a design, then check the details and sizing.", "Made to order, from one piece", "Review shipping & total before payment", "AI × Human co-creation — every design is unique, made just for you")
+            ("Find your next favourite.", "Tees, rashguards and collaborations. Pick a design, then check the details and sizing.", "Made to order, from one piece", "Shipping included · about a week in Japan", "AI × Human co-creation — every design is unique, made just for you")
         } else {
-            ("好きな一着を、見つけよう。", "Tシャツ、ラッシュガード、コラボウェア。デザインを選んで、仕様・サイズを確認。", "1着から受注生産", "送料・合計はお支払い前に確認", "AI × 人の共創 — すべてのデザインが一点もの、あなただけのために")
+            ("好きな一着を、見つけよう。", "Tシャツ、ラッシュガード、コラボウェア。デザインを選んで、仕様・サイズを確認。", "1着から受注生産", "送料込み・国内は約1週間でお届け", "AI × 人の共創 — すべてのデザインが一点もの、あなただけのために")
         };
         format!(r##"<div class="hero"><h1>{heading}</h1><p>{note}</p><p class="hero-ai">{ai_note}</p><div class="trust"><span>{production}</span><span>{payment}</span></div></div>"##,
             heading = heading, note = note, production = production, payment = payment, ai_note = ai_note)
@@ -14947,7 +14947,7 @@ pub async fn shop_pdp(
         } else if is_house {
             "Stripe · 設計相談デポジット — 決済後に敷地調査・設計のご連絡"
         } else {
-            if lang == "en" { "Made to order · delivery timing varies" } else { "受注生産・納期は商品とお届け先により異なります" }
+            if lang == "en" { "Made to order · shipping included · about a week in Japan" } else { "受注生産・送料込み・国内は約1週間でお届け" }
         };
         // Phone case: render an iPhone-model <select> on the PDP itself,
         // auto-select the visitor's likely model (screen size × DPR — exact
@@ -15132,11 +15132,11 @@ pub async fn shop_pdp(
 </div>"##, sold_row = sold_row, l1 = l1, s1 = s1)
     } else {
         let (ship, ship_note, returns, return_note, made, made_note) = if lang == "en" {
-            ("Made-to-order delivery", "Timing varies by item and destination. Review shipping and total before payment.",
+            ("Shipping included · about a week in Japan", "No shipping fee at checkout: the price shown is what you pay. In our last 70 deliveries within Japan, half arrived within 6 days of ordering and 80% within 8 days. International timing varies by country.",
              "Defects or incorrect items", "Contact us within 30 days of delivery. Fit preference is not covered.",
              "Made to order, from one piece", "Compare the size chart with a garment you own before ordering.")
         } else {
-            ("受注生産でお届け", "納期は商品・お届け先で異なります。送料・合計はお支払い前に確認。",
+            ("送料込み・国内は約1週間でお届け", "表示価格のままお支払いいただけます（送料の追加なし）。国内の直近70件では、ご注文から半数が6日以内、8割が8日以内に届いています。海外は国により異なります。",
              "不良・誤配送への対応", "到着後30日以内にご連絡ください。サイズ感などお客様都合は対象外です。",
              "1着から受注生産", "ご注文前に、サイズ表とお手持ちの服の実寸をご確認ください。")
         };
@@ -15755,9 +15755,9 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
     );
     // priceValidUntil: today + 90d (UTC) so Merchant rich results stay fresh.
     let price_valid_until = date_plus_days_iso(90);
-    // OfferShippingDetails — DELIBERATELY OMITTED. The only shipping figures in
-    // code (shipping_table_html(): JP ¥800 …) are explicitly labelled 送料目安
-    // (estimate) with "実費は Stripe Checkout で表示", and the Stripe checkout
+    // OfferShippingDetails — DELIBERATELY OMITTED (still; shipping is ¥0 at
+    // checkout as of 11-25, see shipping_table_html). Historic note: the old
+    // table showed estimated fees, and the Stripe checkout
     // sets NO fixed shipping_options (see shop_checkout: only allowed_countries
     // is pushed, no shipping_rate) — so there is no verifiable flat rate to
     // publish. Emitting a hardcoded shippingRate would be a guessed value that
@@ -16192,20 +16192,18 @@ fn size_chart_html(kind: &str) -> String {
 }
 
 /// Country shipping cost table. JPY estimates based on Printful's
-/// 2026 rate card for tee/hoodie-sized parcels from EU origin to
-/// JP/US/EU/CA/AU. Static — not a quote, customer sees real cost at
-/// Stripe Checkout.
+/// Shipping facts for Printful-route PDPs. Checkout sets no Stripe
+/// shipping_options, so the item price is the total (verified 11-25 on every
+/// completed shop session: amount_total == amount_subtotal). Japan timing is
+/// measured from 70 fulfilled Printful shipments (order → delivered: median
+/// 5.4 d, p80 7.4 d). No measured data for other countries → no number.
 fn shipping_table_html() -> String {
     r##"<div class="spec"><h3>SHIPPING</h3>
-<table class="sz"><thead><tr><th>送り先 / Country</th><th>到着 (日)</th><th>送料目安 (¥)</th></tr></thead><tbody>
-<tr><td>🇯🇵 Japan</td><td>5-10</td><td>¥800</td></tr>
-<tr><td>🇺🇸 United States</td><td>7-14</td><td>¥1,400</td></tr>
-<tr><td>🇪🇺 EU (DE / FR / NL)</td><td>5-10</td><td>¥600</td></tr>
-<tr><td>🇬🇧 United Kingdom</td><td>5-10</td><td>¥900</td></tr>
-<tr><td>🇨🇦 Canada</td><td>7-14</td><td>¥1,500</td></tr>
-<tr><td>🇦🇺 Australia</td><td>7-14</td><td>¥1,700</td></tr>
+<table class="sz"><thead><tr><th>送り先 / Country</th><th>送料 / Shipping</th><th>お届け目安 / Delivery</th></tr></thead><tbody>
+<tr><td>🇯🇵 日本 / Japan</td><td>込み / Included</td><td>約1週間（半数が6日以内・8割が8日以内）</td></tr>
+<tr><td>🌏 海外 / International</td><td>込み / Included</td><td>国により異なります / Varies by country</td></tr>
 </tbody></table>
-<p class="sz-cap">DHL / FedEx tracked. 実費は Stripe Checkout で表示。</p></div>"##.into()
+<p class="sz-cap">追跡番号付きで発送。日本の目安は直近70件の実績（ご注文から到着まで）。</p></div>"##.into()
 }
 
 // ─── Checkout (Stripe Session using pre-created price_id) ─────────────
