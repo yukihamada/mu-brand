@@ -16210,7 +16210,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
   {swatches}
   <span class="color-badge">{current_code} — {current_name}</span>
 </div>
-<a class="buy-btn" href="/products/{brand}/{drop_num}?color={current_code}&amp;buy=1">今すぐ買う · ¥{buy_price} ({buy_ship})</a>
+<a class="buy-btn" href="/buy?product_id={id}">今すぐ買う · ¥{buy_price} ({buy_ship})</a>
 <div class="ship-nudge">{ship_progress}</div>
 <div class="bundle-nudge">🎁 2 枚購入で ¥1,000 OFF · <a href="/merch/{brand_lower}">同 brand をもう 1 枚見る →</a></div>
 <p class="ship-line">送料込み · 注文から 5〜7 営業日でお届け · 30 日返品保証</p>
@@ -16221,6 +16221,7 @@ h1{{font-size:20px;font-weight:500;margin:24px 0 8px}}
 </body></html>"##,
         name = html_escape(&name),
         name_attr = html_attr_escape(&name),
+        id = id,
         drop_num = drop_num,
         brand = html_attr_escape(&brand),
         brand_upper = html_escape(&brand.to_uppercase()),
