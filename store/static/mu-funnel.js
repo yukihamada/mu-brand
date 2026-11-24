@@ -52,9 +52,28 @@
     return id;
   }
 
+  // 流入元: 広告・SNS・メールのURL末尾(utm_* / ref / gclid / fbclid)を
+  // セッション内で保持し、全イベントの extra.src に刻む(path はクエリを持たないため)。
+  function campaign() {
+    var KEY = 'mu_src', src = null;
+    try {
+      var sp = new URLSearchParams(location.search), o = {}, hit = false;
+      ['utm_source','utm_medium','utm_campaign','utm_content','ref'].forEach(function (k) {
+        var v = sp.get(k); if (v) { o[k] = v.slice(0, 64); hit = true; }
+      });
+      if (sp.get('gclid')) { o.gclid = 1; hit = true; }
+      if (sp.get('fbclid')) { o.fbclid = 1; hit = true; }
+      if (hit) { sessionStorage.setItem(KEY, JSON.stringify(o)); return o; }
+      src = JSON.parse(sessionStorage.getItem(KEY) || 'null');
+    } catch (_) {}
+    return src;
+  }
+
   function send(event, extra) {
     if (ALLOWED.indexOf(event) === -1) return;
     var id = getIdentity();
+    var src = campaign();
+    if (src) { extra = extra || {}; if (extra.src === undefined) extra.src = src; }
     // A/Bテスト: ページが body[data-ab] を立てていれば、全イベントに variant を刻む。
     // これで pageview/cta_click を variant 別に集計できる（勝者判定の母数）。
     try {
