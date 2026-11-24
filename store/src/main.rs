@@ -933,6 +933,46 @@ async fn backfill_mockup_thumbs(db: Arc<Mutex<Connection>>) {
     tracing::info!("[r2] mockup thumb backfill: {} written, {} already present, {} failed", done, skipped, failed);
 }
 
+/// Boot-time backfill of the stored `products.serial_code` column to the
+/// URL-safe, unique `YYYYMMDD-<id>` form. Two problems this fixes:
+///   1. The old format used a literal `#` (e.g. `20260523-#003`), which is a
+///      URL fragment delimiter — `/p/<serial>` links silently truncated to
+///      `/p/20260523-` and 404'd.
+///   2. ~5.2k rows had NULL serial_code, so `/p/<serial>` could never resolve
+///      and the legacy `/products/:brand/:drop` → `/p/<serial>` redirect fell
+///      back to the SPA homepage.
+/// Idempotent: only rewrites rows whose stored value differs from the
+/// computed value, so it does nothing on the second boot. The stored column is
+/// what the SQL-side readers (canonical, upsell, you-hero, buy redirect) use;
+/// `read_product` recomputes the same value, so both paths now agree.
+async fn backfill_serial_codes(db: Arc<Mutex<Connection>>) {
+    let rows: Vec<(i64, String, String)> = {
+        let conn = db.lock().unwrap();
+        let mut out: Vec<(i64, String, String)> = Vec::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id, created_at, COALESCE(serial_code,'') FROM products"
+        ) {
+            if let Ok(rs) = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))) {
+                out.extend(rs.filter_map(|r| r.ok()));
+            }
+        }
+        out
+    };
+    let mut updated = 0u32;
+    {
+        let conn = db.lock().unwrap();
+        for (id, created_at, current) in rows {
+            let want = serial_code_for(&created_at, id);
+            if want != current {
+                if conn.execute("UPDATE products SET serial_code=? WHERE id=?", params![want, id]).is_ok() {
+                    updated += 1;
+                }
+            }
+        }
+    }
+    tracing::info!("[serial] backfill: {} updated to URL-safe unique form", updated);
+}
+
 /// Boot-time backfill for the one static hero image the landing depends on.
 /// Downloads hero.png from the public bucket URL, writes hero.w480.jpg and
 /// hero.w960.jpg if they are not already there. Anything failing just logs.
@@ -4062,6 +4102,7 @@ fn normalize_created_at_iso(raw: &str) -> String {
 }
 
 fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
+    let id:       i64    = row.get(0)?;
     let brand:    String = row.get(1)?;
     let drop_num: i64    = row.get(2)?;
     let name:     String = row.get(3)?;
@@ -4079,10 +4120,10 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     } else {
         dynamic_price(&brand, drop_num, sold, &name)
     };
-    let serial_code = serial_code_for(&created_at_raw, drop_num);
+    let serial_code = serial_code_for(&created_at_raw, id);
     let created_at = normalize_created_at_iso(&created_at_raw);
     Ok(Product {
-        id:           row.get(0)?,
+        id,
         brand,
         drop_num,
         name,
@@ -4108,12 +4149,13 @@ fn read_product(row: &rusqlite::Row) -> rusqlite::Result<Product> {
     })
 }
 
-/// Build a YYYYMMDD-#NNN serial code from the row's created_at and a stable
-/// per-day ordinal. We use drop_num modulo a per-day estimate when no explicit
-/// per-day index is stored. For MUGEN at most 24 drops/day (one per hour), so
-/// the ordinal is `((drop_num - 1) % 24) + 1`. For other brands we fall back
-/// to drop_num itself since they're already 1-indexed within their cycle.
-fn serial_code_for(created_at_raw: &str, drop_num: i64) -> String {
+/// Build a URL-safe, unique serial code `YYYYMMDD-<id>` from the row's
+/// created_at (JST date) and its numeric id. The id is the only column that is
+/// guaranteed unique (brand+drop_num has duplicates, and the old `#NNN`
+/// ordinal collided for same-day drops), so it is the per-day ordinal. No `#`
+/// — a literal `#` is a URL fragment delimiter and silently truncates
+/// `/p/<serial>` links (browsers drop everything after it → 404).
+fn serial_code_for(created_at_raw: &str, id: i64) -> String {
     // created_at is either a Unix epoch as TEXT or an ISO-ish stamp
     let unix_secs: i64 = if let Ok(v) = created_at_raw.parse::<i64>() {
         v
@@ -4125,20 +4167,18 @@ fn serial_code_for(created_at_raw: &str, drop_num: i64) -> String {
                 let y: i64 = parts[0].parse().unwrap_or(2026);
                 let m: i64 = parts[1].parse().unwrap_or(1);
                 let d: i64 = parts[2].parse().unwrap_or(1);
-                return format!("{:04}{:02}{:02}-#{:03}", y, m, d, drop_num.max(1));
+                return format!("{:04}{:02}{:02}-{}", y, m, d, id.max(1));
             }
         }
         0
     };
     if unix_secs <= 0 {
-        return format!("00000000-#{:03}", drop_num.max(1));
+        return format!("00000000-{}", id.max(1));
     }
     // JST date = epoch + 9h, then break into Y/M/D
     let days_since_epoch = (unix_secs + 9 * 3600) / 86400;
     let (y, m, d) = civil_from_days(days_since_epoch);
-    // Per-day ordinal: drop_num is 1-108 for mugen, mostly sequential by hour
-    let ord = ((drop_num.max(1) - 1) % 99) + 1; // keep within #001-#099
-    format!("{:04}{:02}{:02}-#{:03}", y, m, d, ord)
+    format!("{:04}{:02}{:02}-{}", y, m, d, id.max(1))
 }
 
 async fn list_products(
@@ -71474,6 +71514,14 @@ async fn main() {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
         backfill_mockup_thumbs(db_thumbs).await;
+    });
+
+    // One-shot on boot: rewrite products.serial_code to the URL-safe, unique
+    // `YYYYMMDD-<id>` form (fixes `#`-truncated /p/ links + NULL serials).
+    // Idempotent; runs immediately so /p/ links are correct right after deploy.
+    let db_serial = db.clone();
+    tokio::spawn(async move {
+        backfill_serial_codes(db_serial).await;
     });
 
     // ── Daily cron: JST 07:00, ensure today's design + send paced emails ──
