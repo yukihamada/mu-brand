@@ -14062,7 +14062,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   #muMakeFab a{{font-size:11.5px;gap:8px}}
   #muMakeFab a b{{padding:6px 12px;font-size:11.5px}}
 }}
-</style><link rel="stylesheet" href="/storefront.css?v=20261125"></head><body class="mu-shop" data-ab="storefront-20260917">
+</style><link rel="stylesheet" href="/storefront.css?v=20261125b"></head><body class="mu-shop" data-ab="storefront-20260917">
 <nav>
   <a class="brand" href="/?lang={lang}">MU</a>
   <div>
@@ -15968,7 +15968,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 }}
 .back{{display:inline-block;margin-top:24px;color:rgba(245,245,240,0.6);text-decoration:none;font-size:11px}}
 .back:hover{{color:#ffd700}}
-</style><link rel="stylesheet" href="/storefront.css?v=20261125"></head><body class="mu-pdp" data-ab="storefront-20260917">
+</style><link rel="stylesheet" href="/storefront.css?v=20261125b"></head><body class="mu-pdp" data-ab="storefront-20260917">
 <nav>
   <a class="brand" href="/?lang={lang}">MU</a>
   <div>
