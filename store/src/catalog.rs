@@ -14062,7 +14062,7 @@ footer a{{color:rgba(245,245,240,0.7);text-decoration:none;margin:0 8px}}
   #muMakeFab a{{font-size:11.5px;gap:8px}}
   #muMakeFab a b{{padding:6px 12px;font-size:11.5px}}
 }}
-</style><link rel="stylesheet" href="/storefront.css?v=20260917"></head><body class="mu-shop" data-ab="storefront-20260917">
+</style><link rel="stylesheet" href="/storefront.css?v=20261125"></head><body class="mu-shop" data-ab="storefront-20260917">
 <nav>
   <a class="brand" href="/?lang={lang}">MU</a>
   <div>
@@ -15132,11 +15132,11 @@ pub async fn shop_pdp(
 </div>"##, sold_row = sold_row, l1 = l1, s1 = s1)
     } else {
         let (ship, ship_note, returns, return_note, made, made_note) = if lang == "en" {
-            ("Shipping included · about a week in Japan", "No shipping fee at checkout: the price shown is what you pay. In our last 70 deliveries within Japan, half arrived within 6 days of ordering and 80% within 8 days. International timing varies by country.",
+            ("Shipping & delivery time", "No shipping fee at checkout: the price shown is what you pay. In our last 70 deliveries within Japan, half arrived within 6 days of ordering and 80% within 8 days. International timing varies by country.",
              "Defects or incorrect items", "Contact us within 30 days of delivery. Fit preference is not covered.",
              "Made to order, from one piece", "Compare the size chart with a garment you own before ordering.")
         } else {
-            ("送料込み・国内は約1週間でお届け", "表示価格のままお支払いいただけます（送料の追加なし）。国内の直近70件では、ご注文から半数が6日以内、8割が8日以内に届いています。海外は国により異なります。",
+            ("送料・お届け日数", "表示価格のままお支払いいただけます（送料の追加なし）。国内の直近70件では、ご注文から半数が6日以内、8割が8日以内に届いています。海外は国により異なります。",
              "不良・誤配送への対応", "到着後30日以内にご連絡ください。サイズ感などお客様都合は対象外です。",
              "1着から受注生産", "ご注文前に、サイズ表とお手持ちの服の実寸をご確認ください。")
         };
@@ -15417,7 +15417,11 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
 }});}})();</script>
 </div>"##,
         x = html_attr(&share_x), line = html_attr(&share_line_url));
-    let assessment_html = {
+    // MUスコア(AIの自己採点)は運営の並べ替え用。購入者には見せない —
+    // 「47/100・一般層には響かない」が購入ページに出て買う気をそいでいた
+    // (2026-11-25 購入者ペルソナ評価)。#[allow] で計算コードは残す。
+    #[allow(unused_variables)]
+    let assessment_html_internal = {
         let s = &score_v["score"];
         if let Some(total) = s["total"].as_i64() {
             let verdict = s["verdict"].as_str().unwrap_or("");
@@ -15690,7 +15694,8 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
                         html_attr(img), html_text(l)
                     )
                 };
-                let badge = if *sc > 0 {
+                // 点数バッジは購入ページでは出さない (上の MUスコア と同じ理由)。
+                let badge = if false && *sc > 0 {
                     format!("<span style=\"position:absolute;top:8px;right:8px;background:rgba(10,10,10,.82);color:#e6c449;font-size:11px;font-weight:800;padding:2px 7px;border-radius:999px\">{}</span>", sc)
                 } else {
                     String::new()
@@ -15708,7 +15713,7 @@ else{{navigator.clipboard.writeText(location.href).then(function(){{b.textConten
             let heading = if brand == "nouns" {
                 "ほかのNounたち — More Nouns ⌐◨-◨"
             } else {
-                "こんな一着も — UNIVERSAL の仲間（点数つき）"
+                "こんな一着も"
             };
             format!(
                 "<section style=\"max-width:920px;margin:34px auto 0;padding:0 22px\">\
@@ -15963,7 +15968,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
 }}
 .back{{display:inline-block;margin-top:24px;color:rgba(245,245,240,0.6);text-decoration:none;font-size:11px}}
 .back:hover{{color:#ffd700}}
-</style><link rel="stylesheet" href="/storefront.css?v=20260917"></head><body class="mu-pdp" data-ab="storefront-20260917">
+</style><link rel="stylesheet" href="/storefront.css?v=20261125"></head><body class="mu-pdp" data-ab="storefront-20260917">
 <nav>
   <a class="brand" href="/?lang={lang}">MU</a>
   <div>
@@ -16066,7 +16071,7 @@ table.sz th{{color:rgba(245,245,240,0.45);font-weight:500;font-size:10px;letter-
         og_desc = html_attr(&format!(
             "{} | ことば1行から30秒、あなたのデザインも棚に並ぶ → wearmu.com/start?ref=og",
             trim_chars(&meta_desc_short, 80))),
-        assessment = assessment_html,
+        assessment = "",
         edition_doc = edition_doc_html,
         design_variants = design_variants_html,
         related = related_html,
