@@ -17252,7 +17252,8 @@ pub(crate) async fn checkout_catalog_line(db: &Db, sku: &str, qty: i64, unit: i6
         |r|Ok((r.get(0)?,r.get(1)?))).map_err(|e|e.to_string())?;
     let meta_value: serde_json::Value = serde_json::from_str(meta.as_deref().unwrap_or("{}")).map_err(|e|e.to_string())?;
     if sync_id>0 && design.as_deref().unwrap_or("").trim().is_empty()
-        && meta_value.get("printful_files").is_none() {
+        && meta_value.get("printful_files").is_none()
+        && printful_library_file(&meta_value).is_none() {
         let resolved=crate::order_contract::resolve_sync_line(line,sync_id,variant).await?;
         if let Some(selected)=phone_model {
             if !resolved["sync_size"].as_str().is_some_and(|s|s.trim().eq_ignore_ascii_case(selected.trim())) {
@@ -17306,10 +17307,16 @@ pub(crate) async fn checkout_catalog_line(db: &Db, sku: &str, qty: i64, unit: i6
     let mut variants = serde_json::Map::new();
     let mut dimensions = std::collections::HashMap::new();
     for (size,vid,mut item) in prepared {
-        let url = item["files"][0]["url"].as_str().ok_or("print file missing")?.to_string();
-        let dims = if let Some(d) = dimensions.get(&url) { *d } else {
-            let d = design_dims(&client,&url).await.ok_or("cannot verify print artwork dimensions")?;
-            dimensions.insert(url,d); d
+        let dims = if item["files"][0]["id"].as_i64().is_some() {
+            // Printful ライブラリの原本: 寸法は保存済みの値 (Printful API 実測)。
+            printful_library_file(&meta_value).map(|(_,w,h)| (w,h))
+                .ok_or("cannot verify print artwork dimensions")?
+        } else {
+            let url = item["files"][0]["url"].as_str().ok_or("print file missing")?.to_string();
+            if let Some(d) = dimensions.get(&url) { *d } else {
+                let d = design_dims(&client,&url).await.ok_or("cannot verify print artwork dimensions")?;
+                dimensions.insert(url,d); d
+            }
         };
         let custom = item["files"][0].get("position").cloned();
         // Resolve the exact file types captured with this order, not a fresh
@@ -17386,6 +17393,17 @@ fn persisted_print_item(spec: &serde_json::Value, vid: i64, qty: i64, retail: &s
     crate::order_contract::files(&spec["files"])?;
     Ok(serde_json::json!({"variant_id":vid,"quantity":qty,"retail_price":retail,
         "files":spec["files"],"options":spec["options"]}))
+}
+
+/// Printful のファイルライブラリに保管された印刷原本 (meta_json.printful_file =
+/// {"id":N,"w":W,"h":H})。2026-05-21 一括作成の283件は design_file を持たず、
+/// 元URL(tmpfiles)は消えたが原本は Printful に残っている → id で注文する。
+fn printful_library_file(meta: &serde_json::Value) -> Option<(i64, u32, u32)> {
+    let f = &meta["printful_file"];
+    let id = f["id"].as_i64().filter(|v| *v > 0)?;
+    let w = f["w"].as_u64().filter(|v| *v > 0)? as u32;
+    let h = f["h"].as_u64().filter(|v| *v > 0)? as u32;
+    Some((id, w, h))
 }
 
 fn build_printful_item(
@@ -17514,6 +17532,22 @@ fn build_printful_item(
                 if let Some(b) = &pos_box { f["position"] = b.clone(); }
                 f
             }).collect();
+            serde_json::json!({
+                "variant_id": pf_variant_id,
+                "quantity": quantity,
+                "retail_price": retail_price,
+                "files": files,
+                "options": options_block,
+            })
+        }
+        (_, _) if printful_library_file(&meta).is_some() => {
+            let (file_id, _, _) = printful_library_file(&meta)?;
+            let placements = placements_for_product(pp_id);
+            let placements: Vec<&str> = if placements == ["front"] && placement != "front" {
+                vec![placement.as_str()]
+            } else { placements.iter().copied().collect() };
+            let files: Vec<serde_json::Value> = placements.iter()
+                .map(|p| serde_json::json!({"id": file_id, "type": p})).collect();
             serde_json::json!({
                 "variant_id": pf_variant_id,
                 "quantity": quantity,
@@ -21935,6 +21969,32 @@ mod printful_item_files_tests {
         assert!(n("left")+n("width")<=2250 && n("top")+n("height")<=2700);
         assert!(print_position_from_printfiles(&data,71,9999,placement,(2250,2700)).is_none());
         assert!(print_position_from_printfiles(&data,71,4017,"sleeve_left",(2250,2700)).is_none());
+    }
+
+    #[test]
+    fn printful_library_original_orders_by_file_id() {
+        let conn = test_conn();
+        insert_product(&conn,"TEST-LIB",71,4017,"front_large","printful_dtg",None);
+        // design_file 無し・原本情報も無し → 従来どおり組み立て不可
+        assert!(build_printful_item(&conn,"TEST-LIB","4800.00",None,true,1).is_none());
+        conn.execute("UPDATE catalog_products SET meta_json=? WHERE sku='TEST-LIB'",
+            [r#"{"printful_file":{"id":991026132,"w":2250,"h":2700}}"#]).unwrap();
+        let item = build_printful_item(&conn,"TEST-LIB","4800.00",Some(4018),true,1).unwrap();
+        assert_eq!(item["variant_id"],4018);
+        assert_eq!(item["files"][0]["id"],991026132);
+        assert_eq!(item["files"][0]["type"],"front_large");
+        assert!(item["files"][0].get("url").is_none());
+        crate::order_contract::files(&item["files"]).unwrap();
+        // AOP は全パネルへ同じ原本
+        insert_product(&conn,"TEST-LIB-RASH",301,9328,"front","printful_aop",None);
+        conn.execute("UPDATE catalog_products SET meta_json=? WHERE sku='TEST-LIB-RASH'",
+            [r#"{"printful_file":{"id":5,"w":4200,"h":5400}}"#]).unwrap();
+        let r = build_printful_item(&conn,"TEST-LIB-RASH","9800.00",None,true,1).unwrap();
+        assert_eq!(r["files"].as_array().unwrap().len(), placements_for_product(301).len());
+        // 不正な原本情報は拒否
+        assert!(printful_library_file(&serde_json::json!({"printful_file":{"id":0,"w":1,"h":1}})).is_none());
+        assert!(crate::order_contract::files(&serde_json::json!([{"type":"front","id":-1}])).is_err());
+        assert!(crate::order_contract::files(&serde_json::json!([{"type":"front","id":3,"url":"http://x"}])).is_err());
     }
 
     #[test]

@@ -123,8 +123,10 @@ pub fn files(v: &Value) -> Result<(), String> {
     let mut placements = std::collections::HashSet::new();
     for f in a {
         let url = f["url"].as_str().unwrap_or("");
+        // Printful ファイルライブラリの id 指定も可 (Orders API v1 files[].id)。
+        let library_id = f.get("url").is_none() && f["id"].as_i64().is_some_and(|v| v > 0);
         let placement = f["type"].as_str().unwrap_or("");
-        if !url.starts_with("https://") || url.len() <= 8 || placement.is_empty()
+        if (!library_id && (!url.starts_with("https://") || url.len() <= 8)) || placement.is_empty()
             || !placements.insert(placement) { return Err("invalid/duplicate print file placement".into()); }
     }
     Ok(())
