@@ -63,7 +63,13 @@
       });
       if (sp.get('gclid')) { o.gclid = 1; hit = true; }
       if (sp.get('fbclid')) { o.fbclid = 1; hit = true; }
-      if (hit) { sessionStorage.setItem(KEY, JSON.stringify(o)); return o; }
+      if (hit) {
+        sessionStorage.setItem(KEY, JSON.stringify(o));
+        // 購入(サーバ側 checkout_start)にも流入元を結び付けるため、7日間の
+        // 1st-party cookie にも置く(最後に来た流入元を採用・個人情報は含めない)。
+        try { document.cookie = 'mu_src=' + encodeURIComponent(JSON.stringify(o)) + '; path=/; max-age=604800; SameSite=Lax; Secure'; } catch (_) {}
+        return o;
+      }
       src = JSON.parse(sessionStorage.getItem(KEY) || 'null');
     } catch (_) {}
     return src;
