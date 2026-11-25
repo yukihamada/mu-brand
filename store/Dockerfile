@@ -16,7 +16,7 @@ FROM debian:bookworm-slim
 # openssl: signs the Apple Wallet .pkpass manifest with PASS_CERT/PASS_KEY.
 # pkpass needs a PKCS#7 detached CMS signature over manifest.json; pure-Rust
 # CMS crates are immature so we shell out to /usr/bin/openssl.
-RUN apt-get update && apt-get install -y ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates openssl sqlite3 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/mu-store .
 COPY static static
