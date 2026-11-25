@@ -13707,9 +13707,9 @@ pub async fn shop_index(
     // Sort chips: MUスコア順(default) / 売れてる順 / 新着 / 価格↑ / 価格↓.
     // brand/kind/q persist, page resets.
     let sort_defs: [(&str, &str); 5] = if lang == "en" {
-        [("", "MU Score"), ("popular", "Best selling"), ("new", "New"), ("price_asc", "Price: low to high"), ("price_desc", "Price: high to low")]
+        [("", "Recommended"), ("popular", "Best selling"), ("new", "New"), ("price_asc", "Price: low to high"), ("price_desc", "Price: high to low")]
     } else {
-        [("", "MUスコア順"), ("popular", "売れてる順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
+        [("", "おすすめ順"), ("popular", "売れてる順"), ("new", "新着"), ("price_asc", "価格が安い順"), ("price_desc", "価格が高い順")]
     };
     let sort_chips = {
         sort_defs
@@ -20667,9 +20667,10 @@ fn render_card(p: &ProductRow, pos: usize) -> String {
     } else {
         String::new()
     };
-    // MUスコアバッジ (右上・金): AI5軸の基礎点を正直に見せる — /universal や
-    // /transparency と同じ「数字は全部見せる」路線。未採点 (None) は非表示。
-    let score_badge = match p.score {
+    // MUスコアバッジ: 2026-11-25 本人判断で購入者向けの一覧からは外す
+    // (「MU 36」等の低い自己採点が買う気をそぐ)。並べ替えには引き続き使う。
+    // /universal・/transparency の採点公開はそのまま。
+    let score_badge = match p.score.filter(|_| false) {
         Some(n) => format!(
             r##"<span class="muscore" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.72);color:#e6c449;font-size:10px;font-weight:600;letter-spacing:.06em;padding:3px 7px;border-radius:999px;backdrop-filter:blur(4px)" title="MUスコア — AI5軸採点 (視覚/普遍性/プリント適性/コンセプト/所有欲)">MU {n}</span>"##,
             n = n
