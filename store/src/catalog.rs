@@ -16282,6 +16282,63 @@ fn ref_from_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
     })
 }
 
+/// 流入元 cookie `mu_src` (mu-funnel.js が utm_* / ref / gclid / fbclid から
+/// 7日間置く) を、集計用の安全な JSON に整える。既知キーだけ・英数と -_. のみ・
+/// 64字まで。壊れた値や空なら None。
+fn src_from_cookie(headers: &axum::http::HeaderMap) -> Option<serde_json::Value> {
+    let raw = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    let v = raw.split(';').find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        if k.trim() == "mu_src" { Some(v.trim().to_string()) } else { None }
+    })?;
+    sanitize_src(&urlencoding::decode(&v).ok()?)
+}
+
+fn sanitize_src(json: &str) -> Option<serde_json::Value> {
+    let parsed: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = parsed.as_object()?;
+    let mut out = serde_json::Map::new();
+    for k in ["utm_source", "utm_medium", "utm_campaign", "utm_content", "ref"] {
+        if let Some(s) = obj.get(k).and_then(|v| v.as_str()) {
+            let c: String = s.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                .take(64).collect();
+            if !c.is_empty() { out.insert(k.to_string(), serde_json::Value::String(c)); }
+        }
+    }
+    for k in ["gclid", "fbclid"] {
+        if obj.get(k).map(|v| !v.is_null() && v != &serde_json::Value::Bool(false)).unwrap_or(false) {
+            out.insert(k.to_string(), serde_json::json!(1));
+        }
+    }
+    if out.is_empty() { None } else { Some(serde_json::Value::Object(out)) }
+}
+
+#[cfg(test)]
+mod src_cookie_tests {
+    use super::*;
+    #[test]
+    fn keeps_known_keys_and_strips_junk() {
+        let v = sanitize_src(r#"{"utm_source":"insta<script>","utm_medium":"bio","gclid":1,"email":"a@b.c"}"#).unwrap();
+        assert_eq!(v["utm_source"], "instascript");
+        assert_eq!(v["utm_medium"], "bio");
+        assert_eq!(v["gclid"], 1);
+        assert!(v.get("email").is_none());
+    }
+    #[test]
+    fn rejects_garbage() {
+        assert!(sanitize_src("not json").is_none());
+        assert!(sanitize_src("{}").is_none());
+        assert!(sanitize_src(r#"{"utm_source":"<>"}"#).is_none());
+    }
+    #[test]
+    fn reads_url_encoded_cookie() {
+        let mut h = axum::http::HeaderMap::new();
+        h.insert(axum::http::header::COOKIE, "a=1; mu_src=%7B%22utm_source%22%3A%22jiuflow%22%7D; b=2".parse().unwrap());
+        assert_eq!(src_from_cookie(&h).unwrap()["utm_source"], "jiuflow");
+    }
+}
+
 /// Sanitize a referral code to the same shape `/r/:code` records.
 fn sanitize_ref(code: &str) -> Option<String> {
     let c: String = code.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>().to_uppercase();
@@ -17044,8 +17101,10 @@ pub async fn shop_checkout(
             // legacy /buy 経路(main.rs)では発火していたが、クリエイターループの
             // 本経路(ここ)が未配線で attempt>>start≒0 の偽故障シグナルを
             // 出していた(2026-06-07 R6採点で発覚・orders=9 vs start=0)。
+            // session(Stripe cs_…) で checkout_paid と突き合わせ、src で
+            // 「どこから来た人が買ったか」を集計する (2026-11-25)。
             crate::funnel_track_server(&db, "checkout_start", "/api/shop/checkout", None,
-                serde_json::json!({"sku": &sku})).await;
+                serde_json::json!({"sku": &sku, "session": j["id"].as_str(), "src": src_from_cookie(&headers)})).await;
             // Attribution for the next "who is minting sessions?" audit —
             // funnel_events carries no UA/IP, so this log line is the only
             // place a session creation is tied to its client.
